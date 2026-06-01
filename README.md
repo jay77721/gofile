@@ -1,6 +1,8 @@
 # FileStore Server
 
-> 基于 Go 的轻量级网盘服务，支持文件上传/下载、分片上传与断点续传、用户认证、基于 hash 的秒传去重。
+> Gin + MinIO + MySQL + Redis
+
+基于 Go 的轻量级网盘服务，支持文件上传/下载、分片上传与断点续传、用户认证、基于 hash 的秒传去重。
 
 [English](README_EN.md)
 
@@ -9,6 +11,7 @@
 - **文件管理** — 上传、下载、查询、重命名、软删除，100MB 大小限制
 - **用户认证** — 注册/登录，bcrypt 密码哈希，Cookie 会话（SameSite=Strict），24h Token 自动过期
 - **分片上传** — 大文件分片、断点续传、自动合并、基于 hash 的秒传去重
+- **分布式存储** — MinIO 对象存储（S3 兼容），支持多节点部署与水平扩展
 - **安全防护** — 路径穿越防护、IP 令牌桶限流、输入校验、安全随机 Token
 - **可观测性** — 结构化 JSON 日志（log/slog）、健康检查端点、优雅关闭
 
@@ -22,11 +25,15 @@ cd filestore-server
 docker compose up -d
 ```
 
-服务启动后访问 `http://localhost:8080`，MySQL 和 Redis 自动配置。
+服务启动后访问：
+- 应用服务：`http://localhost:8080`
+- MinIO 控制台：`http://localhost:9001`（用户名/密码：minioadmin/minioadmin）
+
+MySQL、Redis、MinIO 均由 Docker Compose 自动配置。
 
 ### 手动部署
 
-**环境要求：** Go 1.25+、MySQL、Redis
+**环境要求：** Go 1.25+、MySQL、Redis、MinIO
 
 ```bash
 # 1. 安装依赖
@@ -35,6 +42,10 @@ go mod tidy
 # 2. 设置环境变量
 export MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local"
 export REDIS_ADDR="127.0.0.1:6379"
+export MINIO_ENDPOINT="127.0.0.1:9000"
+export MINIO_ACCESS_KEY="minioadmin"
+export MINIO_SECRET_KEY="minioadmin"
+export MINIO_BUCKET="filestore"
 
 # 3. 初始化数据库
 mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
@@ -55,6 +66,11 @@ go run main.go
 | `SERVER_ADDR` | `:8080` | HTTP 监听地址 |
 | `UPLOAD_DIR` | `./uploads` | 文件存储目录 |
 | `CHUNK_DIR` | `./chunks` | 分片临时目录 |
+| `MINIO_ENDPOINT` | `127.0.0.1:9000` | MinIO 服务地址 |
+| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO Access Key |
+| `MINIO_SECRET_KEY` | `minioadmin` | MinIO Secret Key |
+| `MINIO_BUCKET` | `filestore` | MinIO 存储桶名称 |
+| `MINIO_USE_SSL` | `false` | 是否启用 SSL |
 
 ## API 接口
 
@@ -126,6 +142,7 @@ filestore-server/
 │   └── ratelimit.go     # IP 限流中间件
 ├── meta/filemeta.go     # 文件元数据结构 + MySQL 桥接
 ├── rd/redis.go          # Redis 连接 + hash 缓存
+├── storage/             # MinIO 对象存储客户端
 ├── util/
 │   ├── util.go          # SHA1、MD5、路径工具
 │   ├── chunk.go         # Redis 分片追踪
@@ -147,4 +164,4 @@ go test ./handler/...   # Handler 测试
 
 ## 许可证
 
-本项目用于教育和学习目的。
+MIT

@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
-// ipLimiter 基于 IP 的简单令牌桶限流器
+// ipLimiter 基于 IP 的令牌桶限流器
 type ipLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*tokenBucket
@@ -16,10 +18,10 @@ type ipLimiter struct {
 }
 
 type tokenBucket struct {
-	tokens    float64
-	lastTime  time.Time
-	rate      float64
-	burst     float64
+	tokens   float64
+	lastTime time.Time
+	rate     float64
+	burst    float64
 }
 
 // newIPLimiter 创建基于 IP 的限流器
@@ -31,9 +33,7 @@ func newIPLimiter(rate, burst int) *ipLimiter {
 		cleanup:  5 * time.Minute,
 	}
 
-	// 定期清理不活跃的限流器
 	go limiter.cleanupLoop()
-
 	return limiter
 }
 
@@ -83,24 +83,19 @@ func (l *ipLimiter) allow(ip string) bool {
 	return false
 }
 
-// RateLimitMiddleware 创建限流中间件
+// RateLimitMiddleware Gin 限流中间件
 // rate: 每秒允许的请求数，burst: 突发容量
-func RateLimitMiddleware(rate, burst int) func(http.HandlerFunc) http.HandlerFunc {
+func RateLimitMiddleware(rate, burst int) gin.HandlerFunc {
 	limiter := newIPLimiter(rate, burst)
 
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			ip := r.RemoteAddr
-			// 尝试从 X-Forwarded-For 获取真实 IP
-			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-				ip = xff
-			}
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
 
-			if !limiter.allow(ip) {
-				writeJSON(w, http.StatusTooManyRequests, 1, "请求过于频繁，请稍后再试", nil)
-				return
-			}
-			next(w, r)
+		if !limiter.allow(ip) {
+			c.JSON(http.StatusTooManyRequests, gin.H{"code": 1, "msg": "请求过于频繁，请稍后再试", "data": nil})
+			c.Abort()
+			return
 		}
+		c.Next()
 	}
 }

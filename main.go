@@ -6,12 +6,15 @@ import (
 	"filestore-server/db/mysql"
 	"filestore-server/handler"
 	"filestore-server/rd"
+	"filestore-server/storage"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -36,40 +39,66 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 确保上传目录存在
-	os.MkdirAll(cfg.UploadDir, 0755)
+	// 确保临时目录存在
 	os.MkdirAll(cfg.ChunkDir, 0755)
 
-	slog.Info("server starting", "addr", cfg.ServerAddr)
+	// 初始化存储层（优先 MinIO，fallback 本地）
+	var store storage.Storage
+	if cfg.MinioEndpoint != "" {
+		minioStore, err := storage.NewMinIO(
+			cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey,
+			cfg.MinioBucket, cfg.MinioUseSSL,
+		)
+		if err != nil {
+			slog.Error("MinIO init failed, falling back to local", "error", err)
+			store = storage.NewLocal(cfg.UploadDir)
+		} else {
+			store = minioStore
+			slog.Info("using MinIO storage", "endpoint", cfg.MinioEndpoint, "bucket", cfg.MinioBucket)
+		}
+	} else {
+		store = storage.NewLocal(cfg.UploadDir)
+		slog.Info("using local storage", "dir", cfg.UploadDir)
+	}
 
-	// 静态文件（不需要鉴权）
-	fs := http.FileServer(http.Dir("./static"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
+	// 注入存储层和配置到 handler
+	handler.InitStore(store, cfg)
+
+	// 初始化 Gin
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Recovery())
+
+	// 静态文件
+	r.Static("/static", "./static")
 
 	// 健康检查（不需要鉴权）
-	http.HandleFunc("/healthz", handler.HealthCheckHandler)
+	r.GET("/healthz", handler.HealthCheckHandler)
 
-	// 用户接口（注册登录不需要鉴权，但有速率限制）
+	// 用户接口
 	rateLimit := handler.RateLimitMiddleware(5, 10) // 5 req/s, burst 10
-	http.HandleFunc("/user/signup", rateLimit(handler.SignupHandler))
-	http.HandleFunc("/user/signin", rateLimit(handler.SignInHandler))
-	http.HandleFunc("/user/info", handler.HTTPInterceptor(handler.UserInfoHandler))
+	r.POST("/user/signup", rateLimit, handler.SignupHandler)
+	r.POST("/user/signin", rateLimit, handler.SignInHandler)
+	r.GET("/user/info", handler.AuthMiddleware(), handler.UserInfoHandler)
 
 	// 文件接口（全部需要鉴权）
-	http.HandleFunc("/file/upload", handler.HTTPInterceptor(handler.UploadHandler))
-	http.HandleFunc("/file/upload/suc", handler.HTTPInterceptor(handler.UploadSucHandler))
-	http.HandleFunc("/file/meta", handler.HTTPInterceptor(handler.GetFileHandler))
-	http.HandleFunc("/file/query", handler.HTTPInterceptor(handler.FileQueryHandler))
-	http.HandleFunc("/file/download", handler.HTTPInterceptor(handler.DownloadHandler))
-	http.HandleFunc("/file/update", handler.HTTPInterceptor(handler.FileMetaUpdateHandler))
-	http.HandleFunc("/file/delete", handler.HTTPInterceptor(handler.FileDeleteHandler))
-	http.HandleFunc("/file/upload/chunk", handler.HTTPInterceptor(handler.UploadChunkHandler))
-	http.HandleFunc("/file/upload/status", handler.HTTPInterceptor(handler.UploadStatusHandler))
-	http.HandleFunc("/file/upload/merge", handler.HTTPInterceptor(handler.MergeChunkHandler))
+	file := r.Group("/file", handler.AuthMiddleware())
+	{
+		file.POST("/upload", handler.UploadHandler)
+		file.GET("/meta", handler.GetFileHandler)
+		file.GET("/query", handler.FileQueryHandler)
+		file.GET("/download", handler.DownloadHandler)
+		file.POST("/update", handler.FileMetaUpdateHandler)
+		file.POST("/delete", handler.FileDeleteHandler)
+		file.POST("/upload/chunk", handler.UploadChunkHandler)
+		file.GET("/upload/status", handler.UploadStatusHandler)
+		file.POST("/upload/merge", handler.MergeChunkHandler)
+	}
 
 	// 创建 HTTP Server（支持优雅关闭）
 	srv := &http.Server{
 		Addr:         cfg.ServerAddr,
+		Handler:      r,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -82,6 +111,8 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	slog.Info("server started", "addr", cfg.ServerAddr)
 
 	// 监听系统信号，优雅关闭
 	quit := make(chan os.Signal, 1)

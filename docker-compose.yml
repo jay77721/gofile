@@ -7,10 +7,17 @@ services:
       - MYSQL_DSN=root:root@tcp(mysql:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local
       - REDIS_ADDR=redis:6379
       - SERVER_ADDR=:8080
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_BUCKET=filestore
+      - MINIO_USE_SSL=false
     depends_on:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     volumes:
       - uploads_data:/app/uploads
@@ -46,8 +53,26 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   mysql_data:
   redis_data:
   uploads_data:
   chunks_data:
+  minio_data:

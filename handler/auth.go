@@ -3,27 +3,24 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
-// HTTPInterceptor HTTP 拦截器，验证用户登录状态
-func HTTPInterceptor(h http.HandlerFunc) http.HandlerFunc {
-	return http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			usernameCookie, err1 := r.Cookie("username")
-			tokenCookie, err2 := r.Cookie("token")
-			if err1 != nil || err2 != nil {
-				writeJSON(w, http.StatusUnauthorized, 1, "请先登录", nil)
-				return
-			}
+// AuthMiddleware Gin 认证中间件，验证用户 Cookie 登录状态
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username, _ := c.Cookie("username")
+		token, _ := c.Cookie("token")
 
-			username := usernameCookie.Value
-			token := tokenCookie.Value
+		if username == "" || token == "" || len(username) < 3 || !isTokenValid(username, token) {
+			slog.Warn("auth failed", "username", username, "path", c.Request.URL.Path)
+			c.JSON(http.StatusUnauthorized, gin.H{"code": 1, "msg": "请先登录", "data": nil})
+			c.Abort()
+			return
+		}
 
-			if len(username) < 3 || !isTokenValid(username, token) {
-				slog.Warn("auth failed", "username", username, "path", r.URL.Path)
-				writeJSON(w, http.StatusUnauthorized, 1, "登录已过期，请重新登录", nil)
-				return
-			}
-			h(w, r)
-		})
+		c.Set("username", username)
+		c.Next()
+	}
 }

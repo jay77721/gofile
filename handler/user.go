@@ -5,31 +5,21 @@ import (
 	"encoding/hex"
 	dblayer "filestore-server/db"
 	mydb "filestore-server/db/mysql"
-	"filestore-server/util"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // SignupHandler 处理用户注册请求
-func SignupHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "GET" {
-		http.ServeFile(w, r, "./static/view/signup.html")
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		writeJSON(w, http.StatusBadRequest, 1, "请求参数解析失败", nil)
-		return
-	}
-
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+func SignupHandler(c *gin.Context) {
+	username := c.PostForm("username")
+	password := c.PostForm("password")
 
 	if len(username) < 3 || len(password) < 5 {
-		writeJSON(w, http.StatusBadRequest, 1, "用户名至少3位，密码至少5位", nil)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "用户名至少3位，密码至少5位", "data": nil})
 		return
 	}
 
@@ -37,37 +27,33 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		slog.Error("bcrypt hash failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, 1, "注册失败，请稍后重试", nil)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "注册失败，请稍后重试", "data": nil})
 		return
 	}
 
 	suc := dblayer.UserSignup(username, string(hashedPwd))
 	if suc {
 		slog.Info("user registered", "username", username)
-		writeJSON(w, http.StatusOK, 0, "注册成功", nil)
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "注册成功", "data": nil})
 	} else {
-		writeJSON(w, http.StatusOK, 1, "用户名已存在", nil)
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在", "data": nil})
 	}
 }
 
 // SignInHandler 登录接口
-func SignInHandler(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		writeJSON(w, http.StatusBadRequest, 1, "请求参数解析失败", nil)
-		return
-	}
+func SignInHandler(c *gin.Context) {
+	username := c.PostForm("username")
+	password := c.PostForm("password")
 
-	username := r.PostFormValue("username")
-	password := r.PostFormValue("password")
-	if len(username) == 0 || len(password) == 0 {
-		writeJSON(w, http.StatusBadRequest, 1, "用户名和密码不能为空", nil)
+	if username == "" || password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "用户名和密码不能为空", "data": nil})
 		return
 	}
 
 	// 从数据库获取哈希密码并验证
 	if !checkPassword(username, password) {
 		slog.Warn("login failed", "username", username, "reason", "invalid credentials")
-		writeJSON(w, http.StatusOK, 1, "用户名或密码错误", nil)
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名或密码错误", "data": nil})
 		return
 	}
 
@@ -75,76 +61,48 @@ func SignInHandler(w http.ResponseWriter, r *http.Request) {
 	token, err := generateToken()
 	if err != nil {
 		slog.Error("generate token failed", "error", err)
-		writeJSON(w, http.StatusInternalServerError, 1, "登录失败，请稍后重试", nil)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "登录失败，请稍后重试", "data": nil})
 		return
 	}
 
 	upRes := dblayer.UpdateToken(username, token)
 	if !upRes {
-		writeJSON(w, http.StatusInternalServerError, 1, "登录失败，请稍后重试", nil)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "登录失败，请稍后重试", "data": nil})
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "token",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   3600,
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     "username",
-		Value:    username,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   3600,
-	})
+	c.SetCookie("token", token, 3600, "/", "", false, true)
+	c.SetCookie("username", username, 3600, "/", "", false, true)
 
 	slog.Info("user logged in", "username", username)
 
-	resp := util.RespMsg{
-		Code: 0,
-		Msg:  "ok",
-		Data: struct {
-			Location string `json:"Location"`
-			Username string `json:"Username"`
-			Token    string `json:"Token"`
-		}{
-			Location: "http://" + r.Host + "/static/view/home.html",
-			Username: username,
-			Token:    token,
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"msg":  "ok",
+		"data": gin.H{
+			"Location": "http://" + c.Request.Host + "/static/view/home.html",
+			"Username": username,
+			"Token":    token,
 		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(resp.JSONBytes())
+	})
 }
 
 // UserInfoHandler 查询用户信息
-func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
-	usernameCookie, err := r.Cookie("username")
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, 1, "缺少登录信息", nil)
+func UserInfoHandler(c *gin.Context) {
+	username, _ := c.Cookie("username")
+	if username == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 1, "msg": "缺少登录信息", "data": nil})
 		return
 	}
-
-	username := usernameCookie.Value
 
 	user, err := dblayer.GetUserInfo(username)
 	if err != nil {
 		slog.Error("get user info failed", "error", err, "username", username)
-		writeJSON(w, http.StatusInternalServerError, 1, "获取用户信息失败", nil)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "获取用户信息失败", "data": nil})
 		return
 	}
 
-	resp := util.RespMsg{
-		Code: 0,
-		Msg:  "ok",
-		Data: user,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(resp.JSONBytes())
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": user})
 }
 
 // checkPassword 验证用户密码（bcrypt）
@@ -207,14 +165,6 @@ func isTokenValid(username string, token string) bool {
 	}
 
 	return true
-}
-
-// writeJSON 统一 JSON 响应
-func writeJSON(w http.ResponseWriter, statusCode int, code int, msg string, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	resp := util.RespMsg{Code: code, Msg: msg, Data: data}
-	w.Write(resp.JSONBytes())
 }
 
 // GenToken 保留导出函数供其他包使用（兼容）

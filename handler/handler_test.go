@@ -5,57 +5,39 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
+func setupRouter() *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	return gin.New()
+}
+
 func TestHealthCheckHandler_NoRedis(t *testing.T) {
-	// Redis 未初始化时应返回 503
+	r := setupRouter()
+	r.GET("/healthz", HealthCheckHandler)
+
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	w := httptest.NewRecorder()
 
-	// 由于 Redis 未连接，会 panic，所以这里只测试函数存在性
-	// 实际集成测试需要真实的 Redis
+	// Redis 未初始化会 panic，测试函数存在性
 	defer func() {
-		if r := recover(); r != nil {
-			t.Log("HealthCheck panicked as expected (no Redis):", r)
+		if rec := recover(); rec != nil {
+			t.Log("HealthCheck panicked as expected (no Redis):", rec)
 		}
 	}()
 
-	HealthCheckHandler(w, req)
-}
-
-func TestUploadHandler_GET(t *testing.T) {
-	req := httptest.NewRequest("GET", "/file/upload", nil)
-	w := httptest.NewRecorder()
-
-	UploadHandler(w, req)
-
-	// 静态文件在测试环境中可能不存在，所以 200 或 404 都可接受
-	if w.Code != http.StatusOK && w.Code != http.StatusNotFound {
-		t.Errorf("GET /file/upload status = %d, want %d or %d", w.Code, http.StatusOK, http.StatusNotFound)
-	}
-}
-
-func TestUploadSucHandler(t *testing.T) {
-	req := httptest.NewRequest("GET", "/file/upload/suc", nil)
-	w := httptest.NewRecorder()
-
-	UploadSucHandler(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	body := w.Body.String()
-	if body != "Upload finished" {
-		t.Errorf("body = %q, want %q", body, "Upload finished")
-	}
+	r.ServeHTTP(w, req)
 }
 
 func TestGetFileHandler_NoFilehash(t *testing.T) {
+	r := setupRouter()
+	r.GET("/file/meta", GetFileHandler)
+
 	req := httptest.NewRequest("GET", "/file/meta", nil)
 	w := httptest.NewRecorder()
-
-	GetFileHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -68,22 +50,13 @@ func TestGetFileHandler_NoFilehash(t *testing.T) {
 	}
 }
 
-func TestFileQueryHandler_WrongMethod(t *testing.T) {
-	req := httptest.NewRequest("POST", "/file/query", nil)
-	w := httptest.NewRecorder()
-
-	FileQueryHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
 func TestFileDeleteHandler_NoFilehash(t *testing.T) {
+	r := setupRouter()
+	r.POST("/file/delete", FileDeleteHandler)
+
 	req := httptest.NewRequest("POST", "/file/delete", nil)
 	w := httptest.NewRecorder()
-
-	FileDeleteHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -91,96 +64,56 @@ func TestFileDeleteHandler_NoFilehash(t *testing.T) {
 }
 
 func TestFileMetaUpdateHandler_WrongOp(t *testing.T) {
+	r := setupRouter()
+	r.POST("/file/update", FileMetaUpdateHandler)
+
 	req := httptest.NewRequest("POST", "/file/update?op=1&filehash=abc&filename=test.txt", nil)
 	w := httptest.NewRecorder()
-
-	FileMetaUpdateHandler(w, req)
+	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
 	}
 }
 
-func TestFileMetaUpdateHandler_GET(t *testing.T) {
-	req := httptest.NewRequest("GET", "/file/update?op=0&filehash=abc&filename=test.txt", nil)
+func TestUploadStatusHandler_NoFilehash(t *testing.T) {
+	r := setupRouter()
+	r.GET("/file/upload/status", UploadStatusHandler)
+
+	req := httptest.NewRequest("GET", "/file/upload/status", nil)
 	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
 
-	FileMetaUpdateHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
-func TestUploadChunkHandler_WrongMethod(t *testing.T) {
-	req := httptest.NewRequest("GET", "/file/upload/chunk", nil)
+func TestMergeChunkHandler_NoParams(t *testing.T) {
+	r := setupRouter()
+	r.POST("/file/upload/merge", MergeChunkHandler)
+
+	req := httptest.NewRequest("POST", "/file/upload/merge", nil)
 	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
 
-	UploadChunkHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
-func TestUploadStatusHandler_WrongMethod(t *testing.T) {
-	req := httptest.NewRequest("POST", "/file/upload/status", nil)
-	w := httptest.NewRecorder()
+func TestRateLimitMiddleware(t *testing.T) {
+	r := setupRouter()
+	r.GET("/test", RateLimitMiddleware(1, 1), func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
 
-	UploadStatusHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
-func TestMergeChunkHandler_WrongMethod(t *testing.T) {
-	req := httptest.NewRequest("GET", "/file/upload/merge", nil)
-	w := httptest.NewRecorder()
-
-	MergeChunkHandler(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
-	}
-}
-
-func TestWriteJSON(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusOK, 0, "test message", map[string]string{"key": "value"})
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	contentType := w.Header().Get("Content-Type")
-	if contentType != "application/json" {
-		t.Errorf("Content-Type = %s, want application/json", contentType)
-	}
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-
-	if resp["code"].(float64) != 0 {
-		t.Errorf("code = %v, want 0", resp["code"])
-	}
-	if resp["msg"].(string) != "test message" {
-		t.Errorf("msg = %v, want 'test message'", resp["msg"])
-	}
-}
-
-func TestHTTPInterceptor_NoCookies(t *testing.T) {
-	inner := func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}
-
-	handler := HTTPInterceptor(inner)
+	// 第一次请求应该成功
 	req := httptest.NewRequest("GET", "/test", nil)
 	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
 
-	handler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	if w.Code != http.StatusOK {
+		t.Errorf("first request: status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
