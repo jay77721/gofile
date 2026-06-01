@@ -11,7 +11,7 @@
 - **文件管理** — 上传、下载、查询、重命名、软删除，100MB 大小限制
 - **用户认证** — 注册/登录，bcrypt 密码哈希，Cookie 会话（SameSite=Strict），24h Token 自动过期
 - **分片上传** — 大文件分片、断点续传、自动合并、基于 hash 的秒传去重
-- **分布式存储** — MinIO 对象存储（S3 兼容），支持多节点部署与水平扩展
+- **存储后端** — 优先使用 MinIO（S3 兼容），MinIO 初始化失败时自动回退到本地文件存储
 - **安全防护** — 路径穿越防护、IP 令牌桶限流、输入校验、安全随机 Token
 - **可观测性** — 结构化 JSON 日志（log/slog）、健康检查端点、优雅关闭
 
@@ -66,11 +66,13 @@ go run main.go
 | `SERVER_ADDR` | `:8080` | HTTP 监听地址 |
 | `UPLOAD_DIR` | `./uploads` | 文件存储目录 |
 | `CHUNK_DIR` | `./chunks` | 分片临时目录 |
-| `MINIO_ENDPOINT` | `127.0.0.1:9000` | MinIO 服务地址 |
+| `MINIO_ENDPOINT` | `minio:9000` | MinIO 服务地址 |
 | `MINIO_ACCESS_KEY` | `minioadmin` | MinIO Access Key |
 | `MINIO_SECRET_KEY` | `minioadmin` | MinIO Secret Key |
 | `MINIO_BUCKET` | `filestore` | MinIO 存储桶名称 |
 | `MINIO_USE_SSL` | `false` | 是否启用 SSL |
+
+> 默认情况下，服务会优先尝试连接 MinIO。如果 `MINIO_ENDPOINT` 为空或 MinIO 初始化失败，将自动回退到本地存储目录（`UPLOAD_DIR`）。
 
 ## API 接口
 
