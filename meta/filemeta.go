@@ -5,38 +5,22 @@ import (
 	"time"
 )
 
-// FileMeta: 文件元信息结构
+// FileMeta 文件元信息结构
 type FileMeta struct {
-	FileSha1 string
-	FileName string
-	FileSize int64
-	Location string
-	UploadAt time.Time
+	FileSha1 string    `json:"filehash"`
+	FileName string    `json:"filename"`
+	FileSize int64     `json:"size"`
+	Location string    `json:"-"`
+	UploadAt time.Time `json:"upload_time"`
 }
 
-var fileMetas map[string]FileMeta
-
-func init() {
-	fileMetas = make(map[string]FileMeta)
-}
-
-// UpdateFileMeta:新增/更新文件元信息
-func UpdateFileMeta(fMeta FileMeta) {
-	fileMetas[fMeta.FileSha1] = fMeta
-}
-
-// UpdateFileMetaDB:新增/更新文件元到MySQL中
+// UpdateFileMetaDB 新增/更新文件元到 MySQL
 func UpdateFileMetaDB(fMeta FileMeta) bool {
 	return mydb.OnFileUploadFinished(
 		fMeta.FileSha1, fMeta.FileName, fMeta.FileSize, fMeta.Location, fMeta.UploadAt)
 }
 
-// GetFileMeta:通过sha1值获取文件的元信息对象
-func GetFileMeta(fileSha1 string) FileMeta {
-	return fileMetas[fileSha1]
-}
-
-// GetFileMetaDB:从mysql获取文件元信息
+// GetFileMetaDB 从 MySQL 获取文件元信息
 func GetFileMetaDB(fileSha1 string) (FileMeta, error) {
 	tfile, err := mydb.GetFileMeta(fileSha1)
 	if err != nil {
@@ -52,15 +36,32 @@ func GetFileMetaDB(fileSha1 string) (FileMeta, error) {
 	return fmeta, nil
 }
 
-// RemoveFileMeta：删除元信息
-func RemoveFileMeta(fileSha1 string) {
-	delete(fileMetas, fileSha1)
+// GetAllFileMetaDB 从 MySQL 获取所有文件元信息
+func GetAllFileMetaDB() ([]FileMeta, error) {
+	tfiles, err := mydb.GetAllFileMeta()
+	if err != nil {
+		return nil, err
+	}
+
+	fmetas := make([]FileMeta, 0, len(tfiles))
+	for _, tfile := range tfiles {
+		fmetas = append(fmetas, FileMeta{
+			FileSha1: tfile.FileSha1,
+			FileName: tfile.FileName.String,
+			FileSize: tfile.FileSize.Int64,
+			Location: tfile.FileAddr.String,
+			UploadAt: tfile.CreateAt.Time,
+		})
+	}
+	return fmetas, nil
 }
 
-func GetAllFileMeta() []FileMeta {
-	all := make([]FileMeta, 0)
-	for _, file := range fileMetas {
-		all = append(all, file)
-	}
-	return all
+// DeleteFileMetaDB 软删除文件元信息
+func DeleteFileMetaDB(fileSha1 string) bool {
+	return mydb.DeleteFileMeta(fileSha1)
+}
+
+// UpdateFileMetaDBName 更新文件名
+func UpdateFileMetaDBName(fileSha1 string, newFilename string) bool {
+	return mydb.UpdateFileName(fileSha1, newFilename)
 }

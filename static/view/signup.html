@@ -96,9 +96,6 @@
             e.preventDefault();
             msg.textContent = "";
 
-            console.log("Username input value:", username.value);
-            console.log("Password input value:", password.value);
-
             if (password.value !== confirmPwd.value) {
                 msg.style.color = "yellow";
                 msg.textContent = "两次密码输入不一致！";
@@ -118,16 +115,15 @@
                     headers: { "Content-Type": "application/x-www-form-urlencoded" }
                 });
 
-                const text = await response.text();
-                console.log("Server response:", text);
+                const result = await response.json();
 
-                if (text === "success") {
+                if (result.code === 0) {
                     msg.style.color = "lightgreen";
                     msg.textContent = "注册成功！正在跳转...";
                     setTimeout(() => { window.location.href = "/static/view/signin.html"; }, 1500);
                 } else {
                     msg.style.color = "yellow";
-                    msg.textContent = "注册失败，请重试。";
+                    msg.textContent = result.msg || "注册失败，请重试。";
                 }
             } catch (err) {
                 console.error(err);

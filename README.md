@@ -5,35 +5,46 @@ A lightweight file storage server built with Go, supporting file upload, downloa
 ## 🚀 Features
 
 - 📁 **File Management**
-  - Upload files with metadata
+  - Upload files with metadata (100MB size limit)
   - Download files
   - Update file metadata
-  - Delete files
+  - Delete files (soft delete)
   - Query file information
 
 - 🔐 **User Authentication**
   - User registration (signup)
   - User login (signin)
   - User information retrieval
-  - JWT-based authentication
+  - Cookie-based session authentication
+  - bcrypt password hashing
 
 - ⚡ **Chunked Upload**
   - Support for large file uploads
   - Chunk status checking
   - Automatic chunk merging
+  - Instant upload (deduplication by hash)
 
 - 🗄️ **Storage Backend**
   - MySQL database for metadata
-  - Redis for session/cache management
+  - Redis for caching and chunk tracking
   - Local file system storage
+
+- 🛡️ **Security**
+  - bcrypt password hashing
+  - Secure random token generation (crypto/rand)
+  - Path traversal protection (filepath.Base)
+  - All file endpoints require authentication
+  - Input validation and size limits
 
 ## 🏗️ Architecture
 
 ```
 filestore-server/
-├── main.go              # Entry point and HTTP routing
+├── main.go              # Entry point, HTTP routing, graceful shutdown
+├── config/
+│   └── config.go        # Environment-based configuration
 ├── db/                  # Database operations
-│   ├── mysql/conn.go    # MySQL connection
+│   ├── mysql/conn.go    # MySQL connection pool
 │   ├── file.go          # File-related DB operations
 │   └── user.go          # User-related DB operations
 ├── handler/             # HTTP request handlers
@@ -41,11 +52,13 @@ filestore-server/
 │   ├── handler.go       # File upload/download handlers
 │   └── user.go          # User management handlers
 ├── meta/                # File metadata management
-│   └── filemeta.go      # File metadata structure
+│   └── filemeta.go      # File metadata structure and DB bridge
 ├── rd/                  # Redis operations
-│   └── redis.go         # Redis connection and operations
+│   └── redis.go         # Redis connection and cache operations
 ├── util/                # Utility functions
-│   └── chunk.go         # Chunk upload utilities
+│   ├── util.go          # Hash utilities (SHA1, MD5)
+│   ├── chunk.go         # Chunk upload utilities
+│   └── resp.go          # JSON response helper
 ├── static/              # Static files (frontend assets)
 ├── uploads/             # Uploaded files storage
 └── go.mod               # Go module definition
@@ -53,26 +66,26 @@ filestore-server/
 
 ## 🛠️ Technology Stack
 
-- **Language**: Go 1.24.0
+- **Language**: Go 1.25.0
 - **Database**: MySQL
 - **Cache**: Redis
 - **Web Framework**: net/http (standard library)
-- **Authentication**: JWT
+- **Authentication**: Cookie-based session with bcrypt
 
 ## 📋 API Endpoints
 
-### File Operations
+### File Operations (🔒 Require Authentication)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/file/upload` | Upload a file |
 | GET | `/file/meta` | Get file metadata |
-| GET | `/file/query` | Query files |
+| GET | `/file/query` | Query all files |
 | GET | `/file/download` | Download a file |
 | POST | `/file/update` | Update file metadata |
-| POST | `/file/delete` | Delete a file |
+| POST | `/file/delete` | Delete a file (soft delete) |
 
-### Chunk Upload
+### Chunk Upload (🔒 Require Authentication)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -82,21 +95,40 @@ filestore-server/
 
 ### User Operations
 
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/user/signup` | No | User registration |
+| POST | `/user/signin` | No | User login |
+| GET | `/user/info` | Yes | Get user information |
+
+### System
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/user/signup` | User registration |
-| POST | `/user/signin` | User login |
-| GET | `/user/info` | Get user information |
+| GET | `/healthz` | Health check (MySQL + Redis) |
 
 ## 🚦 Getting Started
 
-### Prerequisites
+### Docker (Recommended)
 
-- Go 1.24.0 or higher
+```bash
+# Clone and start with Docker Compose
+git clone <repository-url>
+cd filestore-server
+docker compose up -d
+```
+
+The server will start at `http://localhost:8080` with MySQL and Redis automatically configured.
+
+### Manual Installation
+
+#### Prerequisites
+
+- Go 1.25.0 or higher
 - MySQL database
 - Redis server
 
-### Installation
+#### Installation
 
 1. **Clone the repository**
    ```bash
@@ -109,32 +141,46 @@ filestore-server/
    go mod tidy
    ```
 
-3. **Configure database connections**
-   - Update MySQL connection settings in `db/mysql/conn.go`
-   - Update Redis connection settings in `rd/redis.go`
+3. **Set environment variables**
+   ```bash
+   # MySQL connection string (required)
+   export MYSQL_DSN="user:password@tcp(host:port)/dbname?charset=utf8mb4&parseTime=True&loc=Local"
+
+   # Redis configuration (optional, defaults shown)
+   export REDIS_ADDR="127.0.0.1:6379"
+   export REDIS_PASS=""
+   export REDIS_DB=0
+
+   # Server configuration (optional, defaults shown)
+   export SERVER_ADDR=":8080"
+   export UPLOAD_DIR="./uploads"
+   export CHUNK_DIR="./chunks"
+   ```
 
 4. **Create database tables**
    ```sql
-   -- Create users table
-   CREATE TABLE users (
-       id INT AUTO_INCREMENT PRIMARY KEY,
-       username VARCHAR(50) UNIQUE NOT NULL,
-       password VARCHAR(100) NOT NULL,
-       email VARCHAR(100),
-       create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-   );
+   CREATE TABLE tbl_file (
+     file_sha1 char(40) NOT NULL PRIMARY KEY,
+     file_name varchar(256) NOT NULL DEFAULT '',
+     file_size bigint(20) DEFAULT 0,
+     file_addr varchar(512) DEFAULT '',
+     create_at datetime DEFAULT CURRENT_TIMESTAMP,
+     status tinyint(4) NOT NULL DEFAULT 0 COMMENT '0-normal, 1-deleted, 2-forbidden'
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-   -- Create files table
-   CREATE TABLE file_meta (
-       id INT AUTO_INCREMENT PRIMARY KEY,
-       file_hash VARCHAR(100) NOT NULL,
-       file_name VARCHAR(255) NOT NULL,
-       file_size BIGINT DEFAULT 0,
-       file_path VARCHAR(255) NOT NULL,
-       create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-       update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-       status INT DEFAULT 0
-   );
+   CREATE TABLE tbl_user (
+     user_name varchar(64) NOT NULL PRIMARY KEY,
+     user_pwd varchar(60) NOT NULL DEFAULT '' COMMENT 'bcrypt hash',
+     signup_at datetime DEFAULT CURRENT_TIMESTAMP,
+     status tinyint(4) NOT NULL DEFAULT 0
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+   CREATE TABLE tbl_user_token (
+     user_name varchar(64) NOT NULL PRIMARY KEY,
+     user_token char(64) NOT NULL DEFAULT '',
+     update_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+     expired_at datetime
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
    ```
 
 5. **Run the server**
@@ -145,65 +191,58 @@ filestore-server/
 6. **Access the server**
    - Server will start on `http://localhost:8080`
    - Static files served from `/static/`
+   - Health check at `http://localhost:8080/healthz`
 
 ## 📝 Usage Examples
 
 ### Upload a File
 ```bash
-curl -X POST -F "file=@/path/to/your/file.txt" http://localhost:8080/file/upload
+curl -X POST -F "file=@/path/to/your/file.txt" \
+  -b "username=testuser;token=your_token" \
+  http://localhost:8080/file/upload
 ```
 
 ### Download a File
 ```bash
-curl -X GET "http://localhost:8080/file/download?filehash=abc123" --output file.txt
+curl -X GET "http://localhost:8080/file/download?filehash=abc123" \
+  -b "username=testuser;token=your_token" \
+  --output file.txt
 ```
 
 ### User Registration
 ```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"username":"testuser","password":"password123"}' \
+curl -X POST -d "username=testuser&password=password123" \
   http://localhost:8080/user/signup
 ```
 
 ### User Login
 ```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{"username":"testuser","password":"password123"}' \
+curl -X POST -F "username=testuser&password=password123" \
   http://localhost:8080/user/signin
 ```
 
 ## ⚙️ Configuration
 
-### Database Configuration
-Update the connection strings in the respective files:
+All configuration is done via environment variables with sensible defaults:
 
-**MySQL** (`db/mysql/conn.go`):
-```go
-db, err := sql.Open("mysql", "username:password@tcp(localhost:3306)/database_name")
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL connection string |
+| `REDIS_ADDR` | `127.0.0.1:6379` | Redis server address |
+| `REDIS_PASS` | (empty) | Redis password |
+| `REDIS_DB` | `0` | Redis database number |
+| `SERVER_ADDR` | `:8080` | HTTP server listen address |
+| `UPLOAD_DIR` | `./uploads` | File upload directory |
+| `CHUNK_DIR` | `./chunks` | Chunk upload directory |
 
-**Redis** (`rd/redis.go`):
-```go
-client := redis.NewClient(&redis.Options{
-    Addr:     "localhost:6379",
-    Password: "",
-    DB:       0,
-})
-```
+## 🔒 Security Features
 
-### Server Configuration
-The server runs on port 8080 by default. To change the port, modify `main.go`:
-```go
-err := http.ListenAndServe(":8080", nil)  // Change 8080 to desired port
-```
-
-## 🔒 Security Considerations
-
-- Passwords should be hashed before storing (implement in user.go)
-- Use HTTPS in production
-- Validate file types and sizes
-- Implement rate limiting for uploads
-- Sanitize file names and paths
+- **Password Hashing**: bcrypt with default cost
+- **Token Generation**: 32-byte random tokens via crypto/rand
+- **Path Traversal Protection**: All filenames sanitized with filepath.Base
+- **Authentication**: All file operations require valid session cookie
+- **Input Validation**: File size limits, parameter validation
+- **Soft Delete**: Files are marked as deleted, not physically removed
 
 ## 🚧 Development Status
 

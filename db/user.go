@@ -2,148 +2,101 @@ package db
 
 import (
 	mydb "filestore-server/db/mysql"
-	"fmt"
+	"log/slog"
 	"time"
 )
 
-// UserSignup：通过用户名及密码完成user表的注册操作
+// UserSignup 通过用户名及密码完成 user 表的注册操作
 func UserSignup(username string, password string) bool {
-	//db := mydb.DBConn()
-	//fmt.Println("DB connection:", db)
-
 	stmt, err := mydb.DBConn().Prepare(
-		"insert ignore into tbl_user (`user_name`,`user_pwd`) values (?,?)")
+		"INSERT IGNORE INTO tbl_user (`user_name`,`user_pwd`) VALUES (?,?)")
 	if err != nil {
-		fmt.Println("Failed to insert ,err" + err.Error())
+		slog.Error("prepare statement failed", "error", err, "op", "UserSignup")
 		return false
 	}
 	defer stmt.Close()
 
 	ret, err := stmt.Exec(username, password)
 	if err != nil {
-		fmt.Println("Exec failed,err" + err.Error())
-		return false
-	}
-	//if rowsAffected, err := ret.RowsAffected(); err == nil && rowsAffected > 0 {
-	//	return true
-	//}
-	//return false
-	rowsAffected, err := ret.RowsAffected()
-	if err != nil {
-		fmt.Println("RowsAffected failed:", err)
+		slog.Error("exec failed", "error", err, "op", "UserSignup")
 		return false
 	}
 
-	fmt.Println("Rows affected:", rowsAffected)
+	rowsAffected, err := ret.RowsAffected()
+	if err != nil {
+		slog.Error("rows affected failed", "error", err, "op", "UserSignup")
+		return false
+	}
+
 	if rowsAffected == 0 {
-		fmt.Println("User already exists, signup failed")
+		slog.Info("user already exists", "username", username)
 		return false
 	}
 
 	return true
 }
 
+// UserSignin 验证用户名和密码（已迁移至 handler 层 bcrypt 验证，此函数保留兼容）
 func UserSignin(username string, encpwd string) bool {
-	//db := mydb.DBConn()
-	//fmt.Println("DB connection:", db)
-	//
-
-	//db := mydb.DBConn()
-	//var version, dbName string
-	//err := db.QueryRow("SELECT VERSION()").Scan(&version)
-	//if err != nil {
-	//	fmt.Println("Version query error:", err)
-	//} else {
-	//	fmt.Println("MySQL version:", version)
-	//}
-	//
-	//err = db.QueryRow("SELECT DATABASE()").Scan(&dbName)
-	//if err != nil {
-	//	fmt.Println("Database query error:", err)
-	//} else {
-	//	fmt.Println("Current database:", dbName)
-	//}
-	db := mydb.DBConn()
-	rows, err := db.Query("SELECT user_name,user_pwd FROM tbl_user")
+	stmt, err := mydb.DBConn().Prepare("SELECT user_pwd FROM tbl_user WHERE user_name=? LIMIT 1")
 	if err != nil {
-		fmt.Println("Query error:", err)
-	}
-	for rows.Next() {
-		var uname, pwd string
-		rows.Scan(&uname, &pwd)
-		fmt.Printf("DB row: [%s] [%s]\n", uname, pwd)
-	}
-	defer rows.Close()
-
-	stmt, err := mydb.DBConn().Prepare("SELECT user_pwd FROM tbl_user WHERE user_name=? limit 1")
-	if err != nil {
-		fmt.Println("Failed to prepare statement ,err" + err.Error())
+		slog.Error("prepare statement failed", "error", err, "op", "UserSignin")
 		return false
 	}
 	defer stmt.Close()
 
-	//测试
-	fmt.Printf("Login attempt, username:[%s], password:[%s]\n", username, encpwd)
-
 	var storedPwd string
 	err = stmt.QueryRow(username).Scan(&storedPwd)
 	if err != nil {
-		fmt.Println("User does not exist, username:", username)
 		return false
 	}
 
-	//比较密码是否一致
-	if storedPwd != encpwd {
-		fmt.Println("Password mismathch for user,username :" + username)
-		return false
-	}
-	fmt.Println("User login success:" + username)
-	return true
+	return storedPwd == encpwd
 }
 
-// UpdateToken:刷新用户登录的token
+// UpdateToken 刷新用户登录的 token
 func UpdateToken(username string, token string) bool {
 	stmt, err := mydb.DBConn().Prepare(
-		"replace into tbl_user_token(`user_name`,`user_token`,update_at,expired_at) values (?,?,?,?)")
+		"REPLACE INTO tbl_user_token(`user_name`,`user_token`,update_at,expired_at) VALUES (?,?,?,?)")
 	if err != nil {
-		fmt.Println(err.Error())
+		slog.Error("prepare statement failed", "error", err, "op", "UpdateToken")
 		return false
 	}
 	defer stmt.Close()
 
 	updateAt := time.Now()
-	expireAt := updateAt.Add(24 * time.Hour) //token 有效期为24h
+	expireAt := updateAt.Add(24 * time.Hour) // token 有效期 24h
 
 	_, err = stmt.Exec(username, token, updateAt, expireAt)
 	if err != nil {
-		fmt.Println(err.Error())
+		slog.Error("exec failed", "error", err, "op", "UpdateToken")
 		return false
 	}
 	return true
 }
 
+// User 用户信息结构
 type User struct {
-	Username     string
-	Email        string
-	Phone        string
-	SignupAt     string
-	LastActiveAt string
-	Status       int
+	Username     string `json:"Username"`
+	Email        string `json:"Email"`
+	Phone        string `json:"Phone"`
+	SignupAt     string `json:"SignupAt"`
+	LastActiveAt string `json:"LastActiveAt"`
+	Status       int    `json:"Status"`
 }
 
-// GetUserInfo
+// GetUserInfo 查询用户信息
 func GetUserInfo(username string) (User, error) {
 	user := User{}
 
 	stmt, err := mydb.DBConn().Prepare(
-		"select user_name,signup_at from tbl_user where user_name=? limit 1")
+		"SELECT user_name, signup_at FROM tbl_user WHERE user_name=? LIMIT 1")
 	if err != nil {
-		fmt.Println(err.Error())
+		slog.Error("prepare statement failed", "error", err, "op", "GetUserInfo")
 		return user, err
 	}
-
 	defer stmt.Close()
-	//执行查询操作
+
 	err = stmt.QueryRow(username).Scan(&user.Username, &user.SignupAt)
 	if err != nil {
 		return user, err

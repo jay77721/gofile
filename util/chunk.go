@@ -1,42 +1,30 @@
 package util
 
 import (
-	"context"
-	"filestore-server/redis"
+	"filestore-server/rd"
 )
 
-var ctx = context.Background()
-
-// 记录chunk上传成功
+// AddChunk 记录 chunk 上传成功
 func AddChunk(filehash string, index int) error {
-
 	key := "chunk:" + filehash
-
-	return redis.RDB.SAdd(ctx, key, index).Err()
+	return rd.RDB.SAdd(rd.Ctx, key, index).Err()
 }
 
-// 获取已上传chunk
+// GetUploadedChunks 获取已上传的 chunk 列表
 func GetUploadedChunks(filehash string) ([]string, error) {
-
 	key := "chunk:" + filehash
-
-	return redis.RDB.SMembers(ctx, key).Result()
+	return rd.RDB.SMembers(rd.Ctx, key).Result()
 }
 
-// 判断chunk是否存在
+// ChunkExists 判断 chunk 是否已存在
 func ChunkExists(filehash string, index int) bool {
-
 	key := "chunk:" + filehash
-
-	res, _ := redis.RDB.SIsMember(ctx, key, index).Result()
-
+	res, _ := rd.RDB.SIsMember(rd.Ctx, key, index).Result()
 	return res
 }
 
-// 删除chunk记录
+// ClearChunks 删除 chunk 记录
 func ClearChunks(filehash string) {
-
 	key := "chunk:" + filehash
-
-	redis.RDB.Del(ctx, key)
+	rd.RDB.Del(rd.Ctx, key)
 }

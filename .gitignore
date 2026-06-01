@@ -33,7 +33,7 @@ logs/
 
 # Uploads and data (should not be committed)
 uploads/
-db/
+chunks/
 
 # Temporary files
 *.tmp

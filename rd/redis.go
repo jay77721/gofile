@@ -2,74 +2,53 @@ package rd
 
 import (
 	"context"
-	"github.com/redis/go-redis/v9"
-	"log"
+	"fmt"
+	"log/slog"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 var (
 	RDB *redis.Client
-	ctx = context.Background()
+	Ctx = context.Background()
 )
 
-// 初始化Redis连接池
-func InitRedis() {
-
+// InitRedis 初始化 Redis 连接池
+func InitRedis(addr, password string, db int) error {
 	RDB = redis.NewClient(&redis.Options{
-		Addr:         "127.0.0.1:6379",
-		Password:     "",
-		DB:           0,
-		PoolSize:     20, // 连接池大小
+		Addr:         addr,
+		Password:     password,
+		DB:           db,
+		PoolSize:     20,
 		MinIdleConns: 5,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
 	})
 
-	_, err := RDB.Ping(ctx).Result()
+	_, err := RDB.Ping(Ctx).Result()
 	if err != nil {
-		log.Fatal("Redis connect failed:", err)
+		return fmt.Errorf("redis connect failed: %w", err)
 	}
 
-	log.Println("Redis connected")
+	slog.Info("Redis connected", "addr", addr)
+	return nil
 }
 
-// 记录chunk上传成功
-func AddChunk(filehash string, index int) {
-
-	key := "chunk:" + filehash
-
-	RDB.SAdd(ctx, key, index)
-}
-
-// 获取已上传chunk
-func GetUploadedChunks(filehash string) ([]string, error) {
-
-	key := "chunk:" + filehash
-
-	return RDB.SMembers(ctx, key).Result()
-}
-
-// 删除chunk记录
-func ClearChunks(filehash string) {
-
-	key := "chunk:" + filehash
-
-	RDB.Del(ctx, key)
-}
-
-// 记录文件hash
+// SetFileHash 记录文件 hash 到 Redis（秒传缓存）
 func SetFileHash(hash string, location string) {
-
 	key := "file:" + hash
-
-	RDB.Set(ctx, key, location, 0)
+	RDB.Set(Ctx, key, location, 0)
 }
 
-// 查询文件hash
+// GetFileHash 查询文件 hash（秒传检测）
 func GetFileHash(hash string) (string, error) {
-
 	key := "file:" + hash
+	return RDB.Get(Ctx, key).Result()
+}
 
-	return RDB.Get(ctx, key).Result()
+// HealthCheck 检查 Redis 连通性
+func HealthCheck() error {
+	return RDB.Ping(Ctx).Err()
 }

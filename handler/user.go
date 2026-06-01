@@ -1,117 +1,96 @@
 package handler
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	dblayer "filestore-server/db"
 	mydb "filestore-server/db/mysql"
 	"filestore-server/util"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
-const (
-	pwd_salt = "*#890"
-)
-
-// SignupHandler : 处理用户注册请求
+// SignupHandler 处理用户注册请求
 func SignupHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("SignupHandler called") // <- 确认函数是否触发
 	if r.Method == "GET" {
 		http.ServeFile(w, r, "./static/view/signup.html")
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		w.Write([]byte("parse form error"))
+		writeJSON(w, http.StatusBadRequest, 1, "请求参数解析失败", nil)
 		return
 	}
 
 	username := r.FormValue("username")
 	password := r.FormValue("password")
-	fmt.Println("SignupHandler received username:", username, "password:", password)
-	//username := r.Form.Get("username")
-	//password := r.Form.Get("password")
-	//err := r.ParseMultipartForm(10 << 20) // 最大 10MB
-	//if err != nil {
-	//	fmt.Println("ParseMultipartForm error:", err)
-	//	w.Write([]byte("fail"))
-	//	return
-	//}
-	//if err := r.ParseMultipartForm(10 << 20); err != nil {
-	//	fmt.Println("ParseMultipartForm error:", err)
-	//	w.Write([]byte("fail"))
-	//	return
-	//}
-	//usernameArr := r.MultipartForm.Value["username"]
-	//passwordArr := r.MultipartForm.Value["password"]
-	//if len(usernameArr) == 0 || len(passwordArr) == 0 {
-	//	fmt.Println("username or password empty")
-	//	w.Write([]byte("fail"))
-	//	return
-	//}
-	////username := r.FormValue("username")
-	////password := r.FormValue("password")
-	//username := usernameArr[0]
-	//password := passwordArr[0]
+
 	if len(username) < 3 || len(password) < 5 {
-		w.Write([]byte("invalid parameter"))
+		writeJSON(w, http.StatusBadRequest, 1, "用户名至少3位，密码至少5位", nil)
 		return
 	}
 
-	//fmt.Println("username:", username)
-	//fmt.Println("password:", password)
-	//fmt.Println("Received username:", r.FormValue("username"))
-	//fmt.Println("Received password:", r.FormValue("password"))
+	// 使用 bcrypt 哈希密码
+	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		slog.Error("bcrypt hash failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, 1, "注册失败，请稍后重试", nil)
+		return
+	}
 
-	enc_passwd := util.Sha1([]byte(password + pwd_salt))
-	fmt.Println("enc_passwd:", enc_passwd)
-
-	suc := dblayer.UserSignup(username, enc_passwd)
+	suc := dblayer.UserSignup(username, string(hashedPwd))
 	if suc {
-		fmt.Println("UserSignup success")
-		w.Write([]byte("success"))
+		slog.Info("user registered", "username", username)
+		writeJSON(w, http.StatusOK, 0, "注册成功", nil)
 	} else {
-		fmt.Println("UserSignup failed!")
-		w.Write([]byte("fail"))
+		writeJSON(w, http.StatusOK, 1, "用户名已存在", nil)
 	}
 }
 
-// SignInHandler :登录接口
+// SignInHandler 登录接口
 func SignInHandler(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		fmt.Println("ParseMultipartForm error:", err)
-		w.Write([]byte("fail"))
+		writeJSON(w, http.StatusBadRequest, 1, "请求参数解析失败", nil)
 		return
 	}
+
 	username := r.PostFormValue("username")
 	password := r.PostFormValue("password")
 	if len(username) == 0 || len(password) == 0 {
-		fmt.Println("username or password empty")
-		w.Write([]byte("fail"))
+		writeJSON(w, http.StatusBadRequest, 1, "用户名和密码不能为空", nil)
 		return
 	}
 
-	encPasswd := util.Sha1([]byte(password + pwd_salt))
-
-	//1.校验用户名和密码
-	pwdChecked := dblayer.UserSignin(username, encPasswd)
-	if !pwdChecked {
-		w.Write([]byte("fail"))
+	// 从数据库获取哈希密码并验证
+	if !checkPassword(username, password) {
+		slog.Warn("login failed", "username", username, "reason", "invalid credentials")
+		writeJSON(w, http.StatusOK, 1, "用户名或密码错误", nil)
 		return
 	}
 
-	//2.生成访问凭证（token）
-	token := GenToken(username)
+	// 生成安全的随机 token
+	token, err := generateToken()
+	if err != nil {
+		slog.Error("generate token failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, 1, "登录失败，请稍后重试", nil)
+		return
+	}
+
 	upRes := dblayer.UpdateToken(username, token)
 	if !upRes {
-		w.Write([]byte("fail"))
+		writeJSON(w, http.StatusInternalServerError, 1, "登录失败，请稍后重试", nil)
 		return
 	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   3600,
 	})
 	http.SetCookie(w, &http.Cookie{
@@ -119,12 +98,12 @@ func SignInHandler(w http.ResponseWriter, r *http.Request) {
 		Value:    username,
 		Path:     "/",
 		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   3600,
 	})
 
-	//3.登录成功后重定向到首页
-	//w.Write([]byte("success"))
-	//return
+	slog.Info("user logged in", "username", username)
+
 	resp := util.RespMsg{
 		Code: 0,
 		Msg:  "ok",
@@ -142,85 +121,23 @@ func SignInHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp.JSONBytes())
 }
 
-// UserInfoHandler :查询用户信息
-//
-//	func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
-//		//1.解析请求参数
-//		//if err := r.ParseForm(); err != nil {
-//		//	fmt.Println("ParseForm error:", err)
-//		//	w.Write([]byte("fail"))
-//		//	return
-//		//}
-//		usernameCookie, err := r.Cookie("username")
-//		if err != nil {
-//			w.WriteHeader(http.StatusUnauthorized)
-//			return
-//		}
-//		tokenCookie, err := r.Cookie("token")
-//		if err != nil {
-//			w.WriteHeader(http.StatusUnauthorized)
-//			return
-//		}
-//		username := usernameCookie.Value
-//		token := tokenCookie.Value
-//		//username := r.FormValue("username")
-//		//token := r.FormValue("token")
-//		////2.验证token是否有效
-//		isValidToken := isTokenValid(username, token)
-//		if !isValidToken {
-//			w.WriteHeader(http.StatusForbidden)
-//			return
-//		}
-//		//3.查询用户信息
-//		user, err := dblayer.GetUserInfo(username)
-//		if err != nil {
-//			w.WriteHeader(http.StatusForbidden)
-//			return
-//		}
-//
-//		//4.组装并响应用户数据
-//		resp := util.RespMsg{
-//			Code: 0,
-//			Msg:  "ok",
-//			Data: user,
-//		}
-//		w.Header().Set("Content-Type", "application/json")
-//		w.Write(resp.JSONBytes())
-//	}
+// UserInfoHandler 查询用户信息
 func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
-	// 1. 获取 Cookie
 	usernameCookie, err := r.Cookie("username")
 	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"code":1,"msg":"缺少登录信息"}`))
+		writeJSON(w, http.StatusUnauthorized, 1, "缺少登录信息", nil)
 		return
 	}
-	//tokenCookie, err := r.Cookie("token")
-	//if err != nil {
-	//	w.WriteHeader(http.StatusUnauthorized)
-	//	w.Write([]byte(`{"code":1,"msg":"缺少登录信息"}`))
-	//	return
-	//}
 
 	username := usernameCookie.Value
-	//token := tokenCookie.Value
 
-	//// 2. 验证 token
-	//if !isTokenValid(username, token) {
-	//	w.WriteHeader(http.StatusUnauthorized)
-	//	w.Write([]byte(`{"code":1,"msg":"登录已过期，请重新登录"}`))
-	//	return
-	//}
-
-	// 3. 查询用户信息
 	user, err := dblayer.GetUserInfo(username)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"code":2,"msg":"获取用户信息失败"}`))
+		slog.Error("get user info failed", "error", err, "username", username)
+		writeJSON(w, http.StatusInternalServerError, 1, "获取用户信息失败", nil)
 		return
 	}
 
-	// 4. 返回 JSON
 	resp := util.RespMsg{
 		Code: 0,
 		Msg:  "ok",
@@ -230,46 +147,78 @@ func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp.JSONBytes())
 }
 
-func GenToken(username string) string {
-	// 40位字符 ： md5(username + timestamp + token_salt) + timestamp[:8]
-	ts := fmt.Sprintf("%x", time.Now().Unix())
-	tokenPrefix := util.MD5([]byte(username + ts + "_tokensalt"))
-	return tokenPrefix + ts[:8]
-}
-
-// isTokenValid : token是否有效
-func isTokenValid(username string, token string) bool {
-	//TODO:判断token的时效性 ，是否过期
-	//TODO：从数据库表tbl_user_token查询username对应的token信息
-	//TODO：对比连个token是否相同
-	stmt, err := mydb.DBConn().Prepare(
-		"select user_token,expired_at from tbl_user_token where user_name=? limit 1")
+// checkPassword 验证用户密码（bcrypt）
+func checkPassword(username, password string) bool {
+	db := mydb.DBConn()
+	stmt, err := db.Prepare("SELECT user_pwd FROM tbl_user WHERE user_name=? LIMIT 1")
 	if err != nil {
-		fmt.Println("err:", err)
+		slog.Error("prepare statement failed", "error", err, "op", "checkPassword")
 		return false
 	}
 	defer stmt.Close()
 
-	var expired_at time.Time
-	var user_token string
-
-	err = stmt.QueryRow(username).Scan(&user_token, &expired_at)
+	var storedHash string
+	err = stmt.QueryRow(username).Scan(&storedHash)
 	if err != nil {
-		fmt.Println("Query err:", err)
 		return false
 	}
 
-	if user_token != token {
-		fmt.Println("Token mismath for user ", username)
+	// bcrypt 验证
+	err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
+	return err == nil
+}
+
+// generateToken 生成安全的随机 token（64 位十六进制）
+func generateToken() (string, error) {
+	b := make([]byte, 32)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// isTokenValid 验证 token 是否有效
+func isTokenValid(username string, token string) bool {
+	stmt, err := mydb.DBConn().Prepare(
+		"SELECT user_token, expired_at FROM tbl_user_token WHERE user_name=? LIMIT 1")
+	if err != nil {
+		slog.Error("prepare statement failed", "error", err, "op", "isTokenValid")
+		return false
+	}
+	defer stmt.Close()
+
+	var expiredAt time.Time
+	var userToken string
+
+	err = stmt.QueryRow(username).Scan(&userToken, &expiredAt)
+	if err != nil {
 		return false
 	}
 
-	if expired_at.Before(time.Now()) {
-		fmt.Println("Token expired for user :", username, "expired at: ", expired_at)
+	if userToken != token {
+		slog.Warn("token mismatch", "username", username)
+		return false
 	}
-	//Token 有效
+
+	if expiredAt.Before(time.Now()) {
+		slog.Warn("token expired", "username", username, "expired_at", expiredAt)
+		return false
+	}
+
 	return true
 }
 
-//ALTER TABLE tbl_user_token ADD COLUMN expired_at DATETIME;
-//ALTER TABLE tbl_user_token ADD COLUMN update_at DATETIME;
+// writeJSON 统一 JSON 响应
+func writeJSON(w http.ResponseWriter, statusCode int, code int, msg string, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	resp := util.RespMsg{Code: code, Msg: msg, Data: data}
+	w.Write(resp.JSONBytes())
+}
+
+// GenToken 保留导出函数供其他包使用（兼容）
+func GenToken(username string) string {
+	token, _ := generateToken()
+	return token
+}

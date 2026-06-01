@@ -3,34 +3,35 @@ package mysql
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"time"
+
 	_ "github.com/go-sql-driver/mysql"
-	"os"
 )
 
 var db *sql.DB
 
-func init() {
+// Init 初始化 MySQL 连接池
+func Init(dsn string) error {
 	var err error
-	db, err = sql.Open("mysql", "root:root@tcp(192.168.182.139:3307)/fileserver?charset=utf8mb4&parseTime=True&loc=Local")
+	db, err = sql.Open("mysql", dsn)
 	if err != nil {
-		fmt.Println("error open DB:", err)
-		return
-	}
-	if err = db.Ping(); err != nil {
-		fmt.Println("Cannot connect to MySQL:", err)
-		return
+		return fmt.Errorf("open DB failed: %w", err)
 	}
 
-	db.SetMaxOpenConns(1000)
-	db.SetMaxIdleConns(1000)
-	fmt.Println("ping successfull")
-	if err != nil {
-		fmt.Println("failed to connected to mysql,err:" + err.Error())
-		os.Exit(1)
+	if err = db.Ping(); err != nil {
+		return fmt.Errorf("ping DB failed: %w", err)
 	}
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	slog.Info("MySQL connected")
+	return nil
 }
 
-// DBConn：返回数据库连接对象
+// DBConn 返回数据库连接对象
 func DBConn() *sql.DB {
 	return db
 }

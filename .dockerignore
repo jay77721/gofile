@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+
+# Build artifacts
+*.exe
+*.test
+*.out
+
+# Data directories
+uploads/
+chunks/
+
+# Environment files
+.env
+.env.local
+
+# Documentation
+README.md
+README_ZH.md
+CLAUDE.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Nezha monitoring
+.nezha/

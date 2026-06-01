@@ -7,6 +7,7 @@ import (
 	"filestore-server/util"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,112 +16,143 @@ import (
 	"time"
 )
 
-// 处理文件上传
+const (
+	MaxUploadSize = 100 << 20 // 100MB
+)
+
+// HealthCheckHandler 健康检查端点
+func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if err := rd.HealthCheck(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, 1, "redis unavailable", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, 0, "ok", nil)
+}
+
+// UploadHandler 处理文件上传
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
-	//fmt.Println("UploadHandler called")
 	switch r.Method {
 	case "GET":
-		//返回上传页面（index.html）
 		http.ServeFile(w, r, "./static/view/index.html")
 	case "POST":
+		// 限制上传大小
+		r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize)
 
 		fileHash := r.FormValue("filehash")
 		// 秒传检测
 		if fileHash != "" {
-
 			if TryFastUploadHandler(fileHash) {
-
-				w.Write([]byte("秒传成功"))
-
+				writeJSON(w, http.StatusOK, 0, "秒传成功", nil)
 				return
 			}
 		}
-		//解析上传的文件
+
+		// 解析上传的文件
 		file, header, err := r.FormFile("file")
 		if err != nil {
-			http.Error(w, "Failed to get data", http.StatusBadRequest)
+			writeJSON(w, http.StatusBadRequest, 1, "文件获取失败", nil)
 			return
 		}
 		defer file.Close()
 
-		//创建上传目录
-		os.MkdirAll("./uploads", 0755)
-		dstPath := filepath.Join("./uploads", header.Filename)
+		// 路径穿越防护：只取文件名
+		filename := filepath.Base(header.Filename)
+		dstPath := filepath.Join("./uploads", filename)
 
 		loc, _ := time.LoadLocation("Asia/Shanghai")
 		now := time.Now().In(loc)
 
 		fileMeta := meta.FileMeta{
-			FileName: header.Filename,
+			FileName: filename,
 			Location: dstPath,
 			UploadAt: now,
 		}
 
 		dst, err := os.Create(fileMeta.Location)
 		if err != nil {
-			http.Error(w, "Failed to create file", http.StatusBadRequest)
+			slog.Error("create file failed", "error", err, "filename", filename)
+			writeJSON(w, http.StatusInternalServerError, 1, "文件创建失败", nil)
 			return
 		}
 		defer dst.Close()
 
 		fileMeta.FileSize, err = io.Copy(dst, file)
 		if err != nil {
-			http.Error(w, "Failed to upload file", http.StatusBadRequest)
+			slog.Error("copy file failed", "error", err, "filename", filename)
+			writeJSON(w, http.StatusInternalServerError, 1, "文件上传失败", nil)
 			return
 		}
 
 		dst.Seek(0, 0)
 		fileMeta.FileSha1 = util.FileSha1(dst)
-		//meta.UpdateFileMeta(fileMeta)
-		_ = meta.UpdateFileMetaDB(fileMeta)
 
-		//打印文件hash值（测试）
-		fmt.Fprintf(w, "上传成功！文件SHA1: %s", fileMeta.FileSha1)
+		if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
+			slog.Warn("save file meta failed", "filehash", fileMeta.FileSha1)
+		}
 
-		//http.Redirect(w, r, "/file/upload/suc", http.StatusFound)
+		slog.Info("file uploaded", "filename", filename, "size", fileMeta.FileSize, "hash", fileMeta.FileSha1)
+		writeJSON(w, http.StatusOK, 0, "上传成功", map[string]string{
+			"filehash": fileMeta.FileSha1,
+		})
 	}
-
 }
 
+// UploadSucHandler 上传成功页面
 func UploadSucHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "Upload finished")
 }
 
-// GetFileMetaHandler: 获取文件元信息
+// GetFileHandler 获取文件元信息
 func GetFileHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-
 	filehash := r.Form.Get("filehash")
-	//fMeta := meta.GetFileMeta(filehash)
+	if filehash == "" {
+		writeJSON(w, http.StatusBadRequest, 1, "缺少 filehash 参数", nil)
+		return
+	}
+
 	fMeta, err := meta.GetFileMetaDB(filehash)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, http.StatusNotFound, 1, "文件不存在", nil)
 		return
 	}
 
 	data, err := json.Marshal(fMeta)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, 1, "数据序列化失败", nil)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
 }
 
+// DownloadHandler 下载文件
 func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	filehash := r.Form.Get("filehash")
-	fMeta := meta.GetFileMeta(filehash)
+	if filehash == "" {
+		writeJSON(w, http.StatusBadRequest, 1, "缺少 filehash 参数", nil)
+		return
+	}
+
+	fMeta, err := meta.GetFileMetaDB(filehash)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, 1, "文件不存在", nil)
+		return
+	}
 
 	file, err := os.Open(fMeta.Location)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		slog.Error("open file failed", "error", err, "filehash", filehash)
+		writeJSON(w, http.StatusInternalServerError, 1, "文件读取失败", nil)
 		return
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		slog.Error("read file failed", "error", err, "filehash", filehash)
+		writeJSON(w, http.StatusInternalServerError, 1, "文件读取失败", nil)
 		return
 	}
 
@@ -129,7 +161,7 @@ func DownloadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// FileMetaUpdateHandler:更新元信息接口（重命名）
+// FileMetaUpdateHandler 更新元信息接口（重命名）
 func FileMetaUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
@@ -138,161 +170,175 @@ func FileMetaUpdateHandler(w http.ResponseWriter, r *http.Request) {
 	newFileName := r.Form.Get("filename")
 
 	if opType != "0" {
-		w.WriteHeader(http.StatusForbidden)
+		writeJSON(w, http.StatusForbidden, 1, "不支持的操作", nil)
 		return
 	}
 	if r.Method == "GET" {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, 1, "仅支持 POST", nil)
+		return
+	}
+	if fileSha1 == "" || newFileName == "" {
+		writeJSON(w, http.StatusBadRequest, 1, "缺少参数", nil)
 		return
 	}
 
-	curFileMeta := meta.GetFileMeta(fileSha1)
-	curFileMeta.FileName = newFileName
-	//meta.UpdateFileMeta(curFileMeta)
+	curFileMeta, err := meta.GetFileMetaDB(fileSha1)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, 1, "文件不存在", nil)
+		return
+	}
+
+	curFileMeta.FileName = filepath.Base(newFileName)
 	_ = meta.UpdateFileMetaDB(curFileMeta)
 
-	data, err := json.Marshal(curFileMeta)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	data, _ := json.Marshal(curFileMeta)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
 }
 
-// FileDeleteHandler: 删除文件及元信息
+// FileDeleteHandler 删除文件及元信息（软删除）
 func FileDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	fileSha1 := r.Form.Get("filehash")
-	meta.RemoveFileMeta(fileSha1)
+	if fileSha1 == "" {
+		writeJSON(w, http.StatusBadRequest, 1, "缺少 filehash 参数", nil)
+		return
+	}
 
-	fileMeta := meta.GetFileMeta(fileSha1)
-	os.RemoveAll(fileMeta.Location)
+	// 软删除：更新数据库状态
+	if ok := meta.DeleteFileMetaDB(fileSha1); !ok {
+		writeJSON(w, http.StatusInternalServerError, 1, "删除失败", nil)
+		return
+	}
 
-	w.WriteHeader(http.StatusOK)
+	slog.Info("file deleted", "filehash", fileSha1)
+	writeJSON(w, http.StatusOK, 0, "删除成功", nil)
 }
 
-// FileQueryHandler:返回所有文件元信息列表
+// FileQueryHandler 返回所有文件元信息列表
 func FileQueryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		w.Write([]byte("only support GET method"))
+		writeJSON(w, http.StatusMethodNotAllowed, 1, "仅支持 GET", nil)
 		return
 	}
 
-	//获取内存中所有文件元信息
-	fileMetas := meta.GetAllFileMeta()
+	// 从 MySQL 查询
+	fileMetas, err := meta.GetAllFileMetaDB()
+	if err != nil {
+		slog.Error("query all files failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, 1, "查询失败", nil)
+		return
+	}
 
-	//转成JSON
 	data, err := json.Marshal(fileMetas)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("JSON Marshal fail"))
+		writeJSON(w, http.StatusInternalServerError, 1, "数据序列化失败", nil)
 		return
 	}
 
-	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
-
 }
 
-// 秒传
+// TryFastUploadHandler 秒传检测
 func TryFastUploadHandler(fileHash string) bool {
-
-	// 先查Redis
+	// 先查 Redis
 	loc, err := rd.GetFileHash(fileHash)
-
 	if err == nil && loc != "" {
 		return true
 	}
 
-	// 再查MySQL
+	// 再查 MySQL
 	fileMeta, err := meta.GetFileMetaDB(fileHash)
-
 	if err == nil && fileMeta.FileSha1 != "" {
-
-		// 写入Redis缓存
+		// 写入 Redis 缓存
 		rd.SetFileHash(fileHash, fileMeta.Location)
-
 		return true
 	}
 
 	return false
 }
 
-// 分块上传：UploadChunkHandler：
+// UploadChunkHandler 分块上传
 func UploadChunkHandler(w http.ResponseWriter, r *http.Request) {
-
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, 1, "仅支持 POST", nil)
 		return
 	}
+
+	// 限制分块大小
+	r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize)
 
 	fileHash := r.FormValue("filehash")
 	index := r.FormValue("index")
 
 	if fileHash == "" || index == "" {
-		http.Error(w, "invalid param", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, 1, "缺少 filehash 或 index 参数", nil)
 		return
 	}
 
 	chunkIndex, err := strconv.Atoi(index)
 	if err != nil || chunkIndex < 0 {
-		http.Error(w, "invalid chunk index", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, 1, "无效的 chunk index", nil)
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "chunk upload failed", 500)
+		writeJSON(w, http.StatusBadRequest, 1, "分块文件获取失败", nil)
 		return
 	}
 	defer file.Close()
 
-	// 已经上传过该分块则直接返回成功，便于断点续传的幂等处理
+	// 已上传过该分块则直接返回（幂等）
 	if util.ChunkExists(fileHash, chunkIndex) {
-		w.Write([]byte("chunk already uploaded"))
+		writeJSON(w, http.StatusOK, 0, "chunk already uploaded", nil)
 		return
 	}
 
-	dir := "./chunks/" + fileHash
+	dir := filepath.Join("./chunks", filepath.Base(fileHash))
 	os.MkdirAll(dir, 0755)
 
-	chunkPath := fmt.Sprintf("%s/%s", dir, index)
+	chunkPath := filepath.Join(dir, index)
 
 	dst, err := os.Create(chunkPath)
 	if err != nil {
-		http.Error(w, "create chunk fail", 500)
+		slog.Error("create chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex)
+		writeJSON(w, http.StatusInternalServerError, 1, "分块创建失败", nil)
 		return
 	}
 	defer dst.Close()
 
 	io.Copy(dst, file)
 
-	// Redis记录
 	_ = util.AddChunk(fileHash, chunkIndex)
 
-	w.Write([]byte("chunk upload success"))
+	slog.Info("chunk uploaded", "filehash", fileHash, "index", chunkIndex)
+	writeJSON(w, http.StatusOK, 0, "chunk upload success", nil)
 }
 
-// 断点续传：UploadStatusHandler
+// UploadStatusHandler 断点续传状态查询
 func UploadStatusHandler(w http.ResponseWriter, r *http.Request) {
-
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, 1, "仅支持 GET", nil)
 		return
 	}
 
 	fileHash := r.FormValue("filehash")
+	if fileHash == "" {
+		writeJSON(w, http.StatusBadRequest, 1, "缺少 filehash 参数", nil)
+		return
+	}
 
 	chunks, err := util.GetUploadedChunks(fileHash)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]"))
 		return
 	}
 
-	// 将已上传分块索引按从小到大排序，方便前端处理
 	sort.Slice(chunks, func(i, j int) bool {
 		ii, _ := strconv.Atoi(chunks[i])
 		jj, _ := strconv.Atoi(chunks[j])
@@ -300,76 +346,71 @@ func UploadStatusHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	data, _ := json.Marshal(chunks)
-
 	w.Header().Set("Content-Type", "application/json")
-
 	w.Write(data)
 }
 
-// 分块合并：MergeChunkHandler
+// MergeChunkHandler 分块合并
 func MergeChunkHandler(w http.ResponseWriter, r *http.Request) {
-
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeJSON(w, http.StatusMethodNotAllowed, 1, "仅支持 POST", nil)
 		return
 	}
 
 	fileHash := r.FormValue("filehash")
 	fileName := r.FormValue("filename")
-	totalStr := r.FormValue("chunks") // 可选：前端传入总分块数，用于校验
+	totalStr := r.FormValue("chunks")
 
 	if fileHash == "" || fileName == "" {
-		http.Error(w, "invalid param", http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, 1, "缺少 filehash 或 filename 参数", nil)
 		return
 	}
 
-	chunkDir := "./chunks/" + fileHash
+	// 路径穿越防护
+	fileName = filepath.Base(fileName)
+
+	chunkDir := filepath.Join("./chunks", filepath.Base(fileHash))
 
 	files, err := os.ReadDir(chunkDir)
 	if err != nil || len(files) == 0 {
-		http.Error(w, "chunk not exist", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, 1, "分块不存在", nil)
 		return
 	}
 
-	// 按chunk序号排序
+	// 按 chunk 序号排序
 	sort.Slice(files, func(i, j int) bool {
-
 		iIndex, _ := strconv.Atoi(files[i].Name())
 		jIndex, _ := strconv.Atoi(files[j].Name())
-
 		return iIndex < jIndex
 	})
 
-	// 如果提供了总分块数参数，则做一次基本校验，防止遗漏分块
+	// 校验分块数量
 	if totalStr != "" {
 		if total, err := strconv.Atoi(totalStr); err == nil && total > 0 {
 			if len(files) != total {
-				http.Error(w, "chunk count mismatch", http.StatusBadRequest)
+				writeJSON(w, http.StatusBadRequest, 1, fmt.Sprintf("分块数量不匹配: 期望 %d, 实际 %d", total, len(files)), nil)
 				return
 			}
 		}
 	}
 
-	// 创建上传目录
-	os.MkdirAll("./uploads", 0755)
-
 	dstPath := filepath.Join("./uploads", fileName)
 
 	dst, err := os.Create(dstPath)
 	if err != nil {
-		http.Error(w, "create file fail", http.StatusInternalServerError)
+		slog.Error("create merged file failed", "error", err, "filename", fileName)
+		writeJSON(w, http.StatusInternalServerError, 1, "合并文件创建失败", nil)
 		return
 	}
 	defer dst.Close()
 
-	// 合并chunk
+	// 合并 chunk
 	for _, f := range files {
-
 		chunkPath := filepath.Join(chunkDir, f.Name())
-
 		chunkFile, err := os.Open(chunkPath)
 		if err != nil {
-			http.Error(w, "open chunk fail", http.StatusInternalServerError)
+			slog.Error("open chunk failed", "error", err, "chunk", chunkPath)
+			writeJSON(w, http.StatusInternalServerError, 1, "分块读取失败", nil)
 			return
 		}
 
@@ -377,7 +418,8 @@ func MergeChunkHandler(w http.ResponseWriter, r *http.Request) {
 		chunkFile.Close()
 
 		if err != nil {
-			http.Error(w, "merge chunk fail", http.StatusInternalServerError)
+			slog.Error("merge chunk failed", "error", err, "chunk", chunkPath)
+			writeJSON(w, http.StatusInternalServerError, 1, "分块合并失败", nil)
 			return
 		}
 	}
@@ -385,11 +427,11 @@ func MergeChunkHandler(w http.ResponseWriter, r *http.Request) {
 	// 获取文件信息
 	stat, err := os.Stat(dstPath)
 	if err != nil {
-		http.Error(w, "stat file fail", http.StatusInternalServerError)
+		slog.Error("stat file failed", "error", err, "path", dstPath)
+		writeJSON(w, http.StatusInternalServerError, 1, "获取文件信息失败", nil)
 		return
 	}
 
-	// 生成Meta
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 
 	fileMeta := meta.FileMeta{
@@ -403,14 +445,13 @@ func MergeChunkHandler(w http.ResponseWriter, r *http.Request) {
 	// 写入数据库
 	meta.UpdateFileMetaDB(fileMeta)
 
-	// 写入Redis秒传缓存
+	// 写入 Redis 秒传缓存
 	rd.SetFileHash(fileHash, dstPath)
 
-	// 删除Redis chunk记录
+	// 清理 chunk 数据
 	util.ClearChunks(fileHash)
-
-	// 删除chunk目录
 	os.RemoveAll(chunkDir)
 
-	w.Write([]byte("merge success"))
+	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", stat.Size())
+	writeJSON(w, http.StatusOK, 0, "merge success", nil)
 }

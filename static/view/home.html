@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <title>用户主页 - 网盘系统</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -82,78 +81,106 @@
 </div>
 
 <script>
-    $(document).ready(function() {
-        // 自动请求用户信息（浏览器自动带 HttpOnly Cookie）
-        $.ajax({
-            url: "/user/info",
-            type: "POST",
-            dataType: "json",
-            xhrFields: { withCredentials: true }, // 自动带上 HttpOnly Cookie
-            success: function(data) {
-                if (data.code === 0) {
-                    $("#username").text(data.data.Username);
-                     const signupDate = new Date(data.data.SignupAt);
-                     $("#signupat").text(signupDate.toLocaleString());
-                    loadFileList();
-                } else {
-                    alert(data.msg || "登录已过期，请重新登录。");
-                    window.location.href = "/static/view/signin.html";
-                }
-            },
-            error: function(xhr) {
-                alert("无法获取用户信息，请重新登录。");
+    document.addEventListener("DOMContentLoaded", function() {
+        // 请求用户信息
+        fetch("/user/info", {
+            method: "GET",
+            credentials: "include"
+        })
+        .then(function(resp) { return resp.json(); })
+        .then(function(data) {
+            if (data.code === 0) {
+                document.getElementById("username").textContent = data.data.Username;
+                var signupDate = new Date(data.data.SignupAt);
+                document.getElementById("signupat").textContent = signupDate.toLocaleString();
+                loadFileList();
+            } else {
+                alert(data.msg || "登录已过期，请重新登录。");
                 window.location.href = "/static/view/signin.html";
             }
+        })
+        .catch(function() {
+            alert("无法获取用户信息，请重新登录。");
+            window.location.href = "/static/view/signin.html";
         });
 
-        $("#uploadForm").submit(function(e) {
+        // 文件上传
+        document.getElementById("uploadForm").addEventListener("submit", function(e) {
             e.preventDefault();
             var formData = new FormData(this);
-            $.ajax({
-                url: "/file/upload",
-                type: "POST",
-                data: formData,
-                processData: false,
-                contentType: false,
-                success: function(resp) {
+            fetch("/file/upload", {
+                method: "POST",
+                body: formData,
+                credentials: "include"
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                if (data.code === 0) {
                     alert("文件上传成功！");
                     loadFileList();
-                },
-                error: function() {
-                    alert("文件上传失败！");
+                } else {
+                    alert(data.msg || "文件上传失败！");
                 }
+            })
+            .catch(function() {
+                alert("文件上传失败！");
             });
         });
 
+        // 加载文件列表
         function loadFileList() {
-            $.ajax({
-                url: "/file/query",
-                type: "GET",
-                dataType: "json",
-                success: function(files) {
-                    var tbody = $("#fileTable tbody");
-                    tbody.empty();
-                    if (files.length === 0) {
-                        tbody.append("<tr><td colspan='4'>暂无文件</td></tr>");
-                    } else {
-                        files.forEach(function(file) {
-                            tbody.append(
-                                "<tr>" +
-                                "<td>" + file.filename + "</td>" +
-                                "<td>" + file.size + "</td>" +
-                                "<td>" + file.upload_time + "</td>" +
-                                "<td><a href='/file/download?filehash=" + file.filehash + "' style='color:#00ffe1;'>下载</a></td>" +
-                                "</tr>"
-                            );
-                        });
-                    }
+            fetch("/file/query", {
+                method: "GET",
+                credentials: "include"
+            })
+            .then(function(resp) { return resp.json(); })
+            .then(function(files) {
+                var tbody = document.querySelector("#fileTable tbody");
+                tbody.innerHTML = "";
+                if (files.length === 0) {
+                    var tr = document.createElement("tr");
+                    var td = document.createElement("td");
+                    td.setAttribute("colspan", "4");
+                    td.textContent = "暂无文件";
+                    tr.appendChild(td);
+                    tbody.appendChild(tr);
+                } else {
+                    files.forEach(function(file) {
+                        var tr = document.createElement("tr");
+
+                        var tdName = document.createElement("td");
+                        tdName.textContent = file.filename;
+
+                        var tdSize = document.createElement("td");
+                        tdSize.textContent = file.size;
+
+                        var tdTime = document.createElement("td");
+                        tdTime.textContent = file.upload_time;
+
+                        var tdOp = document.createElement("td");
+                        var a = document.createElement("a");
+                        a.href = "/file/download?filehash=" + encodeURIComponent(file.filehash);
+                        a.style.color = "#00ffe1";
+                        a.textContent = "下载";
+                        tdOp.appendChild(a);
+
+                        tr.appendChild(tdName);
+                        tr.appendChild(tdSize);
+                        tr.appendChild(tdTime);
+                        tr.appendChild(tdOp);
+                        tbody.appendChild(tr);
+                    });
                 }
+            })
+            .catch(function(err) {
+                console.error("load file list error:", err);
             });
         }
     });
+
     function updateTime() {
-        const now = new Date();
-        const formatted = now.getFullYear() + "/" +
+        var now = new Date();
+        var formatted = now.getFullYear() + "/" +
             String(now.getMonth()+1).padStart(2,'0') + "/" +
             String(now.getDate()).padStart(2,'0') + " " +
             String(now.getHours()).padStart(2,'0') + ":" +
@@ -163,7 +190,7 @@
     }
 
     updateTime();
-    setInterval(updateTime, 1000); // 每秒更新一次
+    setInterval(updateTime, 1000);
 </script>
 </body>
 </html>

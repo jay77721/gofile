@@ -147,8 +147,6 @@
                 credentials: "include" // ✅ 必须加上
             });
             const result = await response.json();
-            console.log("Server response:", result);
-            //  改为解析 JSON
             if (result.code === 0) {
                 msg.style.color = "lightgreen";
                 msg.textContent = "登录成功！正在跳转...";
@@ -165,9 +163,8 @@
                 msg.textContent = "用户名或密码错误";
             }
         } catch (err) {
-            console.error("Fetch error:", err);
             msg.style.color = "red";
-            msg.textContent = "请求失败，请检查控制台";
+            msg.textContent = "请求失败，请稍后再试";
         }
     });
 </script>
