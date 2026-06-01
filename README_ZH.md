@@ -15,7 +15,7 @@
   - 用户注册
   - 用户登录
   - 用户信息获取
-  - 基于 Cookie 的会话认证
+  - 基于 Cookie 的会话认证（SameSite=Strict）
   - bcrypt 密码哈希
 
 - ⚡ **分片上传**
@@ -35,6 +35,12 @@
   - 路径穿越防护（filepath.Base）
   - 所有文件接口需要登录认证
   - 输入验证和大小限制
+  - 登录/注册接口 IP 限流
+
+- 📊 **可观测性**
+  - 结构化 JSON 日志（log/slog）
+  - 健康检查端点（/healthz）
+  - 优雅关闭（SIGINT/SIGTERM）
 
 ## 🏗️ 项目架构
 
@@ -50,7 +56,8 @@ filestore-server/
 ├── handler/             # HTTP 请求处理器
 │   ├── auth.go          # 认证中间件
 │   ├── handler.go       # 文件上传下载处理器
-│   └── user.go          # 用户管理处理器
+│   ├── user.go          # 用户管理处理器
+│   └── ratelimit.go     # IP 限流中间件
 ├── meta/                # 文件元数据管理
 │   └── filemeta.go      # 文件元数据结构和数据库桥接
 ├── rd/                  # Redis 操作
@@ -59,8 +66,11 @@ filestore-server/
 │   ├── util.go          # 哈希工具（SHA1、MD5）
 │   ├── chunk.go         # 分片上传工具
 │   └── resp.go          # JSON 响应辅助函数
+├── migrations/          # SQL 迁移脚本
 ├── static/              # 静态文件（前端资源）
 ├── uploads/             # 上传文件存储
+├── Dockerfile           # 多阶段 Docker 构建
+├── docker-compose.yml   # Docker Compose 配置
 └── go.mod               # Go 模块定义
 ```
 
@@ -71,6 +81,8 @@ filestore-server/
 - **缓存**: Redis
 - **Web 框架**: net/http（标准库）
 - **认证方式**: 基于 Cookie 的会话 + bcrypt
+- **日志**: log/slog（结构化 JSON）
+- **容器化**: Docker + Docker Compose
 
 ## 📋 API 接口
 
@@ -95,11 +107,11 @@ filestore-server/
 
 ### 用户操作
 
-| 方法 | 接口 | 认证 | 描述 |
-|------|------|------|------|
-| POST | `/user/signup` | 否 | 用户注册 |
-| POST | `/user/signin` | 否 | 用户登录 |
-| GET | `/user/info` | 是 | 获取用户信息 |
+| 方法 | 接口 | 认证 | 限流 | 描述 |
+|------|------|------|------|------|
+| POST | `/user/signup` | 否 | 是 | 用户注册 |
+| POST | `/user/signin` | 否 | 是 | 用户登录 |
+| GET | `/user/info` | 是 | 否 | 获取用户信息 |
 
 ### 系统
 
@@ -158,29 +170,10 @@ docker compose up -d
    ```
 
 4. **创建数据库表**
-   ```sql
-   CREATE TABLE tbl_file (
-     file_sha1 char(40) NOT NULL PRIMARY KEY,
-     file_name varchar(256) NOT NULL DEFAULT '',
-     file_size bigint(20) DEFAULT 0,
-     file_addr varchar(512) DEFAULT '',
-     create_at datetime DEFAULT CURRENT_TIMESTAMP,
-     status tinyint(4) NOT NULL DEFAULT 0 COMMENT '0-正常, 1-已删除, 2-禁止'
-   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-   CREATE TABLE tbl_user (
-     user_name varchar(64) NOT NULL PRIMARY KEY,
-     user_pwd varchar(60) NOT NULL DEFAULT '' COMMENT 'bcrypt 哈希值',
-     signup_at datetime DEFAULT CURRENT_TIMESTAMP,
-     status tinyint(4) NOT NULL DEFAULT 0
-   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-   CREATE TABLE tbl_user_token (
-     user_name varchar(64) NOT NULL PRIMARY KEY,
-     user_token char(64) NOT NULL DEFAULT '',
-     update_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-     expired_at datetime
-   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+   ```bash
+   # 使用迁移脚本
+   mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
+   mysql -u root -p fileserver < migrations/000002_add_indexes.up.sql
    ```
 
 5. **启动服务器**
@@ -241,8 +234,34 @@ curl -X POST -F "username=testuser&password=password123" \
 - **Token 生成**: 32 字节随机 token，通过 crypto/rand 生成
 - **路径穿越防护**: 所有文件名通过 filepath.Base 过滤
 - **接口认证**: 所有文件操作需要有效的会话 Cookie
-- **输入验证**: 文件大小限制、参数校验
+- **CSRF 防护**: Cookie 设置 SameSite=Strict
+- **限流**: 登录/注册接口基于 IP 的令牌桶限流（5 请求/秒，突发 10）
+- **输入验证**: 文件大小限制（100MB）、参数校验
 - **软删除**: 文件标记为已删除，不物理移除
+
+## 🧪 测试
+
+```bash
+# 运行所有测试
+go test ./...
+
+# 运行特定包的测试
+go test ./util/...
+go test ./handler/...
+
+# 详细输出
+go test -v ./...
+```
+
+## 📊 日志
+
+服务器使用 `log/slog` 输出结构化 JSON 日志：
+
+```json
+{"time":"2025-01-01T12:00:00Z","level":"INFO","msg":"user logged in","username":"testuser"}
+{"time":"2025-01-01T12:00:00Z","level":"WARN","msg":"login failed","username":"testuser","reason":"invalid credentials"}
+{"time":"2025-01-01T12:00:00Z","level":"ERROR","msg":"prepare statement failed","error":"...","op":"checkPassword"}
+```
 
 ## 🚧 开发状态
 

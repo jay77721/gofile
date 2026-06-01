@@ -15,7 +15,7 @@ A lightweight file storage server built with Go, supporting file upload, downloa
   - User registration (signup)
   - User login (signin)
   - User information retrieval
-  - Cookie-based session authentication
+  - Cookie-based session authentication (SameSite=Strict)
   - bcrypt password hashing
 
 - ⚡ **Chunked Upload**
@@ -35,6 +35,12 @@ A lightweight file storage server built with Go, supporting file upload, downloa
   - Path traversal protection (filepath.Base)
   - All file endpoints require authentication
   - Input validation and size limits
+  - IP-based rate limiting on login/signup
+
+- 📊 **Observability**
+  - Structured JSON logging (log/slog)
+  - Health check endpoint (/healthz)
+  - Graceful shutdown (SIGINT/SIGTERM)
 
 ## 🏗️ Architecture
 
@@ -50,7 +56,8 @@ filestore-server/
 ├── handler/             # HTTP request handlers
 │   ├── auth.go          # Authentication middleware
 │   ├── handler.go       # File upload/download handlers
-│   └── user.go          # User management handlers
+│   ├── user.go          # User management handlers
+│   └── ratelimit.go     # IP-based rate limiting
 ├── meta/                # File metadata management
 │   └── filemeta.go      # File metadata structure and DB bridge
 ├── rd/                  # Redis operations
@@ -59,8 +66,11 @@ filestore-server/
 │   ├── util.go          # Hash utilities (SHA1, MD5)
 │   ├── chunk.go         # Chunk upload utilities
 │   └── resp.go          # JSON response helper
+├── migrations/          # SQL migration scripts
 ├── static/              # Static files (frontend assets)
 ├── uploads/             # Uploaded files storage
+├── Dockerfile           # Multi-stage Docker build
+├── docker-compose.yml   # Docker Compose configuration
 └── go.mod               # Go module definition
 ```
 
@@ -71,6 +81,8 @@ filestore-server/
 - **Cache**: Redis
 - **Web Framework**: net/http (standard library)
 - **Authentication**: Cookie-based session with bcrypt
+- **Logging**: log/slog (structured JSON)
+- **Container**: Docker + Docker Compose
 
 ## 📋 API Endpoints
 
@@ -95,11 +107,11 @@ filestore-server/
 
 ### User Operations
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/user/signup` | No | User registration |
-| POST | `/user/signin` | No | User login |
-| GET | `/user/info` | Yes | Get user information |
+| Method | Endpoint | Auth | Rate Limit | Description |
+|--------|----------|------|------------|-------------|
+| POST | `/user/signup` | No | Yes | User registration |
+| POST | `/user/signin` | No | Yes | User login |
+| GET | `/user/info` | Yes | No | Get user information |
 
 ### System
 
@@ -158,29 +170,10 @@ The server will start at `http://localhost:8080` with MySQL and Redis automatica
    ```
 
 4. **Create database tables**
-   ```sql
-   CREATE TABLE tbl_file (
-     file_sha1 char(40) NOT NULL PRIMARY KEY,
-     file_name varchar(256) NOT NULL DEFAULT '',
-     file_size bigint(20) DEFAULT 0,
-     file_addr varchar(512) DEFAULT '',
-     create_at datetime DEFAULT CURRENT_TIMESTAMP,
-     status tinyint(4) NOT NULL DEFAULT 0 COMMENT '0-normal, 1-deleted, 2-forbidden'
-   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-   CREATE TABLE tbl_user (
-     user_name varchar(64) NOT NULL PRIMARY KEY,
-     user_pwd varchar(60) NOT NULL DEFAULT '' COMMENT 'bcrypt hash',
-     signup_at datetime DEFAULT CURRENT_TIMESTAMP,
-     status tinyint(4) NOT NULL DEFAULT 0
-   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-   CREATE TABLE tbl_user_token (
-     user_name varchar(64) NOT NULL PRIMARY KEY,
-     user_token char(64) NOT NULL DEFAULT '',
-     update_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-     expired_at datetime
-   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+   ```bash
+   # Using migration scripts
+   mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
+   mysql -u root -p fileserver < migrations/000002_add_indexes.up.sql
    ```
 
 5. **Run the server**
@@ -241,8 +234,34 @@ All configuration is done via environment variables with sensible defaults:
 - **Token Generation**: 32-byte random tokens via crypto/rand
 - **Path Traversal Protection**: All filenames sanitized with filepath.Base
 - **Authentication**: All file operations require valid session cookie
-- **Input Validation**: File size limits, parameter validation
+- **CSRF Protection**: Cookies set with SameSite=Strict
+- **Rate Limiting**: IP-based token bucket on login/signup (5 req/s, burst 10)
+- **Input Validation**: File size limits (100MB), parameter validation
 - **Soft Delete**: Files are marked as deleted, not physically removed
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+go test ./...
+
+# Run specific package tests
+go test ./util/...
+go test ./handler/...
+
+# Run with verbose output
+go test -v ./...
+```
+
+## 📊 Logging
+
+The server uses structured JSON logging via `log/slog`:
+
+```json
+{"time":"2025-01-01T12:00:00Z","level":"INFO","msg":"user logged in","username":"testuser"}
+{"time":"2025-01-01T12:00:00Z","level":"WARN","msg":"login failed","username":"testuser","reason":"invalid credentials"}
+{"time":"2025-01-01T12:00:00Z","level":"ERROR","msg":"prepare statement failed","error":"...","op":"checkPassword"}
+```
 
 ## 🚧 Development Status
 
