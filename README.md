@@ -20,7 +20,7 @@
 ### Docker 部署（推荐）
 
 ```bash
-git clone <仓库地址>
+git clone git@github.com:jay77721/FileStore-server.git
 cd filestore-server
 docker compose up -d
 ```
