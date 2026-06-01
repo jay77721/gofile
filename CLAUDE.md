@@ -136,7 +136,7 @@ Tests cover:
 
 ## Development Conventions
 
-- **Language:** Code comments are bilingual (Chinese + English). README exists in both `README.md` (EN) and `README_ZH.md` (ZH).
+- **Language:** Code comments are bilingual (Chinese + English). README exists in both `README.md` (ZH, primary) and `README_EN.md` (EN).
 - **Naming:** Standard Go conventions — exported PascalCase, unexported camelCase, package names lowercase.
 - **Error handling:** HTTP handlers return JSON via `util.RespMsg` and `writeJSON()` helper. Errors logged via `slog.Error`/`slog.Warn`.
 - **No framework:** Pure `net/http`. Route params parsed from query strings or form values.

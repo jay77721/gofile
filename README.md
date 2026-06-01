@@ -1,284 +1,150 @@
-# FileStore Server [中文](README_ZH.md)
+# FileStore Server
 
-A lightweight file storage server built with Go, supporting file upload, download, user management, and chunked uploads.
+> 基于 Go 的轻量级网盘服务，支持文件上传/下载、分片上传与断点续传、用户认证、基于 hash 的秒传去重。
 
-## 🚀 Features
+[English](README_EN.md)
 
-- 📁 **File Management**
-  - Upload files with metadata (100MB size limit)
-  - Download files
-  - Update file metadata
-  - Delete files (soft delete)
-  - Query file information
+## 功能特性
 
-- 🔐 **User Authentication**
-  - User registration (signup)
-  - User login (signin)
-  - User information retrieval
-  - Cookie-based session authentication (SameSite=Strict)
-  - bcrypt password hashing
+- **文件管理** — 上传、下载、查询、重命名、软删除，100MB 大小限制
+- **用户认证** — 注册/登录，bcrypt 密码哈希，Cookie 会话（SameSite=Strict），24h Token 自动过期
+- **分片上传** — 大文件分片、断点续传、自动合并、基于 hash 的秒传去重
+- **安全防护** — 路径穿越防护、IP 令牌桶限流、输入校验、安全随机 Token
+- **可观测性** — 结构化 JSON 日志（log/slog）、健康检查端点、优雅关闭
 
-- ⚡ **Chunked Upload**
-  - Support for large file uploads
-  - Chunk status checking
-  - Automatic chunk merging
-  - Instant upload (deduplication by hash)
+## 快速开始
 
-- 🗄️ **Storage Backend**
-  - MySQL database for metadata
-  - Redis for caching and chunk tracking
-  - Local file system storage
-
-- 🛡️ **Security**
-  - bcrypt password hashing
-  - Secure random token generation (crypto/rand)
-  - Path traversal protection (filepath.Base)
-  - All file endpoints require authentication
-  - Input validation and size limits
-  - IP-based rate limiting on login/signup
-
-- 📊 **Observability**
-  - Structured JSON logging (log/slog)
-  - Health check endpoint (/healthz)
-  - Graceful shutdown (SIGINT/SIGTERM)
-
-## 🏗️ Architecture
-
-```
-filestore-server/
-├── main.go              # Entry point, HTTP routing, graceful shutdown
-├── config/
-│   └── config.go        # Environment-based configuration
-├── db/                  # Database operations
-│   ├── mysql/conn.go    # MySQL connection pool
-│   ├── file.go          # File-related DB operations
-│   └── user.go          # User-related DB operations
-├── handler/             # HTTP request handlers
-│   ├── auth.go          # Authentication middleware
-│   ├── handler.go       # File upload/download handlers
-│   ├── user.go          # User management handlers
-│   └── ratelimit.go     # IP-based rate limiting
-├── meta/                # File metadata management
-│   └── filemeta.go      # File metadata structure and DB bridge
-├── rd/                  # Redis operations
-│   └── redis.go         # Redis connection and cache operations
-├── util/                # Utility functions
-│   ├── util.go          # Hash utilities (SHA1, MD5)
-│   ├── chunk.go         # Chunk upload utilities
-│   └── resp.go          # JSON response helper
-├── migrations/          # SQL migration scripts
-├── static/              # Static files (frontend assets)
-├── uploads/             # Uploaded files storage
-├── Dockerfile           # Multi-stage Docker build
-├── docker-compose.yml   # Docker Compose configuration
-└── go.mod               # Go module definition
-```
-
-## 🛠️ Technology Stack
-
-- **Language**: Go 1.25.0
-- **Database**: MySQL
-- **Cache**: Redis
-- **Web Framework**: net/http (standard library)
-- **Authentication**: Cookie-based session with bcrypt
-- **Logging**: log/slog (structured JSON)
-- **Container**: Docker + Docker Compose
-
-## 📋 API Endpoints
-
-### File Operations (🔒 Require Authentication)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/file/upload` | Upload a file |
-| GET | `/file/meta` | Get file metadata |
-| GET | `/file/query` | Query all files |
-| GET | `/file/download` | Download a file |
-| POST | `/file/update` | Update file metadata |
-| POST | `/file/delete` | Delete a file (soft delete) |
-
-### Chunk Upload (🔒 Require Authentication)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/file/upload/chunk` | Upload file chunk |
-| GET | `/file/upload/status` | Check chunk upload status |
-| POST | `/file/upload/merge` | Merge uploaded chunks |
-
-### User Operations
-
-| Method | Endpoint | Auth | Rate Limit | Description |
-|--------|----------|------|------------|-------------|
-| POST | `/user/signup` | No | Yes | User registration |
-| POST | `/user/signin` | No | Yes | User login |
-| GET | `/user/info` | Yes | No | Get user information |
-
-### System
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/healthz` | Health check (MySQL + Redis) |
-
-## 🚦 Getting Started
-
-### Docker (Recommended)
+### Docker 部署（推荐）
 
 ```bash
-# Clone and start with Docker Compose
-git clone <repository-url>
+git clone <仓库地址>
 cd filestore-server
 docker compose up -d
 ```
 
-The server will start at `http://localhost:8080` with MySQL and Redis automatically configured.
+服务启动后访问 `http://localhost:8080`，MySQL 和 Redis 自动配置。
 
-### Manual Installation
+### 手动部署
 
-#### Prerequisites
+**环境要求：** Go 1.25+、MySQL、Redis
 
-- Go 1.25.0 or higher
-- MySQL database
-- Redis server
-
-#### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd filestore-server
-   ```
-
-2. **Install dependencies**
-   ```bash
-   go mod tidy
-   ```
-
-3. **Set environment variables**
-   ```bash
-   # MySQL connection string (required)
-   export MYSQL_DSN="user:password@tcp(host:port)/dbname?charset=utf8mb4&parseTime=True&loc=Local"
-
-   # Redis configuration (optional, defaults shown)
-   export REDIS_ADDR="127.0.0.1:6379"
-   export REDIS_PASS=""
-   export REDIS_DB=0
-
-   # Server configuration (optional, defaults shown)
-   export SERVER_ADDR=":8080"
-   export UPLOAD_DIR="./uploads"
-   export CHUNK_DIR="./chunks"
-   ```
-
-4. **Create database tables**
-   ```bash
-   # Using migration scripts
-   mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
-   mysql -u root -p fileserver < migrations/000002_add_indexes.up.sql
-   ```
-
-5. **Run the server**
-   ```bash
-   go run main.go
-   ```
-
-6. **Access the server**
-   - Server will start on `http://localhost:8080`
-   - Static files served from `/static/`
-   - Health check at `http://localhost:8080/healthz`
-
-## 📝 Usage Examples
-
-### Upload a File
 ```bash
-curl -X POST -F "file=@/path/to/your/file.txt" \
-  -b "username=testuser;token=your_token" \
+# 1. 安装依赖
+go mod tidy
+
+# 2. 设置环境变量
+export MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local"
+export REDIS_ADDR="127.0.0.1:6379"
+
+# 3. 初始化数据库
+mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
+mysql -u root -p fileserver < migrations/000002_add_indexes.up.sql
+
+# 4. 启动
+go run main.go
+```
+
+## 配置
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL 连接字符串 |
+| `REDIS_ADDR` | `127.0.0.1:6379` | Redis 地址 |
+| `REDIS_PASS` | （空） | Redis 密码 |
+| `REDIS_DB` | `0` | Redis DB 编号 |
+| `SERVER_ADDR` | `:8080` | HTTP 监听地址 |
+| `UPLOAD_DIR` | `./uploads` | 文件存储目录 |
+| `CHUNK_DIR` | `./chunks` | 分片临时目录 |
+
+## API 接口
+
+### 文件操作（🔒 需认证）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/file/upload` | 上传文件（支持秒传） |
+| `GET` | `/file/meta` | 获取文件元数据 |
+| `GET` | `/file/query` | 查询所有文件 |
+| `GET` | `/file/download` | 下载文件 |
+| `POST` | `/file/update` | 重命名文件 |
+| `POST` | `/file/delete` | 软删除文件 |
+
+### 分片上传（🔒 需认证）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/file/upload/chunk` | 上传单个分片 |
+| `GET` | `/file/upload/status` | 查询已上传分片 |
+| `POST` | `/file/upload/merge` | 合并分片为完整文件 |
+
+### 用户操作
+
+| 方法 | 路径 | 认证 | 限流 | 说明 |
+|------|------|:----:|:----:|------|
+| `POST` | `/user/signup` | ✗ | ✓ | 注册 |
+| `POST` | `/user/signin` | ✗ | ✓ | 登录，返回 Token |
+| `GET` | `/user/info` | ✓ | ✗ | 获取用户信息 |
+
+### 系统
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/healthz` | 健康检查（Redis ping） |
+
+## 使用示例
+
+```bash
+# 注册
+curl -X POST -d "username=test&password=123456" http://localhost:8080/user/signup
+
+# 登录
+curl -X POST -F "username=test&password=123456" http://localhost:8080/user/signin
+
+# 上传文件
+curl -X POST -F "file=@./test.txt" -b "username=test;token=YOUR_TOKEN" \
   http://localhost:8080/file/upload
+
+# 下载文件
+curl -b "username=test;token=YOUR_TOKEN" \
+  "http://localhost:8080/file/download?filehash=HASH" -o output.txt
 ```
 
-### Download a File
-```bash
-curl -X GET "http://localhost:8080/file/download?filehash=abc123" \
-  -b "username=testuser;token=your_token" \
-  --output file.txt
+## 项目结构
+
+```
+filestore-server/
+├── main.go              # 入口、路由注册、优雅关闭
+├── config/config.go     # 环境变量配置
+├── db/
+│   ├── mysql/conn.go    # MySQL 连接池
+│   ├── file.go          # tbl_file CRUD
+│   └── user.go          # tbl_user / tbl_user_token CRUD
+├── handler/
+│   ├── handler.go       # 文件上传/下载/查询/删除 + 分片上传
+│   ├── user.go          # 注册/登录 + bcrypt
+│   ├── auth.go          # 认证中间件（Cookie session）
+│   └── ratelimit.go     # IP 限流中间件
+├── meta/filemeta.go     # 文件元数据结构 + MySQL 桥接
+├── rd/redis.go          # Redis 连接 + hash 缓存
+├── util/
+│   ├── util.go          # SHA1、MD5、路径工具
+│   ├── chunk.go         # Redis 分片追踪
+│   └── resp.go          # JSON 响应辅助
+├── migrations/          # SQL 迁移脚本
+├── static/view/         # 前端 HTML 页面
+├── uploads/             # 文件存储目录
+├── Dockerfile           # 多阶段构建
+└── docker-compose.yml   # Docker Compose 编排
 ```
 
-### User Registration
-```bash
-curl -X POST -d "username=testuser&password=password123" \
-  http://localhost:8080/user/signup
-```
-
-### User Login
-```bash
-curl -X POST -F "username=testuser&password=password123" \
-  http://localhost:8080/user/signin
-```
-
-## ⚙️ Configuration
-
-All configuration is done via environment variables with sensible defaults:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL connection string |
-| `REDIS_ADDR` | `127.0.0.1:6379` | Redis server address |
-| `REDIS_PASS` | (empty) | Redis password |
-| `REDIS_DB` | `0` | Redis database number |
-| `SERVER_ADDR` | `:8080` | HTTP server listen address |
-| `UPLOAD_DIR` | `./uploads` | File upload directory |
-| `CHUNK_DIR` | `./chunks` | Chunk upload directory |
-
-## 🔒 Security Features
-
-- **Password Hashing**: bcrypt with default cost
-- **Token Generation**: 32-byte random tokens via crypto/rand
-- **Path Traversal Protection**: All filenames sanitized with filepath.Base
-- **Authentication**: All file operations require valid session cookie
-- **CSRF Protection**: Cookies set with SameSite=Strict
-- **Rate Limiting**: IP-based token bucket on login/signup (5 req/s, burst 10)
-- **Input Validation**: File size limits (100MB), parameter validation
-- **Soft Delete**: Files are marked as deleted, not physically removed
-
-## 🧪 Testing
+## 测试
 
 ```bash
-# Run all tests
-go test ./...
-
-# Run specific package tests
-go test ./util/...
-go test ./handler/...
-
-# Run with verbose output
-go test -v ./...
+go test ./...           # 运行全部测试
+go test ./util/...      # 工具包测试
+go test ./handler/...   # Handler 测试
 ```
 
-## 📊 Logging
+## 许可证
 
-The server uses structured JSON logging via `log/slog`:
-
-```json
-{"time":"2025-01-01T12:00:00Z","level":"INFO","msg":"user logged in","username":"testuser"}
-{"time":"2025-01-01T12:00:00Z","level":"WARN","msg":"login failed","username":"testuser","reason":"invalid credentials"}
-{"time":"2025-01-01T12:00:00Z","level":"ERROR","msg":"prepare statement failed","error":"...","op":"checkPassword"}
-```
-
-## 🚧 Development Status
-
-This project is under active development. Features may change and APIs are subject to modification.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📄 License
-
-This project is for educational and learning purposes.
-
-## 🆘 Support
-
-For issues and questions, please open an issue in the repository.
+本项目用于教育和学习目的。
