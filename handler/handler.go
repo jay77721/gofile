@@ -30,17 +30,6 @@ var (
 	globalCfg   *config.Config
 )
 
-// FileHandler 文件处理结构体，封装存储层和配置依赖
-type FileHandler struct {
-	store storage.Storage
-	cfg   *config.Config
-}
-
-// NewFileHandler 创建 FileHandler 实例
-func NewFileHandler(s storage.Storage, c *config.Config) *FileHandler {
-	return &FileHandler{store: s, cfg: c}
-}
-
 // InitStore 初始化存储层（由 main.go 调用，兼容旧模式）
 func InitStore(s storage.Storage, c *config.Config) {
 	globalStore = s
@@ -131,7 +120,7 @@ func UploadHandler(c *gin.Context) {
 		FileSize: fileSize,
 		FileSha1: fileSha1,
 		UploadAt: now,
-			Username: c.GetString("username"),
+		Username: c.GetString("username"),
 	}
 
 	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
@@ -314,10 +303,6 @@ func UploadChunkHandler(c *gin.Context) {
 
 	io.Copy(dst, file)
 
-	if err := util.AddChunk(fileHash, chunkIndex); err != nil {
-		slog.Error("add chunk index failed", "error", err, "filehash", fileHash, "index", chunkIndex)
-	}
-
 	slog.Info("chunk uploaded", "filehash", fileHash, "index", chunkIndex)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk upload success", "data": nil})
 }
@@ -396,7 +381,6 @@ func MergeChunkHandler(c *gin.Context) {
 		if err := globalStore.Delete(context.Background(), fileHash); err != nil {
 			slog.Error("rollback merged storage failed", "error", err, "filehash", fileHash)
 		}
-		util.ClearChunks(fileHash)
 		os.RemoveAll(chunkDir)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件合并失败", "data": nil})
 		return

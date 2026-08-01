@@ -36,24 +36,6 @@ func UserSignup(username string, password string) bool {
 	return true
 }
 
-// UserSignin 验证用户名和密码（已迁移至 handler 层 bcrypt 验证，此函数保留兼容）
-func UserSignin(username string, encpwd string) bool {
-	stmt, err := mydb.DBConn().Prepare("SELECT user_pwd FROM tbl_user WHERE user_name=? LIMIT 1")
-	if err != nil {
-		slog.Error("prepare statement failed", "error", err, "op", "UserSignin")
-		return false
-	}
-	defer stmt.Close()
-
-	var storedPwd string
-	err = stmt.QueryRow(username).Scan(&storedPwd)
-	if err != nil {
-		return false
-	}
-
-	return storedPwd == encpwd
-}
-
 // UpdateToken 刷新用户登录的 token
 func UpdateToken(username string, token string) bool {
 	stmt, err := mydb.DBConn().Prepare(

@@ -7,7 +7,6 @@ import (
 	"hash"
 	"io"
 	"os"
-	"path/filepath"
 )
 
 type Sha1Stream struct {
@@ -61,10 +60,9 @@ func PathExists(path string) (bool, error) {
 }
 
 func GetFileSize(filename string) int64 {
-	var result int64
-	filepath.Walk(filename, func(path string, info os.FileInfo, err error) error {
-		result = info.Size()
-		return nil
-	})
-	return result
+	info, err := os.Stat(filename)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }

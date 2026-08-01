@@ -166,8 +166,3 @@ func isTokenValid(username string, token string) bool {
 	return true
 }
 
-// GenToken 保留导出函数供其他包使用（兼容）
-func GenToken(username string) string {
-	token, _ := generateToken()
-	return token
-}
