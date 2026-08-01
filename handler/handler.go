@@ -199,31 +199,37 @@ func DownloadHandler(c *gin.Context) {
 func FileMetaUpdateHandler(c *gin.Context) {
 	opType := c.PostForm("op")
 	fileSha1 := c.PostForm("filehash")
-	newFileName := c.PostForm("filename")
+	username := c.GetString("username")
 
 	if opType != "0" {
 		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "不支持的操作", "data": nil})
 		return
 	}
-	if fileSha1 == "" || newFileName == "" {
+	if fileSha1 == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少参数", "data": nil})
 		return
 	}
 
-	curFileMeta, err := meta.GetFileMetaDBByUser(fileSha1, c.GetString("username"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+	newFileName := c.PostForm("filename")
+	if newFileName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filename 参数", "data": nil})
 		return
 	}
 
-	curFileMeta.FileName = filepath.Base(newFileName)
-	if ok := meta.UpdateFileMetaDB(curFileMeta); !ok {
+	// 验证文件所有权
+	_, err := meta.GetFileMetaDBByUser(fileSha1, username)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
+		return
+	}
+
+	if ok := meta.UpdateFileMetaDBName(fileSha1, filepath.Base(newFileName)); !ok {
 		slog.Error("update file meta failed", "filehash", fileSha1)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "更新失败", "data": nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": curFileMeta})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "更新成功", "data": nil})
 }
 
 // FileDeleteHandler 删除文件及元信息（软删除）
@@ -234,13 +240,20 @@ func FileDeleteHandler(c *gin.Context) {
 		return
 	}
 
+	// 验证文件所有权
+	_, err := meta.GetFileMetaDBByUser(fileSha1, c.GetString("username"))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
+		return
+	}
+
 	// 软删除：更新数据库状态
 	if ok := meta.DeleteFileMetaDB(fileSha1); !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "删除失败", "data": nil})
 		return
 	}
 
-	slog.Info("file deleted", "filehash", fileSha1)
+	slog.Info("file deleted", "filehash", fileSha1, "username", c.GetString("username"))
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功", "data": nil})
 }
 
