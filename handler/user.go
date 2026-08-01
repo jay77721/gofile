@@ -106,23 +106,14 @@ func UserInfoHandler(c *gin.Context) {
 
 // checkPassword 验证用户密码（bcrypt）
 func checkPassword(username, password string) bool {
-	db := mydb.DBConn()
-	stmt, err := db.Prepare("SELECT user_pwd FROM tbl_user WHERE user_name=? LIMIT 1")
-	if err != nil {
-		slog.Error("prepare statement failed", "error", err, "op", "checkPassword")
-		return false
-	}
-	defer stmt.Close()
-
 	var storedHash string
-	err = stmt.QueryRow(username).Scan(&storedHash)
+	err := mydb.DBConn().QueryRow(
+		"SELECT user_pwd FROM tbl_user WHERE user_name=? LIMIT 1", username,
+	).Scan(&storedHash)
 	if err != nil {
 		return false
 	}
-
-	// bcrypt 验证
-	err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
-	return err == nil
+	return bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) == nil
 }
 
 // generateToken 生成安全的随机 token（64 位十六进制）
@@ -137,32 +128,22 @@ func generateToken() (string, error) {
 
 // isTokenValid 验证 token 是否有效
 func isTokenValid(username string, token string) bool {
-	stmt, err := mydb.DBConn().Prepare(
-		"SELECT user_token, expired_at FROM tbl_user_token WHERE user_name=? LIMIT 1")
-	if err != nil {
-		slog.Error("prepare statement failed", "error", err, "op", "isTokenValid")
-		return false
-	}
-	defer stmt.Close()
-
 	var expiredAt time.Time
 	var userToken string
-
-	err = stmt.QueryRow(username).Scan(&userToken, &expiredAt)
+	err := mydb.DBConn().QueryRow(
+		"SELECT user_token, expired_at FROM tbl_user_token WHERE user_name=? LIMIT 1", username,
+	).Scan(&userToken, &expiredAt)
 	if err != nil {
 		return false
 	}
-
 	if userToken != token {
 		slog.Warn("token mismatch", "username", username)
 		return false
 	}
-
 	if expiredAt.Before(time.Now()) {
 		slog.Warn("token expired", "username", username, "expired_at", expiredAt)
 		return false
 	}
-
 	return true
 }
 
