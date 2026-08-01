@@ -22,13 +22,15 @@ func OnFileUploadFinished(filehash string, filename string, filesize int64, file
 		slog.Error("exec failed", "error", err, "op", "OnFileUploadFinished")
 		return false
 	}
-	if rf, err := ret.RowsAffected(); err == nil {
-		if rf <= 0 {
-			slog.Info("file already uploaded", "filehash", filehash)
-		}
-		return true
+
+	rf, err := ret.RowsAffected()
+	if err != nil {
+		return false
 	}
-	return false
+	if rf <= 0 {
+		slog.Info("file already exists (duplicate), treated as success", "filehash", filehash)
+	}
+	return true
 }
 
 // TableFile 数据库文件记录结构

@@ -104,7 +104,11 @@ func UploadHandler(c *gin.Context) {
 
 	// 重新定位文件指针到开头
 	if seeker, ok := file.(io.Seeker); ok {
-		seeker.Seek(0, 0)
+		if _, err := seeker.Seek(0, 0); err != nil {
+			slog.Error("seek file failed", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件处理失败", "data": nil})
+			return
+		}
 	}
 
 	// 上传到存储层
@@ -314,7 +318,11 @@ func UploadChunkHandler(c *gin.Context) {
 	}
 	defer dst.Close()
 
-	io.Copy(dst, file)
+	if _, err := io.Copy(dst, file); err != nil {
+			slog.Error("write chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex)
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "分块写入失败", "data": nil})
+			return
+		}
 
 	slog.Info("chunk uploaded", "filehash", fileHash, "index", chunkIndex)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk upload success", "data": nil})
@@ -431,44 +439,28 @@ func readChunkDir(chunkDir, totalStr string) ([]os.DirEntry, error) {
 
 // mergeChunksToTemp 将分片合并到临时文件，返回总大小
 func mergeChunksToTemp(chunkDir string, files []os.DirEntry, tmpPath string) (int64, error) {
-	pipeReader, pipeWriter := io.Pipe()
-	done := make(chan error, 1)
-
-	go func() {
-		defer pipeWriter.Close()
-		for _, f := range files {
-			chunkPath := filepath.Join(chunkDir, f.Name())
-			chunkFile, err := os.Open(chunkPath)
-			if err != nil {
-				done <- fmt.Errorf("open chunk failed: %w", err)
-				return
-			}
-			_, err = io.Copy(pipeWriter, chunkFile)
-			chunkFile.Close()
-			if err != nil {
-				done <- fmt.Errorf("merge chunk failed: %w", err)
-				return
-			}
-		}
-		done <- nil
-	}()
-
 	tmpFile, err := os.Create(tmpPath)
 	if err != nil {
 		return 0, fmt.Errorf("合并文件创建失败")
 	}
+	defer tmpFile.Close()
 
-	totalSize, err := io.Copy(tmpFile, pipeReader)
-	tmpFile.Close()
-	if err != nil {
-		os.Remove(tmpPath)
-		return 0, fmt.Errorf("分块合并失败")
-	}
+	var totalSize int64
+	for _, f := range files {
+		chunkPath := filepath.Join(chunkDir, f.Name())
+		chunkFile, err := os.Open(chunkPath)
+		if err != nil {
+			os.Remove(tmpPath)
+			return 0, fmt.Errorf("open chunk failed: %w", err)
+		}
 
-	// 等待写入完成
-	if err := <-done; err != nil {
-		os.Remove(tmpPath)
-		return 0, err
+		written, err := io.Copy(tmpFile, chunkFile)
+		chunkFile.Close()
+		if err != nil {
+			os.Remove(tmpPath)
+			return 0, fmt.Errorf("merge chunk failed: %w", err)
+		}
+		totalSize += written
 	}
 
 	return totalSize, nil
