@@ -45,12 +45,9 @@ MySQL、MinIO 均由 Docker Compose 自动初始化与配置。
 # 1. 安装依赖
 go mod tidy
 
-# 2. 设置环境变量
-export MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local"
-export MINIO_ENDPOINT="127.0.0.1:9000"
-export MINIO_ACCESS_KEY="minioadmin"
-export MINIO_SECRET_KEY="minioadmin"
-export MINIO_BUCKET="filestore"
+# 2. 配置环境变量
+cp .env.example .env
+# 编辑 .env 以匹配你的配置（MYSQL_DSN、MINIO_ENDPOINT 等）
 
 # 3. 初始化数据库
 mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
@@ -59,6 +56,22 @@ mysql -u root -p fileserver < migrations/000003_add_file_owner.up.sql
 
 # 4. 启动
 go run main.go
+```
+
+或使用启动脚本（自动加载 `.env`）：
+
+```bash
+./scripts/start.sh              # 使用 .env 启动
+./scripts/start.sh --migrate    # 运行迁移后启动
+./scripts/start.sh --build      # 构建二进制后运行
+```
+
+Windows 用户：
+
+```cmd
+scripts\start.bat              # 使用 .env 启动
+scripts\start.bat --migrate    # 运行迁移后启动
+scripts\start.bat --build      # 构建二进制后运行
 ```
 
 ## 配置
@@ -171,10 +184,14 @@ filestore-server/
 │   ├── util.go            # SHA1、MD5、文件哈希、路径工具
 │   ├── chunk.go           # 磁盘-based 分片追踪
 │   └── resp.go            # JSON 响应辅助
+├── scripts/
+│   ├── start.sh           # Unix/macOS 启动脚本
+│   └── start.bat          # Windows 启动脚本
 ├── migrations/            # SQL 迁移脚本
 ├── static/view/           # 前端 HTML 页面
 ├── uploads/               # 文件存储目录（本地 fallback）
 ├── chunks/                # 分片临时目录
+├── .env.example           # 环境变量模板
 ├── Dockerfile             # 多阶段构建
 ├── docker-compose.yml     # Docker Compose 编排
 └── AGENTS.md              # 多智能体开发协作文档

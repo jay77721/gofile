@@ -31,24 +31,27 @@ handler/
   user.go            Signup, signin, userinfo + bcrypt + secure token generation
   auth.go            AuthMiddleware (cookie-based auth, JSON responses)
   ratelimit.go       IP-based token bucket rate limiting middleware
+  cleanup.go         Periodic chunk directory cleanup
 meta/
   filemeta.go        FileMeta struct + MySQL bridge functions
-rd/
-  redis.go           Redis init + file-hash cache
 storage/
   storage.go         Storage interface (Put/Get/Exists/Delete)
   minio.go           MinIO object storage implementation
   local.go           Local filesystem implementation
 util/
   util.go            SHA1, MD5, file hash, path utilities
-  chunk.go           Redis-backed chunk tracking helpers
+  chunk.go           Disk-backed chunk tracking helpers
   resp.go            RespMsg JSON response helper
+scripts/
+  start.sh           Unix/macOS startup script (loads .env)
+  start.bat          Windows startup script (loads .env)
 migrations/          SQL migration scripts
 static/view/         Frontend HTML pages (signup, signin, home, upload)
-uploads/             On-disk file storage (local fallback)
+uploads/             On-disk file storage
 chunks/              Temporary chunk storage (cleaned up after merge)
+.env.example         Environment variable template
 Dockerfile           Multi-stage Docker build
-docker-compose.yml   Docker Compose with MySQL + Redis + MinIO + App
+docker-compose.yml   Docker Compose with MySQL + MinIO + App
 AGENTS.md            多智能体开发协作文档
 ```
 
@@ -65,10 +68,16 @@ docker compose up -d
 
 ```bash
 go build -o filestore-server .
-export MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local"
-export REDIS_ADDR="127.0.0.1:6379"
-export MINIO_ENDPOINT="127.0.0.1:9000"   # 可选, 留空则使用本地存储
+cp .env.example .env       # edit .env to match your setup
 ./filestore-server
+```
+
+Or use the startup scripts (loads `.env` automatically):
+
+```bash
+./scripts/start.sh              # Start
+./scripts/start.sh --migrate    # Run migrations then start
+./scripts/start.sh --build      # Build binary then run
 ```
 
 ## Configuration
@@ -78,9 +87,6 @@ All configuration via environment variables (see `config/config.go`):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL connection string |
-| `REDIS_ADDR` | `127.0.0.1:6379` | Redis address |
-| `REDIS_PASS` | (empty) | Redis password |
-| `REDIS_DB` | `0` | Redis DB number |
 | `SERVER_ADDR` | `:8080` | HTTP listen address |
 | `UPLOAD_DIR` | `./uploads` | Local storage directory |
 | `CHUNK_DIR` | `./chunks` | Chunk directory |

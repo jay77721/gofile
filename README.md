@@ -45,12 +45,9 @@ MySQL and MinIO are auto-configured by Docker Compose.
 # 1. Install dependencies
 go mod tidy
 
-# 2. Set environment variables
-export MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local"
-export MINIO_ENDPOINT="127.0.0.1:9000"
-export MINIO_ACCESS_KEY="minioadmin"
-export MINIO_SECRET_KEY="minioadmin"
-export MINIO_BUCKET="filestore"
+# 2. Configure environment
+cp .env.example .env
+# Edit .env to match your setup (MYSQL_DSN, MinIO_ENDPOINT, etc.)
 
 # 3. Initialize database
 mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
@@ -59,6 +56,22 @@ mysql -u root -p fileserver < migrations/000003_add_file_owner.up.sql
 
 # 4. Run
 go run main.go
+```
+
+Or use the startup scripts (loads `.env` automatically):
+
+```bash
+./scripts/start.sh              # Start with .env
+./scripts/start.sh --migrate    # Run migrations then start
+./scripts/start.sh --build      # Build binary then run
+```
+
+On Windows:
+
+```cmd
+scripts\start.bat              # Start with .env
+scripts\start.bat --migrate    # Run migrations then start
+scripts\start.bat --build      # Build binary then run
 ```
 
 ## Configuration
@@ -198,10 +211,14 @@ filestore-server/
 │   ├── util.go            # SHA1, MD5, file hash, path utilities
 │   ├── chunk.go           # Disk-based chunk tracking helpers
 │   └── resp.go            # JSON response helper
+├── scripts/
+│   ├── start.sh           # Unix/macOS startup script
+│   └── start.bat          # Windows startup script
 ├── migrations/            # SQL migration scripts
 ├── static/view/           # Frontend HTML pages
 ├── uploads/               # On-disk file storage (local fallback)
 ├── chunks/                # Temporary chunk storage
+├── .env.example           # Environment variable template
 ├── Dockerfile             # Multi-stage Docker build
 ├── docker-compose.yml     # Docker Compose orchestration
 └── AGENTS.md              # Multi-agent development collaboration docs
