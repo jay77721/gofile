@@ -1,6 +1,10 @@
 # 构建阶段
 FROM golang:1.25-alpine AS builder
 
+ARG http_proxy
+ARG https_proxy
+ENV http_proxy=$http_proxy https_proxy=$https_proxy
+
 WORKDIR /app
 
 # 安装依赖
