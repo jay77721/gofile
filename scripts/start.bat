@@ -39,15 +39,9 @@ goto :eof
 
 :migrate
 echo Running database migrations...
-if "%MYSQL_DSN%"=="" (
-    echo Error: MYSQL_DSN is not set
-    exit /b 1
-)
-for %%f in (migrations\*.up.sql) do (
-    echo   Applying %%f...
-    mysql -h 127.0.0.1 -P 3306 -u root -p root gofile < %%f 2>nul || (
-        echo   Warning: migration %%f may have already been applied
-    )
+echo   Applying schema.sql...
+mysql -h 127.0.0.1 -P 3306 -u root -p root gofile < schema.sql 2>nul || (
+    echo   Warning: schema.sql may have already been applied
 )
 echo Migrations complete.
 goto :eof

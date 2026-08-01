@@ -50,7 +50,7 @@ cp .env.example .env
 # 编辑 .env 以匹配你的配置（MYSQL_DSN、MINIO_ENDPOINT 等）
 
 # 3. 初始化数据库
-mysql -u root -p gofile < migrations/000001_init_schema.up.sql
+mysql -u root -p gofile < schema.sql
 
 # 4. 启动
 go run main.go

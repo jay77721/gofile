@@ -50,7 +50,7 @@ cp .env.example .env
 # Edit .env to match your setup (MYSQL_DSN, MinIO_ENDPOINT, etc.)
 
 # 3. Initialize database
-mysql -u root -p gofile < migrations/000001_init_schema.up.sql
+mysql -u root -p gofile < schema.sql
 
 # 4. Run
 go run main.go

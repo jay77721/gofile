@@ -34,11 +34,9 @@ case "${1:-}" in
         MYSQL_USER="root"
         MYSQL_PASS="root"
         MYSQL_DB="gofile"
-        for f in migrations/*.up.sql; do
-            echo "  Applying $f..."
-            mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASS" "$MYSQL_DB" < "$f" 2>/dev/null || \
-            echo "  Warning: migration $f may have already been applied"
-        done
+        echo "  Applying schema.sql..."
+        mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASS" "$MYSQL_DB" < schema.sql 2>/dev/null || \
+        echo "  Warning: schema.sql may have already been applied"
         echo "Migrations complete."
         ;;
     --build)
