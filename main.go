@@ -42,6 +42,9 @@ func main() {
 	// 确保临时目录存在
 	os.MkdirAll(cfg.ChunkDir, 0755)
 
+	// 启动定时清理过期 chunk 目录
+	handler.StartChunkCleanup(cfg.ChunkDir)
+
 	// 初始化存储层（优先 MinIO，fallback 本地）
 	var store storage.Storage
 	if cfg.MinioEndpoint != "" {

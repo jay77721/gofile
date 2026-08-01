@@ -2,12 +2,21 @@ package util
 
 import (
 	"filestore-server/rd"
+	"time"
 )
 
-// AddChunk 记录 chunk 上传成功
+const (
+	// ChunkTTL chunk 索引在 Redis 中的过期时间
+	ChunkTTL = 24 * time.Hour
+)
+
+// AddChunk 记录 chunk 上传成功，并设置 key 过期时间
 func AddChunk(filehash string, index int) error {
 	key := "chunk:" + filehash
-	return rd.RDB.SAdd(rd.Ctx, key, index).Err()
+	if err := rd.RDB.SAdd(rd.Ctx, key, index).Err(); err != nil {
+		return err
+	}
+	return rd.RDB.Expire(rd.Ctx, key, ChunkTTL).Err()
 }
 
 // GetUploadedChunks 获取已上传的 chunk 列表
