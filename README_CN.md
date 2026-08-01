@@ -51,7 +51,6 @@ cp .env.example .env
 
 # 3. 初始化数据库
 mysql -u root -p gofile < migrations/000001_init_schema.up.sql
-mysql -u root -p gofile < migrations/000002_add_indexes.up.sql
 
 # 4. 启动
 go run main.go

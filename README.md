@@ -51,7 +51,6 @@ cp .env.example .env
 
 # 3. Initialize database
 mysql -u root -p gofile < migrations/000001_init_schema.up.sql
-mysql -u root -p gofile < migrations/000002_add_indexes.up.sql
 
 # 4. Run
 go run main.go

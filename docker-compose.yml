@@ -34,7 +34,6 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./migrations/000001_init_schema.up.sql:/docker-entrypoint-initdb.d/000001_init_schema.sql
-      - ./migrations/000002_add_indexes.up.sql:/docker-entrypoint-initdb.d/000002_add_indexes.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
