@@ -134,7 +134,12 @@
                 credentials: "include"
             })
             .then(function(resp) { return resp.json(); })
-            .then(function(files) {
+            .then(function(res) {
+                if (res.code !== 0) {
+                    console.error("load file list failed:", res.msg);
+                    return;
+                }
+                var files = res.data;
                 var tbody = document.querySelector("#fileTable tbody");
                 tbody.innerHTML = "";
                 if (files.length === 0) {
