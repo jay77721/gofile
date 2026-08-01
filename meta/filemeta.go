@@ -15,6 +15,27 @@ type FileMeta struct {
 	Username string    `json:"username"`
 }
 
+// toFileMeta 将数据库 TableFile 转换为 FileMeta
+func toFileMeta(tfile *mydb.TableFile) FileMeta {
+	return FileMeta{
+		FileSha1: tfile.FileSha1,
+		FileName: tfile.FileName.String,
+		FileSize: tfile.FileSize.Int64,
+		Location: tfile.FileAddr.String,
+		UploadAt: tfile.CreateAt.Time,
+		Username: tfile.UserName.String,
+	}
+}
+
+// toFileMetas 将数据库 TableFile 切片批量转换为 FileMeta 切片
+func toFileMetas(tfiles []mydb.TableFile) []FileMeta {
+	fmetas := make([]FileMeta, 0, len(tfiles))
+	for _, tfile := range tfiles {
+		fmetas = append(fmetas, toFileMeta(&tfile))
+	}
+	return fmetas
+}
+
 // UpdateFileMetaDB 新增/更新文件元到 MySQL
 func UpdateFileMetaDB(fMeta FileMeta) bool {
 	return mydb.OnFileUploadFinished(
@@ -27,15 +48,7 @@ func GetFileMetaDB(fileSha1 string) (FileMeta, error) {
 	if err != nil {
 		return FileMeta{}, err
 	}
-	fmeta := FileMeta{
-		FileSha1: tfile.FileSha1,
-		FileName: tfile.FileName.String,
-		FileSize: tfile.FileSize.Int64,
-		Location: tfile.FileAddr.String,
-		UploadAt: tfile.CreateAt.Time,
-		Username: tfile.UserName.String,
-	}
-	return fmeta, nil
+	return toFileMeta(tfile), nil
 }
 
 // GetAllFileMetaDB 从 MySQL 获取所有文件元信息
@@ -44,19 +57,7 @@ func GetAllFileMetaDB() ([]FileMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	fmetas := make([]FileMeta, 0, len(tfiles))
-	for _, tfile := range tfiles {
-		fmetas = append(fmetas, FileMeta{
-			FileSha1: tfile.FileSha1,
-			FileName: tfile.FileName.String,
-			FileSize: tfile.FileSize.Int64,
-			Location: tfile.FileAddr.String,
-			UploadAt: tfile.CreateAt.Time,
-			Username: tfile.UserName.String,
-		})
-	}
-	return fmetas, nil
+	return toFileMetas(tfiles), nil
 }
 
 // GetFileMetaDBByUser 从 MySQL 获取指定用户的文件元信息
@@ -65,15 +66,7 @@ func GetFileMetaDBByUser(fileSha1 string, username string) (FileMeta, error) {
 	if err != nil {
 		return FileMeta{}, err
 	}
-	fmeta := FileMeta{
-		FileSha1: tfile.FileSha1,
-		FileName: tfile.FileName.String,
-		FileSize: tfile.FileSize.Int64,
-		Location: tfile.FileAddr.String,
-		UploadAt: tfile.CreateAt.Time,
-		Username: tfile.UserName.String,
-	}
-	return fmeta, nil
+	return toFileMeta(tfile), nil
 }
 
 // GetAllFileMetaDBByUser 从 MySQL 获取指定用户的所有文件元信息
@@ -82,19 +75,7 @@ func GetAllFileMetaDBByUser(username string) ([]FileMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	fmetas := make([]FileMeta, 0, len(tfiles))
-	for _, tfile := range tfiles {
-		fmetas = append(fmetas, FileMeta{
-			FileSha1: tfile.FileSha1,
-			FileName: tfile.FileName.String,
-			FileSize: tfile.FileSize.Int64,
-			Location: tfile.FileAddr.String,
-			UploadAt: tfile.CreateAt.Time,
-			Username: tfile.UserName.String,
-		})
-	}
-	return fmetas, nil
+	return toFileMetas(tfiles), nil
 }
 
 // DeleteFileMetaDB 软删除文件元信息
