@@ -122,7 +122,12 @@ func UploadHandler(c *gin.Context) {
 	}
 
 	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
-		slog.Warn("save file meta failed", "filehash", fileMeta.FileSha1)
+		slog.Warn("save file meta failed, rolling back storage", "filehash", fileMeta.FileSha1)
+		if err := store.Delete(context.Background(), fileSha1); err != nil {
+			slog.Error("rollback storage failed", "error", err, "filehash", fileSha1)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件上传失败", "data": nil})
+		return
 	}
 
 	// 缓存 hash 到 Redis
@@ -423,12 +428,16 @@ func MergeChunkHandler(c *gin.Context) {
 		FileSize: totalSize,
 	}
 
-	meta.UpdateFileMetaDB(fileMeta)
-	rd.SetFileHash(fileHash, fileHash)
-
-	// 清理 chunk 数据
-	util.ClearChunks(fileHash)
-	os.RemoveAll(chunkDir)
+	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
+		slog.Warn("save merged file meta failed, rolling back storage", "filehash", fileHash)
+		if err := store.Delete(context.Background(), fileHash); err != nil {
+			slog.Error("rollback merged storage failed", "error", err, "filehash", fileHash)
+		}
+		util.ClearChunks(fileHash)
+		os.RemoveAll(chunkDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件合并失败", "data": nil})
+		return
+	}
 
 	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "merge success", "data": nil})
