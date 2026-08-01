@@ -50,6 +50,8 @@ gofile/
 ├── .env.example            环境变量模板
 ├── Dockerfile             多阶段 Docker 构建
 ├── docker-compose.yml      Docker Compose 编排
+├── README.md              项目说明文档 (EN)
+├── README_CN.md           项目说明文档 (ZH)
 └── AGENTS.md              AI 开发协作文档
 ```
 

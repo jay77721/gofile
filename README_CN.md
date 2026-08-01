@@ -11,16 +11,16 @@
 
 **轻量级自建网盘 | Lightweight Self-hosted File Storage**
 
-[English](#features) · [中文](README_CN.md) · [快速开始](#quick-start) · [API 文档](#api-endpoints) · [截图](#screenshots)
+[English](README.md) · [中文](#功能特性) · [快速开始](#快速开始) · [API 接口](#api-接口) · [项目结构](#项目结构)
 
 </div>
 
 ---
 
-## ✨ Features
+## ✨ 功能特性
 
-| | Feature | Description |
-|---|---------|-------------|
+| | 功能 | 说明 |
+|---|------|------|
 | 📤 | **文件上传** | 普通上传 + 秒传去重（SHA1 hash） |
 | 📥 | **文件下载** | 支持断点续传，Content-Disposition 安全编码 |
 | ✂️ | **分片上传** | 大文件切片上传，断点续传，幂等重试，自动合并 |
@@ -33,7 +33,7 @@
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ 架构
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
@@ -56,7 +56,7 @@
 
 ---
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
 ### 方式一：Docker Compose（推荐）
 
@@ -107,7 +107,7 @@ start.bat --build      # 构建二进制后运行
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ 配置
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
@@ -125,7 +125,7 @@ start.bat --build      # 构建二进制后运行
 
 ---
 
-## 📡 API Endpoints
+## 📡 API 接口
 
 ### 文件操作（需认证）
 
@@ -163,7 +163,7 @@ start.bat --build      # 构建二进制后运行
 
 ---
 
-## 💻 Usage Examples
+## 💻 使用示例
 
 ```bash
 # 注册
@@ -183,7 +183,7 @@ curl -b cookies.txt \
 
 ---
 
-## 🧪 Testing
+## 🧪 测试
 
 ```bash
 go test ./...           # 运行全部测试
@@ -197,7 +197,7 @@ go test ./util/         # 工具函数测试
 
 ---
 
-## 📁 Project Structure
+## 📁 项目结构
 
 ```
 gofile/
@@ -234,7 +234,7 @@ gofile/
 
 ---
 
-## 🔧 Tech Stack
+## 🔧 技术栈
 
 | 组件 | 选型 | 说明 |
 |------|------|------|
@@ -246,7 +246,7 @@ gofile/
 
 ---
 
-## 📄 License
+## 📄 许可证
 
 MIT
 

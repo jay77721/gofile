@@ -83,7 +83,7 @@ go run main.go
 1. 在 `handler/handler.go` 或新文件实现 handler 函数
 2. 在 `main.go` 对应路由组注册路由
 3. 添加测试文件覆盖 handler
-4. 更新 `README.md` 和 `CLAUDE.md` 的 API 表格
+4. 更新 `README.md` 和 `README_CN.md` 的 API 表格
 
 ### 修改数据库表
 1. 更新 `schema.sql`（建表脚本）
