@@ -5,7 +5,6 @@ services:
       - "8080:8080"
     environment:
       - MYSQL_DSN=root:root@tcp(mysql:3306)/gofile?charset=utf8mb4&parseTime=True&loc=Local
-      - REDIS_ADDR=redis:6379
       - SERVER_ADDR=:8080
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -14,8 +13,6 @@ services:
       - MINIO_USE_SSL=false
     depends_on:
       mysql:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -40,18 +37,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6380:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   minio:
     image: minio/minio
     command: server /data --console-address ":9001"
@@ -71,7 +56,6 @@ services:
 
 volumes:
   mysql_data:
-  redis_data:
   uploads_data:
   chunks_data:
   minio_data:

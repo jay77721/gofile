@@ -120,7 +120,7 @@
                 if (result.code === 0) {
                     msg.style.color = "lightgreen";
                     msg.textContent = "注册成功！正在跳转...";
-                    setTimeout(() => { window.location.href = "/static/view/signin.html"; }, 1500);
+                    setTimeout(() => { window.location.href = "/static/signin.html"; }, 1500);
                 } else {
                     msg.style.color = "yellow";
                     msg.textContent = result.msg || "注册失败，请重试。";

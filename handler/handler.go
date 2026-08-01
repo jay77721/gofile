@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"gofile/config"
-	"gofile/meta"
+	"gofile/db"
 	"gofile/storage"
 	"gofile/util"
 	"fmt"
@@ -118,7 +118,7 @@ func UploadHandler(c *gin.Context) {
 		return
 	}
 
-	fileMeta := meta.FileMeta{
+	fileMeta := db.FileMeta{
 		FileName: filename,
 		Location: fileSha1,
 		FileSize: fileSize,
@@ -127,7 +127,7 @@ func UploadHandler(c *gin.Context) {
 		Username: c.GetString("username"),
 	}
 
-	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
+	if ok := db.UpdateFileMetaDB(fileMeta); !ok {
 		slog.Warn("save file meta failed, rolling back storage", "filehash", fileMeta.FileSha1)
 		if err := globalStore.Delete(context.Background(), fileSha1); err != nil {
 			slog.Error("rollback storage failed", "error", err, "filehash", fileSha1)
@@ -135,8 +135,6 @@ func UploadHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件上传失败", "data": nil})
 		return
 	}
-
-
 	slog.Info("file uploaded", "filename", filename, "size", fileSize, "hash", fileSha1)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传成功", "data": gin.H{"filehash": fileSha1}})
 }
@@ -149,7 +147,7 @@ func GetFileHandler(c *gin.Context) {
 		return
 	}
 
-	fMeta, err := meta.GetFileMetaDBByUser(filehash, c.GetString("username"))
+	fMeta, err := db.GetFileMetaDBByUser(filehash, c.GetString("username"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
@@ -175,7 +173,7 @@ func DownloadHandler(c *gin.Context) {
 		return
 	}
 
-	fMeta, err := meta.GetFileMetaDBByUser(filehash, c.GetString("username"))
+	fMeta, err := db.GetFileMetaDBByUser(filehash, c.GetString("username"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
@@ -221,13 +219,13 @@ func FileMetaUpdateHandler(c *gin.Context) {
 	}
 
 	// 验证文件所有权
-	_, err := meta.GetFileMetaDBByUser(fileSha1, username)
+	_, err := db.GetFileMetaDBByUser(fileSha1, username)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
 		return
 	}
 
-	if ok := meta.UpdateFileMetaDBName(fileSha1, filepath.Base(newFileName)); !ok {
+	if ok := db.UpdateFileMetaDBName(fileSha1, filepath.Base(newFileName)); !ok {
 		slog.Error("update file meta failed", "filehash", fileSha1)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "更新失败", "data": nil})
 		return
@@ -245,14 +243,14 @@ func FileDeleteHandler(c *gin.Context) {
 	}
 
 	// 验证文件所有权
-	_, err := meta.GetFileMetaDBByUser(fileSha1, c.GetString("username"))
+	_, err := db.GetFileMetaDBByUser(fileSha1, c.GetString("username"))
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
 		return
 	}
 
 	// 软删除：更新数据库状态
-	if ok := meta.DeleteFileMetaDB(fileSha1); !ok {
+	if ok := db.DeleteFileMetaDB(fileSha1); !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "删除失败", "data": nil})
 		return
 	}
@@ -263,7 +261,7 @@ func FileDeleteHandler(c *gin.Context) {
 
 // FileQueryHandler 返回所有文件元信息列表
 func FileQueryHandler(c *gin.Context) {
-	fileMetas, err := meta.GetAllFileMetaDBByUser(c.GetString("username"))
+	fileMetas, err := db.GetAllFileMetaDBByUser(c.GetString("username"))
 	if err != nil {
 		slog.Error("query all files failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
@@ -388,7 +386,7 @@ func MergeChunkHandler(c *gin.Context) {
 
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 
-	fileMeta := meta.FileMeta{
+	fileMeta := db.FileMeta{
 		FileName: fileName,
 		Location: fileHash,
 		Username: c.GetString("username"),
@@ -397,7 +395,7 @@ func MergeChunkHandler(c *gin.Context) {
 		FileSize: totalSize,
 	}
 
-	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
+	if ok := db.UpdateFileMetaDB(fileMeta); !ok {
 		slog.Warn("save merged file meta failed, rolling back storage", "filehash", fileHash)
 		if err := globalStore.Delete(context.Background(), fileHash); err != nil {
 			slog.Error("rollback merged storage failed", "error", err, "filehash", fileHash)

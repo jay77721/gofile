@@ -1,10 +1,10 @@
-# CLI.md
+# AGENTS.md
 
 > AI 开发助手协作文档 — 与 CLAUDE.md 保持同步
 
 ## 项目概览
 
-gofile 是一个轻量级网盘服务，Go 语言编写，Gin 框架 + MySQL + MinIO。支持文件上传下载、分片上传断点续传、用户认证、秒传去重。
+gofile 是一个轻量级网盘服务，Go 语言编写，Gin + MySQL + MinIO。支持文件上传下载、分片上传断点续传、用户认证、秒传去重。
 
 ## 快速启动
 
@@ -16,7 +16,7 @@ mysql -u root -p gofile < schema.sql
 go run main.go
 
 # 或使用脚本
-./scripts/start.sh --migrate
+./start.sh --migrate
 ```
 
 ## 代码导航
@@ -37,9 +37,8 @@ go run main.go
 
 ### 数据库操作
 - `db/mysql/conn.go` — 连接池（Init/DBConn）
-- `db/file.go` — `tbl_file` 操作（所有查询按 `status=1` 过滤，按 `user_name` 隔离）
+- `db/file.go` — `tbl_file` 操作 + `FileMeta` 领域模型 + `toFileMeta()` 转换
 - `db/user.go` — `tbl_user` / `tbl_user_token` 操作
-- `meta/filemeta.go` — `FileMeta` 结构体，`toFileMeta()` / `toFileMetas()` 辅助转换
 
 ### 存储抽象
 - `storage.Storage` 接口: `Put(ctx, key, reader, size) error` / `Get(ctx, key) (ReadCloser, error)` / `Exists(ctx, key) (bool, error)` / `Delete(ctx, key) error`
@@ -51,12 +50,16 @@ go run main.go
 - `handler/ratelimit.go` — `RateLimitMiddleware(rate, burst)`: IP 令牌桶限流
 - `handler/cleanup.go` — `StartChunkCleanup()`: 定时清理过期 chunk
 
+### 工具函数
+- `util/hash.go` — SHA1, MD5, 文件哈希, 路径工具
+- `util/chunk.go` — 磁盘-based 分片追踪
+
 ## 关键约定
 
 ### 文件所有权
-- 所有文件操作必须验证用户权限: `meta.GetFileMetaDBByUser(fileSha1, username)`
+- 所有文件操作必须验证用户权限: `db.GetFileMetaDBByUser(fileSha1, username)`
 - 返回 403 当用户无权操作
-- 文件列表只返回当前用户文件: `meta.GetAllFileMetaDBByUser(username)`
+- 文件列表只返回当前用户文件: `db.GetAllFileMetaDBByUser(username)`
 
 ### 错误处理
 - `io.Copy` / `file.Seek` 等 I/O 操作必须检查 error
@@ -85,7 +88,7 @@ go run main.go
 ### 修改数据库表
 1. 更新 `schema.sql`（建表脚本）
 2. 更新 `db/` 对应文件的 CRUD 函数
-3. 表结构变更需同步更新 `meta/` 的转换函数
+3. 表结构变更需同步更新 `db/file.go` 的 `FileMeta` 结构体
 
 ### 添加新存储后端
 1. 实现 `storage.Storage` 接口

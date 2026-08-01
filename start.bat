@@ -1,15 +1,12 @@
 @echo off
-REM FileStore Server - Local Development Startup Script (Windows)
+REM gofile - Local Development Startup Script (Windows)
 REM
 REM Usage:
-REM   scripts\start.bat              start with .env file
-REM   scripts\start.bat --migrate    run migrations then start
-REM   scripts\start.bat --build      build binary then run
+REM   start.bat              start with .env file
+REM   start.bat --migrate    run schema.sql then start
+REM   start.bat --build      build binary then run
 
 setlocal
-
-set "PROJECT_DIR=%~dp0.."
-cd /d "%PROJECT_DIR%"
 
 REM Load .env file if present
 if exist .env (
@@ -29,7 +26,7 @@ if "%~1"=="--migrate" goto :migrate
 if "%~1"=="--build" goto :build
 
 :run
-echo Starting FileStore Server...
+echo Starting gofile...
 echo   Server:    %SERVER_ADDR%
 echo   MySQL:     %MYSQL_DSN%
 echo   MinIO:     %MINIO_ENDPOINT%
