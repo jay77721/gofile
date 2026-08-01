@@ -7,156 +7,183 @@ gofile 是一个轻量级网盘服务，使用 Go 编写。支持文件上传/�
 ## Tech Stack
 
 - **Language:** Go 1.25.0
-- **HTTP:** Gin (`github.com/gin-gonic/gin`) — 路由、中间件、JSON 响应
-- **Database:** MySQL via `github.com/go-sql-driver/mysql` (连接池, 默认 25 连接)
-- **Cache:** Redis via `github.com/redis/go-redis/v9` (文件 hash 缓存 + chunk 索引)
+- **HTTP:** Gin — 路由、中间件、JSON 响应
+- **Database:** MySQL via `go-sql-driver/mysql` (连接池, 默认 25 连接)
 - **Storage:** 抽象接口 `storage.Storage` — MinIO (S3) 优先, 失败自动 fallback 本地磁盘
-- **Auth:** bcrypt (`golang.org/x/crypto/bcrypt`) + cookie session (token 存 MySQL `tbl_user_token`)
-- **Frontend:** Vanilla HTML + fetch API (no jQuery)
+- **Auth:** bcrypt + cookie session (token 存 MySQL `tbl_user_token`, 24h 过期)
+- **Frontend:** Vanilla HTML + fetch API (no jQuery, no framework)
 - **Logging:** `log/slog` (structured JSON logging)
-- **Container:** Docker + Docker Compose (app + MySQL + Redis + MinIO)
+- **Container:** Docker + Docker Compose (app + MySQL + MinIO)
 
 ## Project Structure
 
 ```
-main.go              Entry point, route registration, graceful shutdown
-config/
-  config.go          Environment-based configuration (env vars with defaults)
-db/
-  mysql/conn.go      MySQL connection pool (configurable DSN, pool settings)
-  file.go            tbl_file CRUD (including soft delete)
-  user.go            tbl_user / tbl_user_token CRUD
-handler/
-  handler.go         File upload/download/query/delete + chunked upload + health check
-  user.go            Signup, signin, userinfo + bcrypt + secure token generation
-  auth.go            AuthMiddleware (cookie-based auth, JSON responses)
-  ratelimit.go       IP-based token bucket rate limiting middleware
-  cleanup.go         Periodic chunk directory cleanup
-meta/
-  filemeta.go        FileMeta struct + MySQL bridge functions
-storage/
-  storage.go         Storage interface (Put/Get/Exists/Delete)
-  minio.go           MinIO object storage implementation
-  local.go           Local filesystem implementation
-util/
-  util.go            SHA1, MD5, file hash, path utilities
-  chunk.go           Disk-backed chunk tracking helpers
-  resp.go            RespMsg JSON response helper
-scripts/
-  start.sh           Unix/macOS startup script (loads .env)
-  start.bat          Windows startup script (loads .env)
-migrations/          SQL migration scripts
-static/view/         Frontend HTML pages (signup, signin, home, upload)
-uploads/             On-disk file storage
-chunks/              Temporary chunk storage (cleaned up after merge)
-.env.example         Environment variable template
-Dockerfile           Multi-stage Docker build
-docker-compose.yml   Docker Compose with MySQL + MinIO + App
-AGENTS.md            多智能体开发协作文档
+gofile/
+├── main.go                入口、路由注册、优雅关闭
+├── schema.sql             数据库建表脚本（单文件，包含索引）
+├── config/
+│   └── config.go          环境变量配置（env 读取 + 默认值）
+├── db/
+│   ├── mysql/
+│   │   └── conn.go        MySQL 连接池（Init/DBConn）
+│   ├── file.go            tbl_file CRUD（含软删除、按用户查询）
+│   └── user.go            tbl_user / tbl_user_token CRUD
+├── handler/
+│   ├── handler.go         文件上传/下载/查询/删除 + 分片上传 + 合并
+│   ├── handler_test.go    handler 测试（含 auth、限流）
+│   ├── user.go            注册/登录/用户信息 + bcrypt + token 生成
+│   ├── user_test.go       用户 handler 测试
+│   ├── auth.go            AuthMiddleware（Cookie session 验证）
+│   ├── ratelimit.go       IP 令牌桶限流中间件（5 req/s, burst 10）
+│   └── cleanup.go         定时清理过期 chunk 目录（1h 间隔, 24h 保留）
+├── meta/
+│   └── filemeta.go        FileMeta 结构体 + MySQL 桥接函数
+├── storage/
+│   ├── storage.go         Storage 接口定义（Put/Get/Exists/Delete）
+│   ├── minio.go           MinIO 对象存储实现
+│   └── local.go           本地文件系统实现
+├── util/
+│   ├── util.go            SHA1、MD5、文件哈希、路径工具
+│   ├── util_test.go       工具函数测试
+│   └── chunk.go           磁盘-based 分片追踪
+├── scripts/
+│   ├── start.sh           Unix/macOS 启动脚本（.env 加载 + --migrate/--build）
+│   └── start.bat          Windows 启动脚本
+├── static/
+│   └── view/
+│       ├── index.html     首页
+│       ├── home.html      用户主页（文件列表、上传）
+│       ├── signin.html    登录页
+│       └── signup.html    注册页
+├── .env.example            环境变量模板
+├── Dockerfile              多阶段 Docker 构建
+├── docker-compose.yml      Docker Compose 编排（app + MySQL + MinIO）
+├── AGENTS.md               AI 开发协作文档
+└── README.md              项目说明文档
 ```
 
 ## Build & Run
 
 ### Docker (Recommended)
-
 ```bash
 docker compose up -d
-# Server starts on http://localhost:8080
+# http://localhost:8080
 ```
 
 ### Manual
-
 ```bash
 go build -o gofile .
-cp .env.example .env       # edit .env to match your setup
+cp .env.example .env       # edit .env
 ./gofile
 ```
 
-Or use the startup scripts (loads `.env` automatically):
-
+Or use scripts (loads `.env` automatically):
 ```bash
 ./scripts/start.sh              # Start
-./scripts/start.sh --migrate    # Run migrations then start
+./scripts/start.sh --migrate    # Run schema.sql then start
 ./scripts/start.sh --build      # Build binary then run
 ```
 
 ## Configuration
 
-All configuration via environment variables (see `config/config.go`):
-
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL connection string |
 | `SERVER_ADDR` | `:8080` | HTTP listen address |
-| `UPLOAD_DIR` | `./uploads` | Local storage directory |
-| `CHUNK_DIR` | `./chunks` | Chunk directory |
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL connection string |
+| `UPLOAD_DIR` | `./uploads` | Local storage directory (fallback) |
+| `CHUNK_DIR` | `./chunks` | Chunk temp directory |
 | `MINIO_ENDPOINT` | `minio:9000` | MinIO endpoint (empty = skip MinIO) |
-| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO Access Key |
-| `MINIO_SECRET_KEY` | `minioadmin` | MinIO Secret Key |
-| `MINIO_BUCKET` | `filestore` | MinIO bucket |
-| `MINIO_USE_SSL` | `false` | Use SSL for MinIO |
+| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO access key |
+| `MINIO_SECRET_KEY` | `minioadmin` | MinIO secret key |
+| `MINIO_BUCKET` | `filestore` | MinIO bucket name |
+| `MINIO_USE_SSL` | `false` | Enable SSL for MinIO |
 
-> `MINIO_ENDPOINT` 为空或 MinIO 初始化失败时，自动 fallback 到 `UPLOAD_DIR` 本地存储。
+> MinIO 不可用时自动 fallback 到 `UPLOAD_DIR` 本地存储。
 
 ## API Endpoints
 
-### File Operations (🔒 Require Auth via `AuthMiddleware`)
-
-| Method | Route                | Description                       |
-|--------|----------------------|-----------------------------------|
-| POST   | `/file/upload`       | Upload file (supports fast-upload)|
-| GET    | `/file/meta`         | Get file metadata by hash         |
-| GET    | `/file/query`        | List all files                    |
-| GET    | `/file/download`     | Download file by hash             |
-| POST   | `/file/update`       | Rename file (op=0)                |
-| POST   | `/file/delete`       | Soft delete file                  |
-| POST   | `/file/upload/chunk` | Upload single chunk               |
-| GET    | `/file/upload/status`| Check uploaded chunk indices      |
-| POST   | `/file/upload/merge` | Merge chunks into final file      |
+### File Operations (all require Auth)
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/file/upload` | Upload file (supports instant dedup) |
+| GET | `/file/meta` | Get file metadata by hash |
+| GET | `/file/query` | List current user's files |
+| GET | `/file/download` | Download file by hash |
+| POST | `/file/update` | Rename file (op=0) |
+| POST | `/file/delete` | Soft delete file |
+| POST | `/file/upload/chunk` | Upload a single chunk (idempotent) |
+| GET | `/file/upload/status` | Check uploaded chunk indices |
+| POST | `/file/upload/merge` | Merge chunks into final file |
 
 ### User Operations
-
-| Method | Route           | Auth | Rate Limit | Description        |
-|--------|-----------------|------|------------|--------------------|
-| POST   | `/user/signup`  | No   | Yes        | Register user      |
-| POST   | `/user/signin`  | No   | Yes        | Login, get token   |
-| GET    | `/user/info`    | Yes  | No         | Get user info      |
+| Method | Route | Auth | Rate Limit | Description |
+|--------|-------|:----:|:----------:|-------------|
+| POST | `/user/signup` | × | ✓ | Register |
+| POST | `/user/signin` | × | ✓ | Login, get token (HttpOnly Cookie) |
+| GET | `/user/info` | ✓ | × | Get user info |
 
 ### System
-
-| Method | Route     | Description               |
-|--------|-----------|---------------------------|
-| GET    | `/healthz` | Health check (Redis ping) |
-| GET    | `/static/*`| Static frontend pages      |
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/healthz` | Health check |
+| GET | `/static/*` | Static frontend pages |
 
 ## Architecture Notes
 
-- **Auth:** Cookie-based session. `AuthMiddleware` wraps all `/file` routes. Tokens are 64-char hex from `crypto/rand`, stored in `tbl_user_token`, expire in 24h. Cookies set with `HttpOnly`, 1h lifetime.
-- **Storage abstraction:** `storage.Storage` interface (Put/Get/Exists/Delete). `main.go` selects MinIO or Local at startup, injects via `handler.InitStore()`. MySQL stores metadata; file content lives in the storage backend.
-- **Password:** bcrypt with `DefaultCost`. No static salt.
-- **Chunked upload:** Chunks saved to `<CHUNK_DIR>/<filehash>/<index>`, index tracked in Redis Set `chunk:<filehash>`. Merge concatenates into storage backend, then cleans up chunks.
-- **Fast upload:** Checks `store.Exists()` for existing file hash — returns immediately if found. Redis `SetFileHash` is write-only (cache not read by handlers).
-- **Graceful shutdown:** Listens for SIGINT/SIGTERM, drains connections with 10s timeout.
-- **Soft delete:** `FileDeleteHandler` sets `status=2` in MySQL, does not remove file from storage.
-- **Rate limiting:** IP-based token bucket on `/user/signup` and `/user/signin` (5 req/s, burst 10). Uses `c.ClientIP()`.
-- **Logging:** Structured JSON logging via `log/slog`. Levels: Info, Warn, Error.
+### Auth Flow
+1. User POST `/user/signin` with credentials
+2. Server verifies bcrypt hash, generates 64-char hex token via `crypto/rand`
+3. Token stored in `tbl_user_token` (24h expiry)
+4. Response sets `Set-Cookie` with `HttpOnly` flag (1h lifetime)
+5. `AuthMiddleware` validates Cookie on each `/file/*` request
+6. Token is **never** returned in JSON body — only via Cookie
+
+### Storage Layer
+- `storage.Storage` interface: `Put(ctx, key, reader, size)` / `Get(ctx, key)` / `Exists(ctx, key)` / `Delete(ctx, key)`
+- Two implementations: `MinIOStorage` (S3) and `LocalStorage` (filesystem)
+- Selected at startup in `main.go`, injected via `handler.InitStore()`
+- MySQL stores metadata only; file content in storage backend
+
+### File Ownership
+- `tbl_file.user_name` associates each file with its uploader
+- Download/query/rename/delete all verify ownership via `GetFileMetaDBByUser()`
+- `FileQueryHandler` returns only current user's files
+- Unauthorized access returns HTTP 403
+
+### Chunked Upload
+1. Client splits file, POSTs each chunk to `/file/upload/chunk` (idempotent)
+2. Chunks saved to `<CHUNK_DIR>/<filehash>/<index>`
+3. Client GET `/file/upload/status` to check progress
+4. POST `/file/upload/merge` triggers server-side concatenation
+5. Background cleanup: orphaned chunks removed after 24h (1h check interval)
+
+### Soft Delete
+- Sets `tbl_file.status=2`, does not remove file from storage backend
+- All queries filter by `status=1` (active)
+
+### Rate Limiting
+- IP-based token bucket on `/user/signup` and `/user/signin`
+- 5 req/s, burst 10, uses `c.ClientIP()`
+- Idle IPs evicted after 5min
 
 ## Testing
 
 ```bash
 go test ./...           # Run all tests
-go test ./util/...      # Run util tests only
-go test ./handler/...   # Run handler tests only
+go test -v ./handler/   # Handler tests with verbose output
+go test ./util/         # Util tests only
 ```
 
 Tests cover:
-- `util/` — Hash functions (SHA1, MD5), file operations, path utilities, response helpers
-- `handler/` — HTTP handler responses, status codes, JSON format, auth interceptor, rate limiting
+- `util/` — SHA1, MD5, file operations, path utilities
+- `handler/` — HTTP responses, status codes, JSON format, auth middleware, rate limiting, user signup/signin validation, edge cases (missing params, invalid input, not-found, panic recovery)
 
 ## Development Conventions
 
-- **Language:** Code comments are bilingual (Chinese + English). README exists in both `README.md` (EN, primary) and `README_CN.md` (ZH).
-- **Naming:** Standard Go conventions — exported PascalCase, unexported camelCase, package names lowercase.
-- **Error handling:** HTTP handlers return JSON via `gin.H{"code": 0|1, "msg": ..., "data": ...}`. Errors logged via `slog.Error`/`slog.Warn`.
-- **Framework:** Gin. Route groups registered in `main.go`. Middleware: `AuthMiddleware`, `RateLimitMiddleware`, `gin.Recovery()`.
-- **Logging:** Use `slog.Info`, `slog.Warn`, `slog.Error` with structured key-value pairs.
+- **Language:** Code comments are bilingual (Chinese + English)
+- **Naming:** Standard Go conventions — exported PascalCase, unexported camelCase
+- **Error handling:** HTTP handlers return JSON via `gin.H{"code": 0|1, "msg": ..., "data": ...}`
+- **Logging:** `slog.Info`/`slog.Warn`/`slog.Error` with structured key-value pairs
+- **Database:** `db` package wraps MySQL operations; `meta` package bridges DB structs to domain models
+- **Dependency injection:** `handler.InitStore(store, cfg)` injects storage + config at startup
+- **API prefix:** All file routes under `/file` group with `AuthMiddleware`; user routes under `/user`
