@@ -29,21 +29,26 @@ func setupTestStore(t *testing.T) {
 	InitStore(storage.NewLocal(dir), &config.Config{UploadDir: dir, ChunkDir: dir})
 }
 
-func TestHealthCheckHandler_NoRedis(t *testing.T) {
-	r := setupRouter()
+func TestHealthCheckHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
 	r.GET("/healthz", HealthCheckHandler)
 
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	w := httptest.NewRecorder()
-
-	// Redis 未初始化会 panic，测试函数存在性
-	defer func() {
-		if rec := recover(); rec != nil {
-			t.Log("HealthCheck panicked as expected (no Redis):", rec)
-		}
-	}()
-
 	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal("unmarshal failed:", err)
+	}
+	if code, ok := resp["code"].(float64); !ok || code != 0 {
+		t.Errorf("code = %v, want 0", resp["code"])
+	}
 }
 
 func TestGetFileHandler_NoFilehash(t *testing.T) {

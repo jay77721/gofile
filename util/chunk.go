@@ -1,39 +1,44 @@
 package util
 
 import (
-	"filestore-server/rd"
+	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 )
 
 const (
-	// ChunkTTL chunk 索引在 Redis 中的过期时间
+	// ChunkTTL chunk 目录在磁盘上的保留时间
 	ChunkTTL = 24 * time.Hour
 )
 
-// AddChunk 记录 chunk 上传成功，并设置 key 过期时间
+// AddChunk 记录 chunk 上传成功（磁盘基础，无需额外操作）
 func AddChunk(filehash string, index int) error {
-	key := "chunk:" + filehash
-	if err := rd.RDB.SAdd(rd.Ctx, key, index).Err(); err != nil {
-		return err
-	}
-	return rd.RDB.Expire(rd.Ctx, key, ChunkTTL).Err()
+	return nil
 }
 
 // GetUploadedChunks 获取已上传的 chunk 列表
-func GetUploadedChunks(filehash string) ([]string, error) {
-	key := "chunk:" + filehash
-	return rd.RDB.SMembers(rd.Ctx, key).Result()
+func GetUploadedChunks(chunkDir, filehash string) ([]string, error) {
+	dir := filepath.Join(chunkDir, filehash)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var chunks []string
+	for _, e := range entries {
+		chunks = append(chunks, e.Name())
+	}
+	return chunks, nil
 }
 
 // ChunkExists 判断 chunk 是否已存在
-func ChunkExists(filehash string, index int) bool {
-	key := "chunk:" + filehash
-	res, _ := rd.RDB.SIsMember(rd.Ctx, key, index).Result()
-	return res
+func ChunkExists(chunkDir, filehash string, index int) bool {
+	chunkPath := filepath.Join(chunkDir, filehash, strconv.Itoa(index))
+	_, err := os.Stat(chunkPath)
+	return err == nil
 }
 
 // ClearChunks 删除 chunk 记录
 func ClearChunks(filehash string) {
-	key := "chunk:" + filehash
-	rd.RDB.Del(rd.Ctx, key)
+	// 空操作：磁盘目录在 MergeChunkHandler 中已通过 os.RemoveAll 清理
 }

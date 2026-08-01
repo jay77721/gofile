@@ -4,7 +4,6 @@ import (
 	"context"
 	"filestore-server/config"
 	"filestore-server/meta"
-	"filestore-server/rd"
 	"filestore-server/storage"
 	"filestore-server/util"
 	"fmt"
@@ -39,10 +38,6 @@ func InitStore(s storage.Storage, c *config.Config) {
 
 // HealthCheckHandler 健康检查端点
 func HealthCheckHandler(c *gin.Context) {
-	if err := rd.HealthCheck(); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"code": 1, "msg": "redis unavailable", "data": nil})
-		return
-	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": nil})
 }
 
@@ -137,8 +132,6 @@ func UploadHandler(c *gin.Context) {
 		return
 	}
 
-	// 缓存 hash 到 Redis
-	rd.SetFileHash(fileSha1, fileSha1)
 
 	slog.Info("file uploaded", "filename", filename, "size", fileSize, "hash", fileSha1)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传成功", "data": gin.H{"filehash": fileSha1}})
@@ -290,7 +283,7 @@ func UploadChunkHandler(c *gin.Context) {
 	defer file.Close()
 
 	// 已上传过该分块则直接返回（幂等）
-	if util.ChunkExists(fileHash, chunkIndex) {
+	if util.ChunkExists(cfg.ChunkDir, fileHash, chunkIndex) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk already uploaded", "data": nil})
 		return
 	}
@@ -326,7 +319,7 @@ func UploadStatusHandler(c *gin.Context) {
 		return
 	}
 
-	chunks, err := util.GetUploadedChunks(fileHash)
+	chunks, err := util.GetUploadedChunks(cfg.ChunkDir, fileHash)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": []string{}})
 		return

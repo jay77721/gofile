@@ -5,7 +5,6 @@ import (
 	"filestore-server/config"
 	"filestore-server/db/mysql"
 	"filestore-server/handler"
-	"filestore-server/rd"
 	"filestore-server/storage"
 	"log/slog"
 	"net/http"
@@ -28,11 +27,6 @@ func main() {
 	cfg := config.Load()
 
 	// 初始化 Redis
-	if err := rd.InitRedis(cfg.RedisAddr, cfg.RedisPass, cfg.RedisDB); err != nil {
-		slog.Error("Redis init failed", "error", err)
-		os.Exit(1)
-	}
-
 	// 初始化 MySQL
 	if err := mysql.Init(cfg.MySQLDSN); err != nil {
 		slog.Error("MySQL init failed", "error", err)
