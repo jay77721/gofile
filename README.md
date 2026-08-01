@@ -24,7 +24,7 @@ A lightweight file storage server built with Go, supporting file upload/download
 
 ```bash
 git clone git@github.com:jay77721/FileStore-server.git
-cd filestore-server
+cd gofile
 docker compose up -d
 ```
 
@@ -186,7 +186,7 @@ Every file is associated with its uploader's username. The following operations 
 ## Project Structure
 
 ```
-filestore-server/
+gofile/
 ├── main.go                # Entry point, route registration, graceful shutdown
 ├── config/
 │   └── config.go          # Environment-based configuration

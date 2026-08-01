@@ -24,7 +24,7 @@
 
 ```bash
 git clone git@github.com:jay77721/FileStore-server.git
-cd filestore-server
+cd gofile
 docker compose up -d
 ```
 
@@ -159,7 +159,7 @@ scripts\start.bat --build      # 构建二进制后运行
 ## 项目结构
 
 ```
-filestore-server/
+gofile/
 ├── main.go                # 入口、路由注册、优雅关闭
 ├── config/
 │   └── config.go          # 环境变量配置

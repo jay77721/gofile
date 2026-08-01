@@ -2,7 +2,7 @@ package db
 
 import (
 	"database/sql"
-	mydb "filestore-server/db/mysql"
+	mydb "gofile/db/mysql"
 	"log/slog"
 	"time"
 )

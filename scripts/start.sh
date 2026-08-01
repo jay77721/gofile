@@ -43,9 +43,9 @@ case "${1:-}" in
         ;;
     --build)
         echo "Building..."
-        go build -o filestore-server .
+        go build -o gofile .
         echo "Starting..."
-        ./filestore-server
+        ./gofile
         ;;
     *)
         echo "Starting FileStore Server..."

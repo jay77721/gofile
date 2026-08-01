@@ -1,4 +1,4 @@
-# filestore-server 优化 Plan
+# gofile 优化 Plan
 
 > 基于代码审查和功能分析，识别出的优化点与改进方案。分三期实施，按优先级递减。
 

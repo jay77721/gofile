@@ -3,8 +3,8 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"filestore-server/config"
-	"filestore-server/storage"
+	"gofile/config"
+	"gofile/storage"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +21,7 @@ func setupRouter() *gin.Engine {
 
 func setupTestStore(t *testing.T) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "filestore-test-*")
+	dir, err := os.MkdirTemp("", "gofile-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}

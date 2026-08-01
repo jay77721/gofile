@@ -1,4 +1,4 @@
-module filestore-server
+module gofile
 
 go 1.25.0
 

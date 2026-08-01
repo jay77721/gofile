@@ -2,10 +2,10 @@ package handler
 
 import (
 	"context"
-	"filestore-server/config"
-	"filestore-server/meta"
-	"filestore-server/storage"
-	"filestore-server/util"
+	"gofile/config"
+	"gofile/meta"
+	"gofile/storage"
+	"gofile/util"
 	"fmt"
 	"io"
 	"log/slog"

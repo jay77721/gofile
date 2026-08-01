@@ -3,8 +3,8 @@ package handler
 import (
 	"crypto/rand"
 	"encoding/hex"
-	dblayer "filestore-server/db"
-	mydb "filestore-server/db/mysql"
+	dblayer "gofile/db"
+	mydb "gofile/db/mysql"
 	"log/slog"
 	"net/http"
 	"time"

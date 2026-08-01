@@ -1,7 +1,7 @@
 package meta
 
 import (
-	mydb "filestore-server/db"
+	mydb "gofile/db"
 	"time"
 )
 

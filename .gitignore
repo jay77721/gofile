@@ -1,5 +1,5 @@
 # Binaries
-filestore-server
+gofile
 *.exe
 *.exe~
 *.dll
@@ -53,4 +53,4 @@ dist/
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db
+Thumbs.db.claude/

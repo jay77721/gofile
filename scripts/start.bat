@@ -54,7 +54,7 @@ goto :eof
 
 :build
 echo Building...
-go build -o filestore-server.exe .
+go build -o gofile.exe .
 echo Starting...
-filestore-server.exe
+gofile.exe
 goto :eof

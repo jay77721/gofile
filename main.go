@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"filestore-server/config"
-	"filestore-server/db/mysql"
-	"filestore-server/handler"
-	"filestore-server/storage"
+	"gofile/config"
+	"gofile/db/mysql"
+	"gofile/handler"
+	"gofile/storage"
 	"log/slog"
 	"net/http"
 	"os"

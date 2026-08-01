@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-filestore-server 是一个轻量级网盘服务，使用 Go 编写。支持文件上传/下载、分片上传与断点续传、用户认证、基于 hash 的秒传去重。前端为静态 HTML 页面，后端使用 Gin 框架暴露 JSON API。
+gofile 是一个轻量级网盘服务，使用 Go 编写。支持文件上传/下载、分片上传与断点续传、用户认证、基于 hash 的秒传去重。前端为静态 HTML 页面，后端使用 Gin 框架暴露 JSON API。
 
 ## Tech Stack
 
@@ -67,9 +67,9 @@ docker compose up -d
 ### Manual
 
 ```bash
-go build -o filestore-server .
+go build -o gofile .
 cp .env.example .env       # edit .env to match your setup
-./filestore-server
+./gofile
 ```
 
 Or use the startup scripts (loads `.env` automatically):
