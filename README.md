@@ -9,9 +9,9 @@
 ![MinIO](https://img.shields.io/badge/MinIO-Latest-C72E49?style=flat-square&logo=minio)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-**轻量级自建网盘 | Lightweight Self-hosted File Storage**
+**Lightweight Self-hosted File Storage**
 
-[English](#features) · [中文](README_CN.md) · [快速开始](#quick-start) · [API 文档](#api-endpoints) · [截图](#screenshots)
+[English](#features) · [中文](README_CN.md) · [Quick Start](#quick-start) · [API Docs](#api-endpoints) · [Project Structure](#project-structure)
 
 </div>
 
@@ -21,15 +21,15 @@
 
 | | Feature | Description |
 |---|---------|-------------|
-| 📤 | **文件上传** | 普通上传 + 秒传去重（SHA1 hash） |
-| 📥 | **文件下载** | 支持断点续传，Content-Disposition 安全编码 |
-| ✂️ | **分片上传** | 大文件切片上传，断点续传，幂等重试，自动合并 |
-| 🔐 | **用户认证** | bcrypt 密码哈希 + HttpOnly Cookie Session |
-| 👤 | **文件归属** | 每个文件关联上传者，操作需校验所有权 |
-| 🛡️ | **安全防护** | 路径穿越防护、IP 限流（5 req/s, burst 10）、RFC 5987 编码 |
-| ☁️ | **存储后端** | MinIO (S3) 优先，失败自动回退本地磁盘 |
-| 🧹 | **自动清理** | 过期分片定时清理（1h 间隔，24h 保留） |
-| 📊 | **结构化日志** | JSON 格式 log/slog，便于收集分析 |
+| 📤 | **File Upload** | Normal upload + instant dedup via SHA1 hash |
+| 📥 | **File Download** | Range request support, safe Content-Disposition encoding |
+| ✂️ | **Chunked Upload** | Large file splitting, resumable, idempotent retry, auto-merge |
+| 🔐 | **User Auth** | bcrypt password hashing + HttpOnly Cookie Session |
+| 👤 | **File Ownership** | Every file scoped to uploader; all operations verify ownership |
+| 🛡️ | **Security** | Path traversal protection, IP rate limiting (5 req/s, burst 10), RFC 5987 encoding |
+| ☁️ | **Storage Backend** | MinIO (S3) prioritized, auto-fallback to local disk |
+| 🧹 | **Auto Cleanup** | Expired chunks cleaned periodically (1h interval, 24h retention) |
+| 📊 | **Structured Logs** | JSON log/slog output, easy to collect and analyze |
 
 ---
 
@@ -58,7 +58,7 @@
 
 ## 🚀 Quick Start
 
-### 方式一：Docker Compose（推荐）
+### Option 1: Docker Compose (Recommended)
 
 ```bash
 git clone git@github.com:jay77721/gofile.git
@@ -66,117 +66,117 @@ cd gofile
 docker compose up -d
 ```
 
-启动后访问：
+Once started:
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 🌐 应用 | http://localhost:8080 | 主服务 |
-| 🗄️ MinIO | http://localhost:9001 | 用户名/密码：`minioadmin` |
+| Service | URL | Notes |
+|---------|-----|-------|
+| 🌐 App | http://localhost:8080 | Main service |
+| 🗄️ MinIO | http://localhost:9001 | Credentials: `minioadmin` / `minioadmin` |
 
-### 方式二：手动部署
+### Option 2: Manual Setup
 
 ```bash
-# 1. 安装依赖
+# 1. Install dependencies
 go mod tidy
 
-# 2. 配置环境变量
+# 2. Configure environment
 cp .env.example .env
-# 编辑 .env 以匹配你的配置
+# Edit .env to match your setup
 
-# 3. 初始化数据库
+# 3. Initialize database
 mysql -u root -p gofile < schema.sql
 
-# 4. 启动
+# 4. Run
 go run main.go
 ```
 
-或使用启动脚本（自动加载 `.env`）：
+Or use startup scripts (loads `.env` automatically):
 
 ```bash
-./start.sh              # 使用 .env 启动
-./start.sh --migrate    # 运行 schema.sql 后启动
-./start.sh --build      # 构建二进制后运行
+./start.sh              # Start with .env
+./start.sh --migrate    # Run schema.sql then start
+./start.sh --build      # Build binary then run
 ```
 
-Windows 用户：
+Windows:
 ```cmd
-start.bat              # 使用 .env 启动
-start.bat --migrate    # 运行 schema.sql 后启动
-start.bat --build      # 构建二进制后运行
+start.bat              # Start with .env
+start.bat --migrate    # Run schema.sql then start
+start.bat --build      # Build binary then run
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-| 环境变量 | 默认值 | 说明 |
-|----------|--------|------|
-| `SERVER_ADDR` | `:8080` | HTTP 监听地址 |
-| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL 连接字符串 |
-| `UPLOAD_DIR` | `./uploads` | 本地文件存储目录（fallback） |
-| `CHUNK_DIR` | `./chunks` | 分片临时目录 |
-| `MINIO_ENDPOINT` | `minio:9000` | MinIO 服务地址（空=跳过 MinIO） |
-| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO Access Key |
-| `MINIO_SECRET_KEY` | `minioadmin` | MinIO Secret Key |
-| `MINIO_BUCKET` | `filestore` | MinIO 存储桶名称 |
-| `MINIO_USE_SSL` | `false` | 是否启用 SSL |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVER_ADDR` | `:8080` | HTTP listen address |
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL connection string |
+| `UPLOAD_DIR` | `./uploads` | Local storage directory (fallback) |
+| `CHUNK_DIR` | `./chunks` | Chunk temp directory |
+| `MINIO_ENDPOINT` | `minio:9000` | MinIO endpoint (empty = skip MinIO) |
+| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO access key |
+| `MINIO_SECRET_KEY` | `minioadmin` | MinIO secret key |
+| `MINIO_BUCKET` | `filestore` | MinIO bucket name |
+| `MINIO_USE_SSL` | `false` | Enable SSL for MinIO |
 
-> 💡 服务会优先尝试连接 MinIO。若 `MINIO_ENDPOINT` 为空或 MinIO 初始化失败，自动回退到 `UPLOAD_DIR` 本地存储。
+> 💡 The server attempts MinIO first. If `MINIO_ENDPOINT` is empty or MinIO init fails, it falls back to local storage at `UPLOAD_DIR`.
 
 ---
 
 ## 📡 API Endpoints
 
-### 文件操作（需认证）
+### File Operations (Auth Required)
 
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| `POST` | `/file/upload` | 上传文件（支持秒传） |
-| `GET` | `/file/meta` | 按 hash 获取文件元数据 |
-| `GET` | `/file/query` | 查询当前用户所有文件 |
-| `GET` | `/file/download` | 按 hash 下载文件 |
-| `POST` | `/file/update` | 重命名文件 |
-| `POST` | `/file/delete` | 软删除文件 |
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/file/upload` | Upload file (supports instant dedup) |
+| `GET` | `/file/meta` | Get file metadata by hash |
+| `GET` | `/file/query` | List all files for current user |
+| `GET` | `/file/download` | Download file by hash |
+| `POST` | `/file/update` | Rename file |
+| `POST` | `/file/delete` | Soft delete file |
 
-### 分片上传（需认证）
+### Chunked Upload (Auth Required)
 
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| `POST` | `/file/upload/chunk` | 上传单个分片（幂等） |
-| `GET` | `/file/upload/status` | 查询已上传的分片索引 |
-| `POST` | `/file/upload/merge` | 合并分片为完整文件 |
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/file/upload/chunk` | Upload a single chunk (idempotent) |
+| `GET` | `/file/upload/status` | Check uploaded chunk indices |
+| `POST` | `/file/upload/merge` | Merge chunks into final file |
 
-### 用户操作
+### User Operations
 
-| 方法 | 路由 | 需认证 | 限流 | 说明 |
-|------|------|:------:|:----:|------|
-| `POST` | `/user/signup` | × | ✓ | 注册 |
-| `POST` | `/user/signin` | × | ✓ | 登录，Token 仅通过 HttpOnly Cookie 返回 |
-| `GET` | `/user/info` | ✓ | × | 获取用户信息 |
+| Method | Route | Auth | Rate Limit | Description |
+|--------|-------|:----:|:----------:|-------------|
+| `POST` | `/user/signup` | × | ✓ | Register |
+| `POST` | `/user/signin` | × | ✓ | Login, get token (HttpOnly Cookie) |
+| `GET` | `/user/info` | ✓ | × | Get user info |
 
-### 系统
+### System
 
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| `GET` | `/healthz` | 健康检查 |
-| `GET` | `/static/*` | 静态前端页面 |
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/healthz` | Health check |
+| `GET` | `/static/*` | Static frontend pages |
 
 ---
 
 ## 💻 Usage Examples
 
 ```bash
-# 注册
+# Register
 curl -X POST -d "username=test&password=123456" http://localhost:8080/user/signup
 
-# 登录（cookie 存储在本地，后续请求自动带上）
+# Login (cookie stored locally, auto-sent on subsequent requests)
 curl -X POST -F "username=test&password=123456" http://localhost:8080/user/signin -c cookies.txt
 
-# 上传文件
+# Upload a file
 curl -X POST -F "file=@./test.txt" -b cookies.txt \
   http://localhost:8080/file/upload
 
-# 下载文件
+# Download a file
 curl -b cookies.txt \
   "http://localhost:8080/file/download?filehash=HASH" -o output.txt
 ```
@@ -186,14 +186,14 @@ curl -b cookies.txt \
 ## 🧪 Testing
 
 ```bash
-go test ./...           # 运行全部测试
-go test -v ./handler/   # handler 测试（详细输出）
-go test ./util/         # 工具函数测试
+go test ./...           # Run all tests
+go test -v ./handler/   # Handler tests with verbose output
+go test ./util/         # Util tests only
 ```
 
-**测试覆盖：**
-- `util/` — SHA1, MD5, 文件操作, 路径工具
-- `handler/` — HTTP 响应, 状态码, JSON 格式, 认证中间件, 限流, 用户注册/登录验证, 边界情况（缺少参数, 无效输入, 不存在, panic 恢复）
+**Coverage:**
+- `util/` — SHA1, MD5, file operations, path utilities
+- `handler/` — HTTP responses, status codes, JSON format, auth middleware, rate limiting, user signup/signin validation, edge cases (missing params, invalid input, not-found, panic recovery)
 
 ---
 
@@ -201,34 +201,35 @@ go test ./util/         # 工具函数测试
 
 ```
 gofile/
-├── main.go                 # 入口、路由注册、优雅关闭
-├── schema.sql              # 数据库建表脚本（含索引，单文件）
+├── main.go                 # Entry point, route registration, graceful shutdown
+├── schema.sql              # Database schema (tables + indexes, single file)
 ├── config/
-│   └── config.go           # 环境变量配置
+│   └── config.go           # Environment-based configuration
 ├── db/
 │   ├── mysql/
-│   │   └── conn.go         # MySQL 连接池
-│   ├── file.go             # tbl_file CRUD + FileMeta 领域模型
+│   │   └── conn.go         # MySQL connection pool
+│   ├── file.go             # tbl_file CRUD + FileMeta domain model
 │   └── user.go             # tbl_user / tbl_user_token CRUD
 ├── handler/
-│   ├── handler.go          # 文件上传/下载/查询/删除 + 分片上传
-│   ├── user.go             # 注册/登录 + bcrypt + token 生成
-│   ├── auth.go             # 认证中间件（Cookie session）
-│   ├── ratelimit.go        # IP 限流中间件
-│   └── cleanup.go          # 定时清理过期分片
+│   ├── handler.go          # File upload/download/query/delete + chunked upload
+│   ├── user.go             # Signup/signin + bcrypt + token generation
+│   ├── auth.go             # Auth middleware (Cookie session)
+│   ├── ratelimit.go        # IP rate limiting middleware
+│   └── cleanup.go          # Periodic chunk directory cleanup
 ├── storage/
-│   ├── storage.go          # Storage 接口定义
-│   ├── minio.go            # MinIO 对象存储实现
-│   └── local.go            # 本地文件存储实现
+│   ├── storage.go          # Storage interface definition
+│   ├── minio.go            # MinIO object storage implementation
+│   └── local.go            # Local filesystem storage implementation
 ├── util/
-│   ├── hash.go             # SHA1, MD5, 文件哈希, 路径工具
-│   └── chunk.go            # 磁盘-based 分片追踪
-├── static/                 # 前端 HTML 页面
-├── start.sh                # Unix/macOS 启动脚本
-├── start.bat               # Windows 启动脚本
-├── .env.example            # 环境变量模板
-├── Dockerfile              # 多阶段 Docker 构建
-├── docker-compose.yml      # Docker Compose 编排
+│   ├── hash.go             # SHA1, MD5, file hash, path utilities
+│   └── chunk.go            # Disk-based chunk tracking helpers
+├── static/                 # Frontend HTML pages
+├── start.sh                # Unix/macOS startup script
+├── start.bat               # Windows startup script
+├── .env.example            # Environment variable template
+├── Dockerfile              # Multi-stage Docker build
+├── docker-compose.yml      # Docker Compose orchestration
+├── README_CN.md            # 项目说明文档 (ZH)
 └── AGENTS.md               # AI 开发协作文档
 ```
 
@@ -236,13 +237,13 @@ gofile/
 
 ## 🔧 Tech Stack
 
-| 组件 | 选型 | 说明 |
-|------|------|------|
-| HTTP 框架 | Gin | 高性能，社区活跃 |
-| 存储 | MySQL + MinIO | 关系库 + 对象存储（MinIO + 本地 fallback） |
-| 认证 | bcrypt + Cookie/Session | 密码哈希，Token 会话 |
-| 日志 | log/slog | 结构化 JSON 输出 |
-| 部署 | Docker Compose | 一键启动所有依赖 |
+| Component | Choice | Notes |
+|-----------|--------|-------|
+| HTTP Framework | Gin | High performance, active ecosystem |
+| Storage | MySQL + MinIO | Relational DB + Object Storage (MinIO with local fallback) |
+| Auth | bcrypt + Cookie/Session | Password hashing, token-based sessions |
+| Logging | log/slog | Structured JSON output |
+| Deployment | Docker Compose | One-command startup for all services |
 
 ---
 
