@@ -149,7 +149,7 @@ Tests cover:
 
 ## Development Conventions
 
-- **Language:** Code comments are bilingual (Chinese + English). README exists in both `README.md` (ZH, primary) and `README_EN.md` (EN).
+- **Language:** Code comments are bilingual (Chinese + English). README exists in both `README.md` (EN, primary) and `README_CN.md` (ZH).
 - **Naming:** Standard Go conventions — exported PascalCase, unexported camelCase, package names lowercase.
 - **Error handling:** HTTP handlers return JSON via `gin.H{"code": 0|1, "msg": ..., "data": ...}`. Errors logged via `slog.Error`/`slog.Warn`.
 - **Framework:** Gin. Route groups registered in `main.go`. Middleware: `AuthMiddleware`, `RateLimitMiddleware`, `gin.Recovery()`.
