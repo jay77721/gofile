@@ -1,4 +1,4 @@
-# FileStore Server
+# gofile
 
 > Gin + MinIO + MySQL
 
@@ -23,7 +23,7 @@
 ### Docker 部署（推荐）
 
 ```bash
-git clone git@github.com:jay77721/FileStore-server.git
+git clone git@github.com:jay77721/gofile.git
 cd gofile
 docker compose up -d
 ```
@@ -182,8 +182,7 @@ gofile/
 │   └── local.go           # 本地文件存储实现
 ├── util/
 │   ├── util.go            # SHA1、MD5、文件哈希、路径工具
-│   ├── chunk.go           # 磁盘-based 分片追踪
-│   └── resp.go            # JSON 响应辅助
+│   └── chunk.go           # 磁盘-based 分片追踪
 ├── scripts/
 │   ├── start.sh           # Unix/macOS 启动脚本
 │   └── start.bat          # Windows 启动脚本
@@ -206,8 +205,8 @@ go test ./handler/...   # Handler 测试
 ```
 
 测试覆盖：
-- `util/` — SHA1、MD5、文件操作、路径工具、响应辅助
-- `handler/` — HTTP 响应、状态码、JSON 格式、认证中间件、限流、边界情况（缺少参数、无效输入、资源不存在）
+- `util/` — SHA1、MD5、文件操作、路径工具
+- `handler/` — HTTP 响应、状态码、JSON 格式、认证中间件、限流、用户 handler 测试、边界情况（缺少参数、无效输入、资源不存在）
 
 ## 技术栈
 

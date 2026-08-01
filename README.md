@@ -1,4 +1,4 @@
-# FileStore Server
+# gofile
 
 > Gin + MinIO + MySQL
 
@@ -23,7 +23,7 @@ A lightweight file storage server built with Go, supporting file upload/download
 ### Docker (Recommended)
 
 ```bash
-git clone git@github.com:jay77721/FileStore-server.git
+git clone git@github.com:jay77721/gofile.git
 cd gofile
 docker compose up -d
 ```
@@ -209,8 +209,7 @@ gofile/
 │   └── local.go           # Local filesystem storage implementation
 ├── util/
 │   ├── util.go            # SHA1, MD5, file hash, path utilities
-│   ├── chunk.go           # Disk-based chunk tracking helpers
-│   └── resp.go            # JSON response helper
+│   └── chunk.go           # Disk-based chunk tracking helpers
 ├── scripts/
 │   ├── start.sh           # Unix/macOS startup script
 │   └── start.bat          # Windows startup script
@@ -233,8 +232,8 @@ go test ./handler/...   # Run handler tests only
 ```
 
 Coverage includes:
-- `util/` — SHA1, MD5, file operations, path utilities, response helpers
-- `handler/` — HTTP responses, status codes, JSON format, auth middleware, rate limiting, edge cases (missing params, invalid input, not-found)
+- `util/` — SHA1, MD5, file operations, path utilities
+- `handler/` — HTTP responses, status codes, JSON format, auth middleware, rate limiting, user handler tests, edge cases (missing params, invalid input, not-found)
 
 ## Tech Stack
 
