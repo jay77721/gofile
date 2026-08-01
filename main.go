@@ -72,6 +72,10 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
+	// 配置可信代理：默认只信任回环地址，防止 X-Forwarded-For 伪造
+	// 生产环境需根据实际反向代理 IP 配置
+	_ = r.SetTrustedProxies(nil)
+
 	// 静态文件
 	r.Static("/static", "./static")
 

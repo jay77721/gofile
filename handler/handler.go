@@ -11,8 +11,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sort"
 	"strconv"
 	"time"
@@ -119,10 +121,11 @@ func UploadHandler(c *gin.Context) {
 
 	fileMeta := meta.FileMeta{
 		FileName: filename,
-		Location: fileSha1, // 使用 hash 作为存储 key
+		Location: fileSha1,
 		FileSize: fileSize,
 		FileSha1: fileSha1,
 		UploadAt: now,
+			Username: c.GetString("username"),
 	}
 
 	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
@@ -149,13 +152,22 @@ func GetFileHandler(c *gin.Context) {
 		return
 	}
 
-	fMeta, err := meta.GetFileMetaDB(filehash)
+	fMeta, err := meta.GetFileMetaDBByUser(filehash, c.GetString("username"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fMeta})
+}
+
+// sanitizeFilename 清理文件名中的危险字符，防止 Content-Disposition 头注入
+func sanitizeFilename(name string) string {
+	// 移除双引号、回车、换行等可能破坏 HTTP 头的字符
+	name = strings.ReplaceAll(name, `"`, "")
+	name = strings.ReplaceAll(name, "\r", "")
+	name = strings.ReplaceAll(name, "\n", "")
+	return name
 }
 
 // DownloadHandler 下载文件
@@ -166,7 +178,7 @@ func DownloadHandler(c *gin.Context) {
 		return
 	}
 
-	fMeta, err := meta.GetFileMetaDB(filehash)
+	fMeta, err := meta.GetFileMetaDBByUser(filehash, c.GetString("username"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
@@ -181,7 +193,9 @@ func DownloadHandler(c *gin.Context) {
 	}
 	defer reader.Close()
 
-	c.Header("Content-Disposition", "attachment; filename=\""+fMeta.FileName+"\"")
+	// 使用 RFC 5987 编码，避免 Content-Disposition 头注入
+	safeName := sanitizeFilename(fMeta.FileName)
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, safeName, url.PathEscape(safeName)))
 	c.Header("Content-Type", "application/octet-stream")
 
 	buf := make([]byte, 32*1024)
@@ -203,7 +217,7 @@ func FileMetaUpdateHandler(c *gin.Context) {
 		return
 	}
 
-	curFileMeta, err := meta.GetFileMetaDB(fileSha1)
+	curFileMeta, err := meta.GetFileMetaDBByUser(fileSha1, c.GetString("username"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
@@ -239,7 +253,7 @@ func FileDeleteHandler(c *gin.Context) {
 
 // FileQueryHandler 返回所有文件元信息列表
 func FileQueryHandler(c *gin.Context) {
-	fileMetas, err := meta.GetAllFileMetaDB()
+	fileMetas, err := meta.GetAllFileMetaDBByUser(c.GetString("username"))
 	if err != nil {
 		slog.Error("query all files failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
@@ -439,6 +453,7 @@ func MergeChunkHandler(c *gin.Context) {
 	fileMeta := meta.FileMeta{
 		FileName: fileName,
 		Location: fileHash,
+			Username: c.GetString("username"),
 		UploadAt: time.Now().In(loc),
 		FileSha1: fileHash,
 		FileSize: totalSize,

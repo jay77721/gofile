@@ -1,0 +1,1 @@
+ALTER TABLE tbl_file DROP COLUMN user_name;
