@@ -33,7 +33,7 @@ case "${1:-}" in
         MYSQL_PORT="3306"
         MYSQL_USER="root"
         MYSQL_PASS="root"
-        MYSQL_DB="fileserver"
+        MYSQL_DB="gofile"
         for f in migrations/*.up.sql; do
             echo "  Applying $f..."
             mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASS" "$MYSQL_DB" < "$f" 2>/dev/null || \

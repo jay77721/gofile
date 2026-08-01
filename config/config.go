@@ -36,7 +36,7 @@ func Load() *Config {
 
 	// MySQL DSN 未设置时使用默认值（本地开发）
 	if cfg.MySQLDSN == "" {
-		cfg.MySQLDSN = "root:root@tcp(127.0.0.1:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local"
+		cfg.MySQLDSN = "root:root@tcp(127.0.0.1:3306)/gofile?charset=utf8mb4&parseTime=True&loc=Local"
 	}
 
 	return cfg

@@ -1,8 +1,9 @@
 -- 文件存储服务器初始化 Schema
--- 使用方法: mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
+-- 使用方法: mysql -u root -p gofile < migrations/000001_init_schema.up.sql
 
 CREATE TABLE IF NOT EXISTS tbl_file (
   file_sha1 char(40) NOT NULL PRIMARY KEY COMMENT '文件 SHA1 哈希',
+  user_name varchar(64) NOT NULL DEFAULT '' COMMENT '文件所有者',
   file_name varchar(256) NOT NULL DEFAULT '' COMMENT '文件名',
   file_size bigint(20) DEFAULT 0 COMMENT '文件大小(字节)',
   file_addr varchar(512) DEFAULT '' COMMENT '文件存储路径',

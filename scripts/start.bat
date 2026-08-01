@@ -45,7 +45,7 @@ if "%MYSQL_DSN%"=="" (
 )
 for %%f in (migrations\*.up.sql) do (
     echo   Applying %%f...
-    mysql -h 127.0.0.1 -P 3306 -u root -p root fileserver < %%f 2>nul || (
+    mysql -h 127.0.0.1 -P 3306 -u root -p root gofile < %%f 2>nul || (
         echo   Warning: migration %%f may have already been applied
     )
 )

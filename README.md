@@ -50,9 +50,8 @@ cp .env.example .env
 # Edit .env to match your setup (MYSQL_DSN, MinIO_ENDPOINT, etc.)
 
 # 3. Initialize database
-mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
-mysql -u root -p fileserver < migrations/000002_add_indexes.up.sql
-mysql -u root -p fileserver < migrations/000003_add_file_owner.up.sql
+mysql -u root -p gofile < migrations/000001_init_schema.up.sql
+mysql -u root -p gofile < migrations/000002_add_indexes.up.sql
 
 # 4. Run
 go run main.go
@@ -79,7 +78,7 @@ scripts\start.bat --build      # Build binary then run
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SERVER_ADDR` | `:8080` | HTTP listen address |
-| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL connection string |
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL connection string |
 | `UPLOAD_DIR` | `./uploads` | Local storage directory (fallback) |
 | `CHUNK_DIR` | `./chunks` | Chunk temp directory |
 | `MINIO_ENDPOINT` | `minio:9000` | MinIO endpoint (empty = skip MinIO) |

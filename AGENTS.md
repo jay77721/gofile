@@ -59,7 +59,7 @@ docker compose up -d
 
 ```bash
 go build -o gofile .
-export MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/fileserver?charset=utf8mb4&parseTime=True&loc=Local"
+export MYSQL_DSN="root:root@tcp(127.0.0.1:3306)/gofile?charset=utf8mb4&parseTime=True&loc=Local"
 export REDIS_ADDR="127.0.0.1:6379"
 ./gofile
 ```
@@ -70,7 +70,7 @@ All configuration via environment variables (see `config/config.go`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL connection string |
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL connection string |
 | `REDIS_ADDR` | `127.0.0.1:6379` | Redis address |
 | `REDIS_PASS` | (empty) | Redis password |
 | `REDIS_DB` | `0` | Redis DB number |

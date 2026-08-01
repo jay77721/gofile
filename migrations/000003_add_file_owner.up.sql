@@ -1,1 +1,0 @@
-ALTER TABLE tbl_file ADD COLUMN user_name varchar(64) NOT NULL DEFAULT '' COMMENT '文件所有者' AFTER file_sha1;

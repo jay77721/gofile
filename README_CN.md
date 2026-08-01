@@ -50,9 +50,8 @@ cp .env.example .env
 # 编辑 .env 以匹配你的配置（MYSQL_DSN、MINIO_ENDPOINT 等）
 
 # 3. 初始化数据库
-mysql -u root -p fileserver < migrations/000001_init_schema.up.sql
-mysql -u root -p fileserver < migrations/000002_add_indexes.up.sql
-mysql -u root -p fileserver < migrations/000003_add_file_owner.up.sql
+mysql -u root -p gofile < migrations/000001_init_schema.up.sql
+mysql -u root -p gofile < migrations/000002_add_indexes.up.sql
 
 # 4. 启动
 go run main.go
@@ -79,7 +78,7 @@ scripts\start.bat --build      # 构建二进制后运行
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
 | `SERVER_ADDR` | `:8080` | HTTP 监听地址 |
-| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL 连接字符串 |
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL 连接字符串 |
 | `UPLOAD_DIR` | `./uploads` | 本地文件存储目录（fallback） |
 | `CHUNK_DIR` | `./chunks` | 分片临时目录 |
 | `MINIO_ENDPOINT` | `minio:9000` | MinIO 服务地址（空=跳过 MinIO） |

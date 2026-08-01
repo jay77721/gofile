@@ -86,7 +86,7 @@ All configuration via environment variables (see `config/config.go`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/fileserver?...` | MySQL connection string |
+| `MYSQL_DSN` | `root:root@tcp(127.0.0.1:3306)/gofile?...` | MySQL connection string |
 | `SERVER_ADDR` | `:8080` | HTTP listen address |
 | `UPLOAD_DIR` | `./uploads` | Local storage directory |
 | `CHUNK_DIR` | `./chunks` | Chunk directory |
