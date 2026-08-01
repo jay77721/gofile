@@ -52,8 +52,10 @@ func UploadHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
 	// 秒传检测
 	if fileHash != "" {
-		exists, _ := store.Exists(context.Background(), fileHash)
-		if exists {
+		exists, err := store.Exists(context.Background(), fileHash)
+		if err != nil {
+			slog.Warn("upload: fast upload check failed", "error", err, "filehash", fileHash)
+		} else if exists {
 			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": nil})
 			return
 		}
@@ -95,8 +97,10 @@ func UploadHandler(c *gin.Context) {
 	fileSha1 := sha1Stream.Sum()
 
 	// 再次秒传检测（基于实际 hash）
-	exists, _ := store.Exists(context.Background(), fileSha1)
-	if exists {
+	exists, err := store.Exists(context.Background(), fileSha1)
+	if err != nil {
+		slog.Warn("upload: second fast upload check failed", "error", err, "filehash", fileSha1)
+	} else if exists {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": gin.H{"filehash": fileSha1}})
 		return
 	}
@@ -206,7 +210,11 @@ func FileMetaUpdateHandler(c *gin.Context) {
 	}
 
 	curFileMeta.FileName = filepath.Base(newFileName)
-	_ = meta.UpdateFileMetaDB(curFileMeta)
+	if ok := meta.UpdateFileMetaDB(curFileMeta); !ok {
+		slog.Error("update file meta failed", "filehash", fileSha1)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "更新失败", "data": nil})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": curFileMeta})
 }
@@ -288,7 +296,9 @@ func UploadChunkHandler(c *gin.Context) {
 
 	io.Copy(dst, file)
 
-	_ = util.AddChunk(fileHash, chunkIndex)
+	if err := util.AddChunk(fileHash, chunkIndex); err != nil {
+		slog.Error("add chunk index failed", "error", err, "filehash", fileHash, "index", chunkIndex)
+	}
 
 	slog.Info("chunk uploaded", "filehash", fileHash, "index", chunkIndex)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk upload success", "data": nil})
@@ -408,7 +418,13 @@ func MergeChunkHandler(c *gin.Context) {
 	}
 
 	// 上传到存储层
-	tmpReader, _ := os.Open(tmpPath)
+	tmpReader, err := os.Open(tmpPath)
+	if err != nil {
+		slog.Error("open merged tmp file failed", "error", err)
+		os.Remove(tmpPath)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "合并文件读取失败", "data": nil})
+		return
+	}
 	defer tmpReader.Close()
 	defer os.Remove(tmpPath)
 
