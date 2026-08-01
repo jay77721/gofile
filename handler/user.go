@@ -82,7 +82,6 @@ func SignInHandler(c *gin.Context) {
 		"data": gin.H{
 			"Location": "http://" + c.Request.Host + "/static/view/home.html",
 			"Username": username,
-			"Token":    token,
 		},
 	})
 }

@@ -26,7 +26,6 @@ func main() {
 	// 加载配置
 	cfg := config.Load()
 
-	// 初始化 Redis
 	// 初始化 MySQL
 	if err := mysql.Init(cfg.MySQLDSN); err != nil {
 		slog.Error("MySQL init failed", "error", err)

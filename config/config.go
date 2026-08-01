@@ -9,9 +9,6 @@ import (
 type Config struct {
 	ServerAddr string // 服务监听地址，默认 :8080
 	MySQLDSN   string // MySQL 连接字符串，必填
-	RedisAddr  string // Redis 地址，默认 127.0.0.1:6379
-	RedisPass  string // Redis 密码，默认空
-	RedisDB    int    // Redis DB 编号，默认 0
 	UploadDir  string // 文件上传目录，默认 ./uploads
 	ChunkDir   string // 分块上传目录，默认 ./chunks
 
@@ -27,9 +24,6 @@ func Load() *Config {
 	cfg := &Config{
 		ServerAddr: getEnv("SERVER_ADDR", ":8080"),
 		MySQLDSN:   getEnv("MYSQL_DSN", ""),
-		RedisAddr:  getEnv("REDIS_ADDR", "127.0.0.1:6379"),
-		RedisPass:  getEnv("REDIS_PASS", ""),
-		RedisDB:    getEnvInt("REDIS_DB", 0),
 		UploadDir:  getEnv("UPLOAD_DIR", "./uploads"),
 		ChunkDir:   getEnv("CHUNK_DIR", "./chunks"),
 

@@ -26,14 +26,25 @@ const (
 )
 
 var (
-	store storage.Storage
-	cfg   *config.Config
+	globalStore storage.Storage
+	globalCfg   *config.Config
 )
 
-// InitStore 初始化存储层（由 main.go 调用）
+// FileHandler 文件处理结构体，封装存储层和配置依赖
+type FileHandler struct {
+	store storage.Storage
+	cfg   *config.Config
+}
+
+// NewFileHandler 创建 FileHandler 实例
+func NewFileHandler(s storage.Storage, c *config.Config) *FileHandler {
+	return &FileHandler{store: s, cfg: c}
+}
+
+// InitStore 初始化存储层（由 main.go 调用，兼容旧模式）
 func InitStore(s storage.Storage, c *config.Config) {
-	store = s
-	cfg = c
+	globalStore = s
+	globalCfg = c
 }
 
 // HealthCheckHandler 健康检查端点
@@ -49,7 +60,7 @@ func UploadHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
 	// 秒传检测
 	if fileHash != "" {
-		exists, err := store.Exists(context.Background(), fileHash)
+		exists, err := globalStore.Exists(context.Background(), fileHash)
 		if err != nil {
 			slog.Warn("upload: fast upload check failed", "error", err, "filehash", fileHash)
 		} else if exists {
@@ -94,7 +105,7 @@ func UploadHandler(c *gin.Context) {
 	fileSha1 := sha1Stream.Sum()
 
 	// 再次秒传检测（基于实际 hash）
-	exists, err := store.Exists(context.Background(), fileSha1)
+	exists, err := globalStore.Exists(context.Background(), fileSha1)
 	if err != nil {
 		slog.Warn("upload: second fast upload check failed", "error", err, "filehash", fileSha1)
 	} else if exists {
@@ -108,7 +119,7 @@ func UploadHandler(c *gin.Context) {
 	}
 
 	// 上传到存储层
-	if err := store.Put(context.Background(), fileSha1, file, fileSize); err != nil {
+	if err := globalStore.Put(context.Background(), fileSha1, file, fileSize); err != nil {
 		slog.Error("store file failed", "error", err, "filename", filename)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件上传失败", "data": nil})
 		return
@@ -125,7 +136,7 @@ func UploadHandler(c *gin.Context) {
 
 	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
 		slog.Warn("save file meta failed, rolling back storage", "filehash", fileMeta.FileSha1)
-		if err := store.Delete(context.Background(), fileSha1); err != nil {
+		if err := globalStore.Delete(context.Background(), fileSha1); err != nil {
 			slog.Error("rollback storage failed", "error", err, "filehash", fileSha1)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件上传失败", "data": nil})
@@ -178,7 +189,7 @@ func DownloadHandler(c *gin.Context) {
 	}
 
 	// 从存储层读取
-	reader, err := store.Get(context.Background(), fMeta.FileSha1)
+	reader, err := globalStore.Get(context.Background(), fMeta.FileSha1)
 	if err != nil {
 		slog.Error("get file from storage failed", "error", err, "filehash", filehash)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件读取失败", "data": nil})
@@ -283,12 +294,12 @@ func UploadChunkHandler(c *gin.Context) {
 	defer file.Close()
 
 	// 已上传过该分块则直接返回（幂等）
-	if util.ChunkExists(cfg.ChunkDir, fileHash, chunkIndex) {
+	if util.ChunkExists(globalCfg.ChunkDir, fileHash, chunkIndex) {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk already uploaded", "data": nil})
 		return
 	}
 
-	dir := filepath.Join(cfg.ChunkDir, filepath.Base(fileHash))
+	dir := filepath.Join(globalCfg.ChunkDir, filepath.Base(fileHash))
 	os.MkdirAll(dir, 0755)
 
 	chunkPath := filepath.Join(dir, index)
@@ -319,7 +330,7 @@ func UploadStatusHandler(c *gin.Context) {
 		return
 	}
 
-	chunks, err := util.GetUploadedChunks(cfg.ChunkDir, fileHash)
+	chunks, err := util.GetUploadedChunks(globalCfg.ChunkDir, fileHash)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": []string{}})
 		return
@@ -336,9 +347,7 @@ func UploadStatusHandler(c *gin.Context) {
 
 // MergeChunkHandler 分块合并
 func MergeChunkHandler(c *gin.Context) {
-	fileHash := c.PostForm("filehash")
-	fileName := c.PostForm("filename")
-	totalStr := c.PostForm("chunks")
+	fileHash, fileName, totalStr := c.PostForm("filehash"), c.PostForm("filename"), c.PostForm("chunks")
 
 	if fileHash == "" || fileName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 filename 参数", "data": nil})
@@ -348,12 +357,60 @@ func MergeChunkHandler(c *gin.Context) {
 	// 路径穿越防护
 	fileName = filepath.Base(fileName)
 
-	chunkDir := filepath.Join(cfg.ChunkDir, filepath.Base(fileHash))
+	chunkDir := filepath.Join(globalCfg.ChunkDir, filepath.Base(fileHash))
 
+	files, err := readChunkDir(chunkDir, totalStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": err.Error(), "data": nil})
+		return
+	}
+
+	// 合并分片到临时文件
+	tmpPath := filepath.Join(globalCfg.ChunkDir, fileHash+".tmp")
+	totalSize, err := mergeChunksToTemp(chunkDir, files, tmpPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": err.Error(), "data": nil})
+		return
+	}
+
+	// 上传到存储层
+	if err := saveMergedFile(fileHash, tmpPath, totalSize); err != nil {
+		slog.Error("store merged file failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": err.Error(), "data": nil})
+		return
+	}
+
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+
+	fileMeta := meta.FileMeta{
+		FileName: fileName,
+		Location: fileHash,
+		Username: c.GetString("username"),
+		UploadAt: time.Now().In(loc),
+		FileSha1: fileHash,
+		FileSize: totalSize,
+	}
+
+	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
+		slog.Warn("save merged file meta failed, rolling back storage", "filehash", fileHash)
+		if err := globalStore.Delete(context.Background(), fileHash); err != nil {
+			slog.Error("rollback merged storage failed", "error", err, "filehash", fileHash)
+		}
+		util.ClearChunks(fileHash)
+		os.RemoveAll(chunkDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件合并失败", "data": nil})
+		return
+	}
+
+	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize)
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "merge success", "data": nil})
+}
+
+// readChunkDir 读取并排序 chunk 文件，校验分块数量
+func readChunkDir(chunkDir, totalStr string) ([]os.DirEntry, error) {
 	files, err := os.ReadDir(chunkDir)
 	if err != nil || len(files) == 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "分块不存在", "data": nil})
-		return
+		return nil, fmt.Errorf("分块不存在")
 	}
 
 	// 按 chunk 序号排序
@@ -367,17 +424,16 @@ func MergeChunkHandler(c *gin.Context) {
 	if totalStr != "" {
 		if total, err := strconv.Atoi(totalStr); err == nil && total > 0 {
 			if len(files) != total {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"code": 1,
-					"msg":  fmt.Sprintf("分块数量不匹配: 期望 %d, 实际 %d", total, len(files)),
-					"data": nil,
-				})
-				return
+				return nil, fmt.Errorf("分块数量不匹配: 期望 %d, 实际 %d", total, len(files))
 			}
 		}
 	}
 
-	// 读取所有分片并合并写入存储层
+	return files, nil
+}
+
+// mergeChunksToTemp 将分片合并到临时文件，返回总大小
+func mergeChunksToTemp(chunkDir string, files []os.DirEntry, tmpPath string) (int64, error) {
 	pipeReader, pipeWriter := io.Pipe()
 	done := make(chan error, 1)
 
@@ -400,69 +456,37 @@ func MergeChunkHandler(c *gin.Context) {
 		done <- nil
 	}()
 
-	// 上传合并后的文件到存储层
-	// 先读取所有分片到临时文件获取大小
-	tmpPath := filepath.Join(cfg.ChunkDir, fileHash+".tmp")
 	tmpFile, err := os.Create(tmpPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "合并文件创建失败", "data": nil})
-		return
+		return 0, fmt.Errorf("合并文件创建失败")
 	}
 
 	totalSize, err := io.Copy(tmpFile, pipeReader)
 	tmpFile.Close()
 	if err != nil {
 		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "分块合并失败", "data": nil})
-		return
+		return 0, fmt.Errorf("分块合并失败")
 	}
 
 	// 等待写入完成
 	if err := <-done; err != nil {
 		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": err.Error(), "data": nil})
-		return
+		return 0, err
 	}
 
-	// 上传到存储层
+	return totalSize, nil
+}
+
+// saveMergedFile 将合并后的临时文件上传到存储层
+func saveMergedFile(fileHash, tmpPath string, totalSize int64) error {
 	tmpReader, err := os.Open(tmpPath)
 	if err != nil {
 		slog.Error("open merged tmp file failed", "error", err)
 		os.Remove(tmpPath)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "合并文件读取失败", "data": nil})
-		return
+		return fmt.Errorf("合并文件读取失败")
 	}
 	defer tmpReader.Close()
 	defer os.Remove(tmpPath)
 
-	if err := store.Put(context.Background(), fileHash, tmpReader, totalSize); err != nil {
-		slog.Error("store merged file failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "存储文件失败", "data": nil})
-		return
-	}
-
-	loc, _ := time.LoadLocation("Asia/Shanghai")
-
-	fileMeta := meta.FileMeta{
-		FileName: fileName,
-		Location: fileHash,
-			Username: c.GetString("username"),
-		UploadAt: time.Now().In(loc),
-		FileSha1: fileHash,
-		FileSize: totalSize,
-	}
-
-	if ok := meta.UpdateFileMetaDB(fileMeta); !ok {
-		slog.Warn("save merged file meta failed, rolling back storage", "filehash", fileHash)
-		if err := store.Delete(context.Background(), fileHash); err != nil {
-			slog.Error("rollback merged storage failed", "error", err, "filehash", fileHash)
-		}
-		util.ClearChunks(fileHash)
-		os.RemoveAll(chunkDir)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件合并失败", "data": nil})
-		return
-	}
-
-	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize)
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "merge success", "data": nil})
+	return globalStore.Put(context.Background(), fileHash, tmpReader, totalSize)
 }
