@@ -72,6 +72,11 @@ func main() {
 	// 静态文件
 	r.Static("/static", "./static")
 
+	// 根路径重定向到首页
+	r.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/static/signin.html")
+	})
+
 	// 健康检查（不需要鉴权）
 	r.GET("/healthz", handler.HealthCheckHandler)
 

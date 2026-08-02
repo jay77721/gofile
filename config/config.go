@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config 应用配置，从环境变量读取
@@ -21,6 +23,8 @@ type Config struct {
 
 // Load 从环境变量加载配置，提供合理默认值
 func Load() *Config {
+	loadDotEnv()
+
 	cfg := &Config{
 		ServerAddr: getEnv("SERVER_ADDR", ":8080"),
 		MySQLDSN:   getEnv("MYSQL_DSN", ""),
@@ -40,6 +44,32 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+// loadDotEnv 加载 .env 文件中的变量（不覆盖已存在的环境变量）
+func loadDotEnv() {
+	f, err := os.Open(".env")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if os.Getenv(key) == "" {
+			os.Setenv(key, val)
+		}
+	}
 }
 
 func getEnv(key, defaultVal string) string {

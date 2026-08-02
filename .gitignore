@@ -34,6 +34,10 @@ logs/
 # Uploads and data (should not be committed)
 uploads/
 chunks/
+minio-data/
+
+# MinIO binary
+minio.exe
 
 # Temporary files
 *.tmp

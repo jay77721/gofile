@@ -44,6 +44,20 @@
         button:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
         .msg { text-align: center; margin-top: 15px; font-size: 14px; height: 20px; }
         @media (max-width: 420px) { .container { width: 90%; padding: 30px 25px; } }
+        .switch-link {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 13px;
+            color: #eee;
+        }
+        .switch-link a {
+            color: #fff;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .switch-link a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -74,6 +88,7 @@
         <button type="submit">注 册</button>
         <div id="msg" class="msg"></div>
     </form>
+    <p class="switch-link">已有账号？<a href="/static/signin.html">直接登录</a></p>
 </div>
 
 <script>
