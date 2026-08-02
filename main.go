@@ -5,11 +5,14 @@ import (
 	"gofile/config"
 	"gofile/db/mysql"
 	"gofile/handler"
+	"gofile/repository"
+	"gofile/service"
 	"gofile/storage"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -57,47 +60,68 @@ func main() {
 		slog.Info("using local storage", "dir", cfg.UploadDir)
 	}
 
-	// 注入存储层和配置到 handler
-	handler.InitStore(store, cfg)
+	// 依赖注入：Repository → Service → Handler
+	db := mysql.DBConn()
+
+	fileRepo := repository.NewFileRepository(db)
+	userRepo := repository.NewUserRepository(db)
+	tokenRepo := repository.NewTokenRepository(db)
+
+	fileSvc := service.NewFileService(fileRepo, store, cfg)
+	userSvc := service.NewUserService(userRepo, tokenRepo)
+	authSvc := service.NewAuthService(tokenRepo)
+
+	fileHandler := handler.NewFileHandler(fileSvc, cfg)
+	userHandler := handler.NewUserHandler(userSvc)
+	authMiddleware := handler.NewAuthMiddleware(authSvc)
 
 	// 初始化 Gin
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// 配置可信代理：默认只信任回环地址，防止 X-Forwarded-For 伪造
-	// 生产环境需根据实际反向代理 IP 配置
+	// 配置可信代理
 	_ = r.SetTrustedProxies(nil)
 
+	// 禁用静态文件缓存，确保前端更新即时生效
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/static/") {
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+		}
+		c.Next()
+	})
 	// 静态文件
 	r.Static("/static", "./static")
 
 	// 根路径重定向到首页
 	r.GET("/", func(c *gin.Context) {
-		c.Redirect(http.StatusFound, "/static/signin.html")
+		c.Redirect(http.StatusFound, "/static/index.html")
 	})
 
 	// 健康检查（不需要鉴权）
 	r.GET("/healthz", handler.HealthCheckHandler)
 
 	// 用户接口
-	rateLimit := handler.RateLimitMiddleware(5, 10) // 5 req/s, burst 10
-	r.POST("/user/signup", rateLimit, handler.SignupHandler)
-	r.POST("/user/signin", rateLimit, handler.SignInHandler)
-	r.GET("/user/info", handler.AuthMiddleware(), handler.UserInfoHandler)
+	rateLimit := handler.RateLimitMiddleware(5, 10)
+	r.POST("/user/signup", rateLimit, userHandler.SignupHandler)
+	r.POST("/user/signin", rateLimit, userHandler.SignInHandler)
+	r.GET("/user/info", authMiddleware.Middleware(), userHandler.UserInfoHandler)
 
 	// 文件接口（全部需要鉴权）
-	file := r.Group("/file", handler.AuthMiddleware())
+	file := r.Group("/file", authMiddleware.Middleware())
 	{
-		file.POST("/upload", handler.UploadHandler)
-		file.GET("/meta", handler.GetFileHandler)
-		file.GET("/query", handler.FileQueryHandler)
-		file.GET("/download", handler.DownloadHandler)
-		file.POST("/update", handler.FileMetaUpdateHandler)
-		file.POST("/delete", handler.FileDeleteHandler)
-		file.POST("/upload/chunk", handler.UploadChunkHandler)
-		file.GET("/upload/status", handler.UploadStatusHandler)
-		file.POST("/upload/merge", handler.MergeChunkHandler)
+		file.POST("/upload", fileHandler.UploadHandler)
+		file.GET("/meta", fileHandler.GetFileHandler)
+		file.GET("/query", fileHandler.FileQueryHandler)
+		file.GET("/download", fileHandler.DownloadHandler)
+		file.GET("/preview", fileHandler.PreviewHandler)
+		file.POST("/update", fileHandler.FileMetaUpdateHandler)
+		file.POST("/delete", fileHandler.FileDeleteHandler)
+		file.POST("/upload/chunk", fileHandler.UploadChunkHandler)
+		file.GET("/upload/status", fileHandler.UploadStatusHandler)
+		file.POST("/upload/merge", fileHandler.MergeChunkHandler)
 	}
 
 	// 创建 HTTP Server（支持优雅关闭）

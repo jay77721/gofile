@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"gofile/config"
+	"gofile/repository"
+	"gofile/service"
 	"gofile/storage"
 	"mime/multipart"
 	"net/http"
@@ -14,19 +16,36 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func setupRouter() *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	return gin.New()
-}
-
-func setupTestStore(t *testing.T) {
+// setupTestHandler 创建测试用的 FileHandler（不依赖 MySQL）
+func setupTestHandler(t *testing.T) (*FileHandler, *UserHandler, *AuthMiddleware) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "gofile-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	InitStore(storage.NewLocal(dir), &config.Config{UploadDir: dir, ChunkDir: dir})
+
+	store := storage.NewLocal(dir)
+	cfg := &config.Config{UploadDir: dir, ChunkDir: dir}
+
+	fileRepo := repository.NewMockFileRepository()
+	userRepo := repository.NewMockUserRepository()
+	tokenRepo := repository.NewMockTokenRepository()
+
+	fileSvc := service.NewFileService(fileRepo, store, cfg)
+	userSvc := service.NewUserService(userRepo, tokenRepo)
+	authSvc := service.NewAuthService(tokenRepo)
+
+	fileHandler := NewFileHandler(fileSvc, cfg)
+	userHandler := NewUserHandler(userSvc)
+	authMiddleware := NewAuthMiddleware(authSvc)
+
+	return fileHandler, userHandler, authMiddleware
+}
+
+func setupRouter() *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	return gin.New()
 }
 
 func TestHealthCheckHandler(t *testing.T) {
@@ -52,8 +71,9 @@ func TestHealthCheckHandler(t *testing.T) {
 }
 
 func TestGetFileHandler_NoFilehash(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.GET("/file/meta", GetFileHandler)
+	r.GET("/file/meta", fh.GetFileHandler)
 
 	req := httptest.NewRequest("GET", "/file/meta", nil)
 	w := httptest.NewRecorder()
@@ -71,8 +91,9 @@ func TestGetFileHandler_NoFilehash(t *testing.T) {
 }
 
 func TestFileDeleteHandler_NoFilehash(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/delete", FileDeleteHandler)
+	r.POST("/file/delete", fh.FileDeleteHandler)
 
 	req := httptest.NewRequest("POST", "/file/delete", nil)
 	w := httptest.NewRecorder()
@@ -84,10 +105,19 @@ func TestFileDeleteHandler_NoFilehash(t *testing.T) {
 }
 
 func TestFileMetaUpdateHandler_WrongOp(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/update", FileMetaUpdateHandler)
+	r.POST("/file/update", fh.FileMetaUpdateHandler)
 
-	req := httptest.NewRequest("POST", "/file/update?op=1&filehash=abc&filename=test.txt", nil)
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	writer.WriteField("op", "1")
+	writer.WriteField("filehash", "abc")
+	writer.WriteField("filename", "test.txt")
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/file/update", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -97,8 +127,9 @@ func TestFileMetaUpdateHandler_WrongOp(t *testing.T) {
 }
 
 func TestUploadStatusHandler_NoFilehash(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.GET("/file/upload/status", UploadStatusHandler)
+	r.GET("/file/upload/status", fh.UploadStatusHandler)
 
 	req := httptest.NewRequest("GET", "/file/upload/status", nil)
 	w := httptest.NewRecorder()
@@ -110,8 +141,9 @@ func TestUploadStatusHandler_NoFilehash(t *testing.T) {
 }
 
 func TestMergeChunkHandler_NoParams(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload/merge", MergeChunkHandler)
+	r.POST("/file/upload/merge", fh.MergeChunkHandler)
 
 	req := httptest.NewRequest("POST", "/file/upload/merge", nil)
 	w := httptest.NewRecorder()
@@ -123,9 +155,9 @@ func TestMergeChunkHandler_NoParams(t *testing.T) {
 }
 
 func TestUploadHandler_NoFile(t *testing.T) {
-	setupTestStore(t)
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload", UploadHandler)
+	r.POST("/file/upload", fh.UploadHandler)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -136,16 +168,15 @@ func TestUploadHandler_NoFile(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	// 没有 file 字段，应返回 400
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
 func TestUploadHandler_WithFilehashOnly(t *testing.T) {
-	setupTestStore(t)
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload", UploadHandler)
+	r.POST("/file/upload", fh.UploadHandler)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -164,8 +195,9 @@ func TestUploadHandler_WithFilehashOnly(t *testing.T) {
 }
 
 func TestDownloadHandler_NoFilehash(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.GET("/file/download", DownloadHandler)
+	r.GET("/file/download", fh.DownloadHandler)
 
 	req := httptest.NewRequest("GET", "/file/download", nil)
 	w := httptest.NewRecorder()
@@ -183,30 +215,24 @@ func TestDownloadHandler_NoFilehash(t *testing.T) {
 }
 
 func TestDownloadHandler_NotFound(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.GET("/file/download", DownloadHandler)
+	r.GET("/file/download", fh.DownloadHandler)
 
 	req := httptest.NewRequest("GET", "/file/download?filehash=nonexistent_hash_12345", nil)
 	w := httptest.NewRecorder()
-
-	// 无 MySQL 连接会 panic
-	defer func() {
-		if rec := recover(); rec != nil {
-			t.Log("DownloadHandler panicked as expected (no MySQL):", rec)
-			return
-		}
-		// 如果有 MySQL 连接则检查状态码
-		if w.Code != http.StatusNotFound {
-			t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-		}
-	}()
-
 	r.ServeHTTP(w, req)
+
+	// 使用 mock 不再 panic，返回 404
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
 }
 
 func TestUploadChunkHandler_NoParams(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload/chunk", UploadChunkHandler)
+	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
 
 	req := httptest.NewRequest("POST", "/file/upload/chunk", nil)
 	w := httptest.NewRecorder()
@@ -218,9 +244,9 @@ func TestUploadChunkHandler_NoParams(t *testing.T) {
 }
 
 func TestUploadChunkHandler_InvalidIndex(t *testing.T) {
-	setupTestStore(t)
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload/chunk", UploadChunkHandler)
+	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -239,9 +265,9 @@ func TestUploadChunkHandler_InvalidIndex(t *testing.T) {
 }
 
 func TestUploadChunkHandler_NegativeIndex(t *testing.T) {
-	setupTestStore(t)
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload/chunk", UploadChunkHandler)
+	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -260,9 +286,9 @@ func TestUploadChunkHandler_NegativeIndex(t *testing.T) {
 }
 
 func TestUploadChunkHandler_NoFile(t *testing.T) {
-	setupTestStore(t)
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload/chunk", UploadChunkHandler)
+	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -281,8 +307,9 @@ func TestUploadChunkHandler_NoFile(t *testing.T) {
 }
 
 func TestFileMetaUpdateHandler_MissingParams(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/update", FileMetaUpdateHandler)
+	r.POST("/file/update", fh.FileMetaUpdateHandler)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -302,28 +329,24 @@ func TestFileMetaUpdateHandler_MissingParams(t *testing.T) {
 }
 
 func TestGetFileHandler_NotFound(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.GET("/file/meta", GetFileHandler)
+	r.GET("/file/meta", fh.GetFileHandler)
 
 	req := httptest.NewRequest("GET", "/file/meta?filehash=nonexistent_hash_67890", nil)
 	w := httptest.NewRecorder()
-
-	defer func() {
-		if rec := recover(); rec != nil {
-			t.Log("GetFileHandler panicked as expected (no MySQL):", rec)
-			return
-		}
-		if w.Code != http.StatusNotFound {
-			t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-		}
-	}()
-
 	r.ServeHTTP(w, req)
+
+	// 使用 mock 不再 panic，返回 404
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
 }
 
 func TestMergeChunkHandler_MissingFilehash(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.POST("/file/upload/merge", MergeChunkHandler)
+	r.POST("/file/upload/merge", fh.MergeChunkHandler)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -341,27 +364,23 @@ func TestMergeChunkHandler_MissingFilehash(t *testing.T) {
 }
 
 func TestFileQueryHandler_NoDB(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
 	r := setupRouter()
-	r.GET("/file/query", FileQueryHandler)
+	r.GET("/file/query", fh.FileQueryHandler)
 
 	req := httptest.NewRequest("GET", "/file/query", nil)
 	w := httptest.NewRecorder()
-
-	defer func() {
-		if rec := recover(); rec != nil {
-			t.Log("FileQueryHandler panicked as expected (no MySQL):", rec)
-			return
-		}
-		if w.Code != http.StatusInternalServerError {
-			t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
-		}
-	}()
-
 	r.ServeHTTP(w, req)
+
+	// 使用 mock 不再 panic，返回空列表
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
 }
 
 func TestRateLimitMiddleware(t *testing.T) {
-	r := setupRouter()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
 	r.GET("/test", RateLimitMiddleware(1, 1), func(c *gin.Context) {
 		c.JSON(200, gin.H{"ok": true})
 	})
@@ -373,5 +392,52 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("first request: status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestSignupHandler_MissingParams(t *testing.T) {
+	_, uh, _ := setupTestHandler(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/user/signup", uh.SignupHandler)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/user/signup", nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestSignInHandler_MissingParams(t *testing.T) {
+	_, uh, _ := setupTestHandler(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/user/signin", uh.SignInHandler)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/user/signin", nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestUserInfoHandler_NoCookie(t *testing.T) {
+	_, uh, am := setupTestHandler(t)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/user/info", am.Middleware(), uh.UserInfoHandler)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/user/info", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", w.Code)
 	}
 }

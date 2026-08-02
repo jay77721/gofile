@@ -1,20 +1,25 @@
 package handler
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	dblayer "gofile/db"
-	mydb "gofile/db/mysql"
+	"gofile/service"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 )
 
+// UserHandler 用户 HTTP 处理器，依赖注入 UserService
+type UserHandler struct {
+	userSvc *service.UserService
+}
+
+// NewUserHandler 创建用户处理器
+func NewUserHandler(userSvc *service.UserService) *UserHandler {
+	return &UserHandler{userSvc: userSvc}
+}
+
 // SignupHandler 处理用户注册请求
-func SignupHandler(c *gin.Context) {
+func (h *UserHandler) SignupHandler(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
 
@@ -23,25 +28,18 @@ func SignupHandler(c *gin.Context) {
 		return
 	}
 
-	// 使用 bcrypt 哈希密码
-	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		slog.Error("bcrypt hash failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "注册失败，请稍后重试", "data": nil})
+	if err := h.userSvc.Signup(username, password); err != nil {
+		// 用户已存在
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在", "data": nil})
 		return
 	}
 
-	suc := dblayer.UserSignup(username, string(hashedPwd))
-	if suc {
-		slog.Info("user registered", "username", username)
-		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "注册成功", "data": nil})
-	} else {
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在", "data": nil})
-	}
+	slog.Info("user registered", "username", username)
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "注册成功", "data": nil})
 }
 
 // SignInHandler 登录接口
-func SignInHandler(c *gin.Context) {
+func (h *UserHandler) SignInHandler(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
 
@@ -50,27 +48,14 @@ func SignInHandler(c *gin.Context) {
 		return
 	}
 
-	// 从数据库获取哈希密码并验证
-	if !checkPassword(username, password) {
+	token, err := h.userSvc.Signin(username, password)
+	if err != nil {
 		slog.Warn("login failed", "username", username, "reason", "invalid credentials")
 		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名或密码错误", "data": nil})
 		return
 	}
 
-	// 生成安全的随机 token
-	token, err := generateToken()
-	if err != nil {
-		slog.Error("generate token failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "登录失败，请稍后重试", "data": nil})
-		return
-	}
-
-	upRes := dblayer.UpdateToken(username, token)
-	if !upRes {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "登录失败，请稍后重试", "data": nil})
-		return
-	}
-
+	// 设置 cookie（1h 有效期，token 本身在 DB 中 24h 过期）
 	c.SetCookie("token", token, 3600, "/", "", false, true)
 	c.SetCookie("username", username, 3600, "/", "", false, true)
 
@@ -80,21 +65,21 @@ func SignInHandler(c *gin.Context) {
 		"code": 0,
 		"msg":  "ok",
 		"data": gin.H{
-			"Location": "http://" + c.Request.Host + "/static/home.html",
+			"Location": "http://" + c.Request.Host + "/static/index.html",
 			"Username": username,
 		},
 	})
 }
 
 // UserInfoHandler 查询用户信息
-func UserInfoHandler(c *gin.Context) {
+func (h *UserHandler) UserInfoHandler(c *gin.Context) {
 	username, _ := c.Cookie("username")
 	if username == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": 1, "msg": "缺少登录信息", "data": nil})
 		return
 	}
 
-	user, err := dblayer.GetUserInfo(username)
+	user, err := h.userSvc.GetUserInfo(username)
 	if err != nil {
 		slog.Error("get user info failed", "error", err, "username", username)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "获取用户信息失败", "data": nil})
@@ -103,47 +88,3 @@ func UserInfoHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": user})
 }
-
-// checkPassword 验证用户密码（bcrypt）
-func checkPassword(username, password string) bool {
-	var storedHash string
-	err := mydb.DBConn().QueryRow(
-		"SELECT user_pwd FROM tbl_user WHERE user_name=? LIMIT 1", username,
-	).Scan(&storedHash)
-	if err != nil {
-		return false
-	}
-	return bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) == nil
-}
-
-// generateToken 生成安全的随机 token（64 位十六进制）
-func generateToken() (string, error) {
-	b := make([]byte, 32)
-	_, err := rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
-// isTokenValid 验证 token 是否有效
-func isTokenValid(username string, token string) bool {
-	var expiredAt time.Time
-	var userToken string
-	err := mydb.DBConn().QueryRow(
-		"SELECT user_token, expired_at FROM tbl_user_token WHERE user_name=? LIMIT 1", username,
-	).Scan(&userToken, &expiredAt)
-	if err != nil {
-		return false
-	}
-	if userToken != token {
-		slog.Warn("token mismatch", "username", username)
-		return false
-	}
-	if expiredAt.Before(time.Now()) {
-		slog.Warn("token expired", "username", username, "expired_at", expiredAt)
-		return false
-	}
-	return true
-}
-
