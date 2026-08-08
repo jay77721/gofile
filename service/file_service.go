@@ -14,7 +14,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"time"
+	"strings"
+
+	"github.com/google/uuid"
 )
 
 // FileService 文件业务逻辑
@@ -50,12 +52,23 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	}
 	fileSha1 := sha1Stream.Sum()
 
-	// 秒传检测
+	// 秒传检测：文件已存在于存储层
 	exists, err := s.store.Exists(ctx, fileSha1)
 	if err != nil {
 		slog.Warn("dedup check failed", "error", err, "filehash", fileSha1)
 	} else if exists {
-		slog.Info("fast upload (dedup)", "filehash", fileSha1)
+		// 创建用户拥有关系（幂等）
+		uf := model.UserFile{
+			Username: username,
+			FileSha1: fileSha1,
+			FileName: filename,
+			Status:   1,
+		}
+		// 即使 CreateUserFile 失败，也视为秒传成功（已存在则忽略）
+		if ufErr := s.fileRepo.CreateUserFile(uf); ufErr != nil {
+			slog.Warn("create user file during dedup failed", "error", ufErr, "filehash", fileSha1)
+		}
+		slog.Info("fast upload (dedup)", "filehash", fileSha1, "username", username)
 		return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 	}
 
@@ -71,28 +84,35 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 		return model.FileMeta{}, fmt.Errorf("store file failed: %w", err)
 	}
 
-	loc, _ := time.LoadLocation("Asia/Shanghai")
-	now := time.Now().In(loc)
-
-	fMeta := model.FileMeta{
-		FileName: filename,
-		Location: fileSha1,
-		FileSize: totalSize,
+	// 注册全局文件（INSERT IGNORE 幂等）
+	f := model.File{
 		FileSha1: fileSha1,
-		UploadAt: now,
-		Username: username,
+		FileSize: totalSize,
+		FileAddr: fileSha1,
 	}
-
-	if err := s.fileRepo.Create(fMeta); err != nil {
-		slog.Warn("save file meta failed, rolling back storage", "filehash", fileSha1)
+	if err := s.fileRepo.Create(f); err != nil {
+		slog.Warn("save global file meta failed, rolling back storage", "filehash", fileSha1)
 		if delErr := s.store.Delete(ctx, fileSha1); delErr != nil {
 			slog.Error("rollback storage failed", "error", delErr, "filehash", fileSha1)
 		}
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
 	}
 
-	slog.Info("file uploaded", "filename", filename, "size", totalSize, "hash", fileSha1)
-	return fMeta, nil
+	// 建立用户拥有关系
+	uf := model.UserFile{
+		Username: username,
+		FileSha1: fileSha1,
+		FileName: filename,
+		Status:   1,
+	}
+	if err := s.fileRepo.CreateUserFile(uf); err != nil {
+		slog.Warn("save user file relation failed", "error", err, "filehash", fileSha1)
+		// 用户关系失败不影响全局文件，但需要告知用户
+		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
+	}
+
+	slog.Info("file uploaded", "filename", filename, "size", totalSize, "hash", fileSha1, "username", username)
+	return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 }
 
 // FastUpload 秒传检测
@@ -128,11 +148,11 @@ func (s *FileService) Rename(filehash, username, newName string) error {
 		return fmt.Errorf("file not found or no permission")
 	}
 
-	_, err = s.fileRepo.UpdateName(filehash, newName)
+	_, err = s.fileRepo.UpdateName(filehash, username, newName)
 	return err
 }
 
-// Delete 软删除文件（含所有权验证）
+// Delete 软删除用户文件（含所有权验证）
 func (s *FileService) Delete(filehash, username string) error {
 	// 验证文件所有权
 	_, err := s.fileRepo.GetByHash(filehash, username)
@@ -140,7 +160,7 @@ func (s *FileService) Delete(filehash, username string) error {
 		return fmt.Errorf("file not found or no permission")
 	}
 
-	_, err = s.fileRepo.Delete(filehash)
+	_, err = s.fileRepo.Delete(filehash, username)
 	return err
 }
 
@@ -149,14 +169,14 @@ func (s *FileService) ListByUser(username string) ([]model.FileMeta, error) {
 	return s.fileRepo.ListByUser(username)
 }
 
-// UploadChunk 上传分片
-func (s *FileService) UploadChunk(fileHash string, index int, file io.Reader) error {
+// UploadChunk 上传分片（用户隔离）
+func (s *FileService) UploadChunk(fileHash string, index int, file io.Reader, username string) error {
 	// 已上传过的分片直接返回
-	if util.ChunkExists(s.cfg.ChunkDir, fileHash, index) {
+	if util.ChunkExists(s.cfg.ChunkDir, username, fileHash, index) {
 		return nil
 	}
 
-	dir := filepath.Join(s.cfg.ChunkDir, filepath.Base(fileHash))
+	dir := filepath.Join(s.cfg.ChunkDir, filepath.Base(username), filepath.Base(fileHash))
 	os.MkdirAll(dir, 0755)
 
 	chunkPath := filepath.Join(dir, strconv.Itoa(index))
@@ -171,13 +191,13 @@ func (s *FileService) UploadChunk(fileHash string, index int, file io.Reader) er
 		return fmt.Errorf("write chunk failed: %w", err)
 	}
 
-	slog.Info("chunk uploaded", "filehash", fileHash, "index", index)
+	slog.Info("chunk uploaded", "filehash", fileHash, "index", index, "username", username)
 	return nil
 }
 
-// GetChunkStatus 获取已上传的分片索引列表
-func (s *FileService) GetChunkStatus(fileHash string) ([]string, error) {
-	chunks, err := util.GetUploadedChunks(s.cfg.ChunkDir, fileHash)
+// GetChunkStatus 获取已上传的分片索引列表（用户隔离）
+func (s *FileService) GetChunkStatus(fileHash, username string) ([]string, error) {
+	chunks, err := util.GetUploadedChunks(s.cfg.ChunkDir, username, fileHash)
 	if err != nil {
 		return nil, err
 	}
@@ -191,17 +211,18 @@ func (s *FileService) GetChunkStatus(fileHash string) ([]string, error) {
 	return chunks, nil
 }
 
-// MergeChunks 合并分片
+// MergeChunks 合并分片（用户隔离，UUID 临时文件防冲突）
 func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, username, totalStr string) (model.FileMeta, error) {
-	chunkDir := filepath.Join(s.cfg.ChunkDir, filepath.Base(fileHash))
+	chunkDir := filepath.Join(s.cfg.ChunkDir, filepath.Base(username), filepath.Base(fileHash))
 
 	files, err := readChunkDir(chunkDir, totalStr)
 	if err != nil {
 		return model.FileMeta{}, err
 	}
 
-	// 合并到临时文件
-	tmpPath := filepath.Join(s.cfg.ChunkDir, fileHash+".tmp")
+	// 使用 UUID 防止并发 merge 临时文件冲突
+	uuidSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
+	tmpPath := filepath.Join(s.cfg.ChunkDir, fileHash+"."+uuidSuffix+".tmp")
 	totalSize, err := mergeChunksToTemp(chunkDir, files, tmpPath)
 	if err != nil {
 		return model.FileMeta{}, err
@@ -213,18 +234,14 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 		return model.FileMeta{}, fmt.Errorf("store merged file failed: %w", err)
 	}
 
-	loc, _ := time.LoadLocation("Asia/Shanghai")
-	fMeta := model.FileMeta{
-		FileName: fileName,
-		Location: fileHash,
-		FileSize: totalSize,
+	// 注册全局文件（幂等）
+	f := model.File{
 		FileSha1: fileHash,
-		UploadAt: time.Now().In(loc),
-		Username: username,
+		FileSize: totalSize,
+		FileAddr: fileHash,
 	}
-
-	if err := s.fileRepo.Create(fMeta); err != nil {
-		slog.Warn("save merged file meta failed, rolling back", "filehash", fileHash)
+	if err := s.fileRepo.Create(f); err != nil {
+		slog.Warn("save global file meta failed, rolling back", "filehash", fileHash)
 		if delErr := s.store.Delete(ctx, fileHash); delErr != nil {
 			slog.Error("rollback merged storage failed", "error", delErr, "filehash", fileHash)
 		}
@@ -232,8 +249,20 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
 	}
 
-	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize)
-	return fMeta, nil
+	// 建立用户拥有关系
+	uf := model.UserFile{
+		Username: username,
+		FileSha1: fileHash,
+		FileName: fileName,
+		Status:   1,
+	}
+	if err := s.fileRepo.CreateUserFile(uf); err != nil {
+		slog.Warn("save user file relation failed", "error", err, "filehash", fileHash)
+		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
+	}
+
+	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize, "username", username)
+	return model.FileMeta{FileSha1: fileHash, FileName: fileName, FileSize: totalSize, Username: username}, nil
 }
 
 // readChunkDir 读取并排序 chunk 文件，校验分块数量

@@ -85,6 +85,8 @@ cp .env.example .env
 | `MINIO_SECRET_KEY` | `minioadmin` | MinIO secret key |
 | `MINIO_BUCKET` | `filestore` | MinIO bucket name |
 | `MINIO_USE_SSL` | `false` | Enable SSL for MinIO |
+| `REDIS_ADDR` | `localhost:6379` | Redis address |
+| `REDIS_PASSWORD` | `` | Redis password |
 
 > MinIO 不可用时自动 fallback 到 `UPLOAD_DIR` 本地存储。
 
@@ -175,3 +177,178 @@ Tests cover:
 - **Database:** `db` package wraps MySQL operations; `FileMeta` domain model in `db/file.go`
 - **Dependency injection:** `handler.InitStore(store, cfg)` injects storage + config at startup
 - **API prefix:** All file routes under `/file` group with `AuthMiddleware`; user routes under `/user`
+
+---
+
+# Project Upgrade Roadmap — 从"练手项目"到"简历亮点"
+
+## 核心目标
+
+修复现有代码中的硬伤 → 引入工业级中间件 → 展示对现代云原生技术栈的理解 → 集成 AI 能力形成差异化
+
+## Phase 0: 修复已知 Bug（面试基础分）
+
+### 0.1 跨用户秒传所有权冲突 🔴
+- **问题**：`tbl_file` 主键为 `file_sha1`（全局唯一），用户 B 秒传用户 A 的文件时不会创建 B 的行
+- **结果**：B 收到"秒传成功"但 `/file/query` 看不到文件，`/file/download` 404
+- **修复**：引入 `user_file` 关联表，秒传时每个用户创建一条指向共享 hash 的记录；或改为 `file_sha1 + user_name` 复合主键 + 全局去重表
+
+### 0.2 并发竞态：TOCTOU + 临时文件冲突 🔴
+- **问题 1**：`service/file_service.go:54` 先 `Exists` 再 `Put` 非原子操作
+- **问题 2**：`MergeChunks` 临时文件路径为 `<ChunkDir>/<hash>.tmp`，两个用户并发 merge 同一 hash 互相覆盖
+- **修复**：用 Redis `SETNX` 或 `sync.Mutex` 互斥锁保护合并操作；引入 Redis 分布式锁
+
+### 0.3 Chunk 无用户隔离 + 路径穿越 🟡
+- **问题**：chunk 目录仅按 `fileHash` 组织，任何登录用户可读/覆盖他人分片
+- **修复**：chunk 目录加入 `user_name` 层级；`fileHash` 做 40 位 hex 格式校验
+
+### 0.4 软删除无 GC 🟡
+- **问题**：`status=2` 后存储层文件永远保留，无回收机制
+- **修复**：新增后台 GC 任务，标记删除超过 N 天的文件从存储层移除
+
+### 0.5 Cookie 安全加固 🟡
+- **问题**：`SetCookie` 未设 `Secure`、`SameSite`，HTTP 下 token 明文传输
+- **修复**：添加 `Secure`（生产环境）、`SameSite=Lax`/`Strict`
+
+---
+
+## Phase 1: Redis 集成（面试高频考点）
+
+### 1.1 引入 go-redis 客户端
+- 新增 `redis/` 包，封装连接池
+- 配置项：`REDIS_ADDR`、`REDIS_PASSWORD`
+
+### 1.2 秒传去重 Bloom Filter
+- 文件上传前先查 Redis Bloom Filter（`BF.EXISTS`）
+- 缓存 `file_sha1 → FileMeta` 减少 MySQL 查询
+- 设置 TTL 防止缓存膨胀
+
+### 1.3 分布式锁解决并发合并
+- MergeChunks 时 `SETNX gofile:lock:merge:<hash>` 防重入
+- 自动过期避免死锁
+
+### 1.4 基于 Redis 的限流器
+- 替换当前内存令牌桶为 Redis 滑动窗口或令牌桶
+- 支持分布式多实例限流
+
+---
+
+## Phase 2: 预签名 URL 直传直下（"眼前一亮"级）
+
+### 2.1 预签名上传
+- `GET /file/presigned/upload` → 后端签发 MinIO `presignedPutObject` URL
+- 客户端直接 PUT 到 MinIO，不经过应用服务器
+- 上传完成后回调通知服务端写入元数据
+
+### 2.2 预签名下载
+- `GET /file/presigned/download` → 后端签发 `presignedGetObject` URL
+- 客户端直接 GET 文件流，应用服务器零字节拷贝
+
+### 2.3 安全性
+- 预签名 URL 绑定：用户、文件 hash、过期时间（5min）
+- 应用服务器只签名不传数据，吞吐量不再受应用带宽限制
+
+---
+
+## Phase 3: HTTP Range 断点下载 + 分页
+
+### 3.1 Range 支持
+- `DownloadHandler` 解析 `Range` 请求头，返回 `206 Partial Content`
+- 支持视频拖动播放、大文件分片下载
+- 配套 `Content-Range`、`Accept-Ranges` 响应头
+
+### 3.2 文件列表分页
+- `ListByUser` 加 `page`/`size` 参数 + `LIMIT/OFFSET` 或游标分页
+- 返回 `total` 计数，前端分页展示
+
+---
+
+## Phase 4: 可观测性（工程化意识）
+
+### 4.1 Prometheus 指标
+- `http_requests_total`（按 method/path/status 分桶）
+- `http_request_duration_seconds`（直方图）
+- `file_upload_bytes_total`（业务指标）
+- 用 `gin-prometheus` 或自定义 middleware
+
+### 4.2 /metrics 端点
+- 暴露给 Prometheus 抓取
+
+### 4.3 结构化日志增强
+- 每个请求附加 `request_id`（UUID 或 Snowflake）
+- 跨 handler/service 串联日志
+
+---
+
+## Phase 5: CI/CD + 测试覆盖
+
+### 5.1 GitHub Actions
+- `go vet` → `go test -race ./...` → `go build`
+- 构建 Docker 镜像
+- 可选：自动部署到测试环境
+
+### 5.2 测试补全
+- `service/` 层单测（mock repository + storage）
+- `repository/` 层测试（使用 `go-sql-driver/mysql` 的 mock 或 testcontainers）
+- 目标：全项目 80%+ 覆盖率
+
+### 5.3 压测报告
+- wrk/ghz 压测上传/下载/列表接口
+- 记录优化前后对比（如"列表接口加索引后 300ms → 8ms"）
+- 结果写入 PR 描述或 BENCHMARKS.md
+
+---
+
+## Phase 6: AI 集成（2026 年杀手锏）
+
+### 6.1 文件摘要
+- 上传后异步调 LLM API（Claude / OpenAI），读取文本文件内容生成摘要
+- 摘要存入 `tbl_file.file_summary` 字段
+
+### 6.2 语义搜索
+- 用户输入自然语言查询 → 向量化 → 与文件摘要/文件名做语义匹配
+- 用 `/file/ai-search` 端点暴露
+
+### 6.3 智能标签
+- 根据文件名和内容自动分类（文档/图片/代码/数据…）
+- 前端按标签过滤
+
+---
+
+## Phase 7: 架构增强（远期）
+
+### 7.1 Kafka 异步任务
+- 上传 → 发消息 → 异步处理（缩略图、查毒、AI 摘要）
+- 解耦"文件上传"和"文件处理"，削峰填谷
+
+### 7.2 K8s 部署
+- 编写 `deployment.yaml` + `service.yaml`
+- 从 Docker Compose 升级到 minikube 可部署
+
+---
+
+## 升级优先级矩阵
+
+| Phase | 面试价值 | 工作量 | 策略 |
+|-------|---------|--------|------|
+| P0: 修 Bug | ★★★ | 小 | **立即做** — 这是基础分 |
+| P1: Redis | ★★★ | 中 | **立即做** — 面试高频考点 |
+| P2: 预签名 URL | ★★★ | 中 | **立即做** — 最亮眼 |
+| P3: Range + 分页 | ★★ | 小 | 有空做 |
+| P4: 可观测性 | ★★ | 中 | 有空做 |
+| P5: CI/CD | ★★ | 中 | 有空做 |
+| P6: AI 集成 | ★★★ | 中 | **差异化** — 突破天花板 |
+| P7: Kafka/K8s | ★★ | 大 | 有余力再做 |
+
+---
+
+## 简历呈现建议
+
+**不要写：** "基于 Go 的网盘系统，支持上传下载分片"
+
+**要写：**
+- 修复了跨用户秒传去重与所有权模型的冲突（全局 hash 去重 × 按用户隔离）
+- 用 Redis 分布式锁解决并发分片合并竞态，支持服务器级并发
+- 基于预签名 URL 实现零代理文件传输，存储层吞吐量不再受应用服务器带宽限制
+- 集成 AI 文件助手：上传后自动生成摘要 + 语义搜索
+- 引入 Prometheus 指标 + Grafana 大盘，压测报告附在 PR 描述里（列表接口加索引后 300ms→8ms）

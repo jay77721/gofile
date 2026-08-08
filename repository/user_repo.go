@@ -1,11 +1,12 @@
 package repository
 
 import (
-	"database/sql"
 	"fmt"
 	"gofile/model"
 	"log/slog"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // UserRepository 用户数据访问接口
@@ -18,33 +19,27 @@ type UserRepository interface {
 	GetInfo(username string) (model.User, error)
 }
 
-// mysqlUserRepo MySQL 实现的 UserRepository
+// mysqlUserRepo GORM 实现的 UserRepository
 type mysqlUserRepo struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-// NewUserRepository 创建 MySQL 用户仓库
-func NewUserRepository(db *sql.DB) UserRepository {
+// NewUserRepository 创建 GORM 用户仓库
+func NewUserRepository(db *gorm.DB) UserRepository {
 	return &mysqlUserRepo{db: db}
 }
 
 func (r *mysqlUserRepo) Create(username, hashedPassword string) (bool, error) {
-	stmt, err := r.db.Prepare(
-		"INSERT IGNORE INTO tbl_user (`user_name`,`user_pwd`) VALUES (?,?)")
-	if err != nil {
-		return false, fmt.Errorf("prepare insert user failed: %w", err)
+	user := model.User{
+		Username: username,
+		Password: hashedPassword,
 	}
-	defer stmt.Close()
-
-	ret, err := stmt.Exec(username, hashedPassword)
-	if err != nil {
-		return false, fmt.Errorf("exec insert user failed: %w", err)
+	res := r.db.Create(&user)
+	if res.Error != nil {
+		// 主键冲突（用户已存在）
+		return false, nil
 	}
-	rows, err := ret.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("rows affected failed: %w", err)
-	}
-	if rows == 0 {
+	if res.RowsAffected == 0 {
 		slog.Info("user already exists", "username", username)
 		return false, nil
 	}
@@ -52,26 +47,19 @@ func (r *mysqlUserRepo) Create(username, hashedPassword string) (bool, error) {
 }
 
 func (r *mysqlUserRepo) GetPasswordHash(username string) (string, error) {
-	var hashedPwd string
-	err := r.db.QueryRow(
-		"SELECT user_pwd FROM tbl_user WHERE user_name=? LIMIT 1", username,
-	).Scan(&hashedPwd)
+	var user model.User
+	err := r.db.Select("user_pwd").
+		Where("user_name = ?", username).
+		First(&user).Error
 	if err != nil {
 		return "", fmt.Errorf("get password hash failed: %w", err)
 	}
-	return hashedPwd, nil
+	return user.Password, nil
 }
 
 func (r *mysqlUserRepo) GetInfo(username string) (model.User, error) {
-	stmt, err := r.db.Prepare(
-		"SELECT user_name, signup_at FROM tbl_user WHERE user_name=? LIMIT 1")
-	if err != nil {
-		return model.User{}, fmt.Errorf("prepare get user info failed: %w", err)
-	}
-	defer stmt.Close()
-
 	var user model.User
-	err = stmt.QueryRow(username).Scan(&user.Username, &user.SignupAt)
+	err := r.db.Where("user_name = ?", username).First(&user).Error
 	if err != nil {
 		return model.User{}, fmt.Errorf("get user info failed: %w", err)
 	}

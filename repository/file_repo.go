@@ -1,180 +1,275 @@
 package repository
 
 import (
-	"database/sql"
 	"fmt"
 	"gofile/model"
 	"log/slog"
+	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // FileRepository 文件数据访问接口
 type FileRepository interface {
-	// Create 创建文件元信息
-	Create(f model.FileMeta) error
+	// Create 注册全局文件（按 SHA1 去重，已存在则忽略）
+	Create(f model.File) error
+	// CreateUserFile 建立用户文件拥有关系（幂等）
+	CreateUserFile(uf model.UserFile) error
 	// GetByHash 按 hash 和用户名获取文件元信息
 	GetByHash(filehash, username string) (model.FileMeta, error)
 	// ListByUser 获取用户的所有文件
 	ListByUser(username string) ([]model.FileMeta, error)
-	// Delete 软删除文件（status=2）
-	Delete(filehash string) (bool, error)
-	// UpdateName 更新文件名
-	UpdateName(filehash, newFilename string) (bool, error)
+	// Delete 软删除用户文件（status=2）
+	Delete(filehash, username string) (bool, error)
+	// UpdateName 更新用户文件名
+	UpdateName(filehash, username, newFilename string) (bool, error)
+	// CountRefs 统计某文件在 tbl_user_file 中的活跃引用数
+	CountRefs(filehash string) (int64, error)
+	// ListOldest 列出创建时间早于 before 的全局文件（GC 候选）
+	ListOldest(before time.Time) ([]model.File, error)
+	// RemoveOrphan 从 tbl_file 删除无引用的全局文件记录
+	RemoveOrphan(filehash string) error
 }
 
-// mysqlFileRepo MySQL 实现的 FileRepository
+// mysqlFileRepo GORM 实现的 FileRepository
 type mysqlFileRepo struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-// NewFileRepository 创建 MySQL 文件仓库
-func NewFileRepository(db *sql.DB) FileRepository {
+// NewFileRepository 创建 GORM 文件仓库
+func NewFileRepository(db *gorm.DB) FileRepository {
 	return &mysqlFileRepo{db: db}
 }
 
-func (r *mysqlFileRepo) Create(f model.FileMeta) error {
-	stmt, err := r.db.Prepare(
-		"INSERT IGNORE INTO tbl_file(`file_sha1`,`user_name`,`file_name`,`file_size`,`file_addr`,`create_at`,status) VALUES(?,?,?,?,?,?,1)")
-	if err != nil {
-		return fmt.Errorf("prepare insert file failed: %w", err)
-	}
-	defer stmt.Close()
-
-	_, err = stmt.Exec(f.FileSha1, f.Username, f.FileName, f.FileSize, f.Location, f.UploadAt)
-	if err != nil {
-		return fmt.Errorf("exec insert file failed: %w", err)
+// Create 注册全局文件，已存在则忽略（幂等）
+func (r *mysqlFileRepo) Create(f model.File) error {
+	// OnConflict DoNothing 等价于 INSERT IGNORE
+	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&f).Error; err != nil {
+		return fmt.Errorf("create file failed: %w", err)
 	}
 	return nil
 }
 
-func (r *mysqlFileRepo) GetByHash(filehash, username string) (model.FileMeta, error) {
-	row := r.db.QueryRow(
-		"SELECT file_sha1, user_name, file_name, file_size, file_addr, create_at FROM tbl_file WHERE file_sha1=? AND user_name=? AND status=1 LIMIT 1",
-		filehash, username)
-
-	var f model.FileMeta
-	var fileName, fileAddr sql.NullString
-	var fileSize sql.NullInt64
-	var createAt sql.NullTime
-	err := row.Scan(&f.FileSha1, &f.Username, &fileName, &fileSize, &fileAddr, &createAt)
-	if err != nil {
-		return model.FileMeta{}, fmt.Errorf("get file meta by user failed: %w", err)
+// CreateUserFile 建立用户文件拥有关系，已存在则忽略（幂等）
+func (r *mysqlFileRepo) CreateUserFile(uf model.UserFile) error {
+	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&uf).Error; err != nil {
+		return fmt.Errorf("create user file failed: %w", err)
 	}
-	f.FileName = fileName.String
-	f.FileSize = fileSize.Int64
-	f.Location = fileAddr.String
-	f.UploadAt = createAt.Time
-	return f, nil
+	return nil
 }
 
-func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
-	rows, err := r.db.Query(
-		"SELECT file_sha1, user_name, file_name, file_size, file_addr, create_at FROM tbl_file WHERE user_name=? AND status=1 ORDER BY create_at DESC",
-		username)
-	if err != nil {
-		return nil, fmt.Errorf("query files by user failed: %w", err)
+// GetByHash 查询用户拥有的某个文件（JOIN tbl_file）
+func (r *mysqlFileRepo) GetByHash(filehash, username string) (model.FileMeta, error) {
+	var uf model.UserFile
+	if err := r.db.Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
+		First(&uf).Error; err != nil {
+		return model.FileMeta{}, fmt.Errorf("get user file failed: %w", err)
 	}
-	defer rows.Close()
 
-	var files []model.FileMeta
-	for rows.Next() {
-		var f model.FileMeta
-		var fileName, fileAddr sql.NullString
-		var fileSize sql.NullInt64
-		var createAt sql.NullTime
-		if err := rows.Scan(&f.FileSha1, &f.Username, &fileName, &fileSize, &fileAddr, &createAt); err != nil {
-			slog.Error("scan file row failed", "error", err)
+	var f model.File
+	if err := r.db.Where("file_sha1 = ?", filehash).First(&f).Error; err != nil {
+		return model.FileMeta{}, fmt.Errorf("get file failed: %w", err)
+	}
+
+	return model.FileMeta{
+		FileSha1: uf.FileSha1,
+		FileName: uf.FileName,
+		FileSize: f.FileSize,
+		Username: uf.Username,
+		UploadAt: uf.CreateAt.Format("2006-01-02 15:04:05"),
+	}, nil
+}
+
+// ListByUser 查询用户的所有文件
+func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
+	var ufs []model.UserFile
+	if err := r.db.Where("user_name = ? AND status = 1", username).
+		Order("create_at DESC").
+		Find(&ufs).Error; err != nil {
+		return nil, fmt.Errorf("query user files failed: %w", err)
+	}
+
+	files := make([]model.FileMeta, 0, len(ufs))
+	for _, uf := range ufs {
+		var f model.File
+		if err := r.db.Where("file_sha1 = ?", uf.FileSha1).First(&f).Error; err != nil {
+			slog.Warn("file record missing", "filehash", uf.FileSha1)
 			continue
 		}
-		f.FileName = fileName.String
-		f.FileSize = fileSize.Int64
-		f.Location = fileAddr.String
-		f.UploadAt = createAt.Time
-		files = append(files, f)
+		files = append(files, model.FileMeta{
+			FileSha1: uf.FileSha1,
+			FileName: uf.FileName,
+			FileSize: f.FileSize,
+			Username: uf.Username,
+			UploadAt: uf.CreateAt.Format("2006-01-02 15:04:05"),
+		})
 	}
 	return files, nil
 }
 
-func (r *mysqlFileRepo) Delete(filehash string) (bool, error) {
-	stmt, err := r.db.Prepare("UPDATE tbl_file SET status=2 WHERE file_sha1=? AND status=1")
-	if err != nil {
-		return false, fmt.Errorf("prepare delete file failed: %w", err)
+// Delete 软删除用户文件（status=2），仅删除该用户的所有权
+func (r *mysqlFileRepo) Delete(filehash, username string) (bool, error) {
+	res := r.db.Model(&model.UserFile{}).
+		Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
+		Update("status", 2)
+	if res.Error != nil {
+		return false, fmt.Errorf("delete user file failed: %w", res.Error)
 	}
-	defer stmt.Close()
-
-	ret, err := stmt.Exec(filehash)
-	if err != nil {
-		return false, fmt.Errorf("exec delete file failed: %w", err)
-	}
-	rows, _ := ret.RowsAffected()
-	return rows > 0, nil
+	return res.RowsAffected > 0, nil
 }
 
-func (r *mysqlFileRepo) UpdateName(filehash, newFilename string) (bool, error) {
-	stmt, err := r.db.Prepare("UPDATE tbl_file SET file_name=? WHERE file_sha1=? AND status=1")
-	if err != nil {
-		return false, fmt.Errorf("prepare update file name failed: %w", err)
+// UpdateName 更新用户文件名
+func (r *mysqlFileRepo) UpdateName(filehash, username, newFilename string) (bool, error) {
+	res := r.db.Model(&model.UserFile{}).
+		Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
+		Update("file_name", newFilename)
+	if res.Error != nil {
+		return false, fmt.Errorf("update file name failed: %w", res.Error)
 	}
-	defer stmt.Close()
+	return res.RowsAffected > 0, nil
+}
 
-	_, err = stmt.Exec(newFilename, filehash)
+// CountRefs 统计某文件在 tbl_user_file 中的活跃引用数
+func (r *mysqlFileRepo) CountRefs(filehash string) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.UserFile{}).
+		Where("file_sha1 = ? AND status = 1", filehash).
+		Count(&count).Error
 	if err != nil {
-		return false, fmt.Errorf("exec update file name failed: %w", err)
+		return 0, fmt.Errorf("count refs failed: %w", err)
 	}
-	return true, nil
+	return count, nil
+}
+
+// ListOldest 列出创建时间早于 before 的全局文件
+func (r *mysqlFileRepo) ListOldest(before time.Time) ([]model.File, error) {
+	var files []model.File
+	if err := r.db.Where("create_at < ?", before).Find(&files).Error; err != nil {
+		return nil, fmt.Errorf("list oldest files failed: %w", err)
+	}
+	return files, nil
+}
+
+// RemoveOrphan 从 tbl_file 删除无引用的全局文件记录
+func (r *mysqlFileRepo) RemoveOrphan(filehash string) error {
+	if err := r.db.Where("file_sha1 = ?", filehash).Delete(&model.File{}).Error; err != nil {
+		return fmt.Errorf("remove orphan file failed: %w", err)
+	}
+	return nil
 }
 
 // ---- Mock 实现 ----
 
 // mockFileRepo 内存 mock 文件仓库
 type mockFileRepo struct {
-	files map[string]model.FileMeta // key: filehash
+	files    map[string]model.File         // key: filehash -> 全局文件
+	userFile map[string]map[string]string  // key: username -> filehash -> filename
 }
 
 // NewMockFileRepository 创建 mock 文件仓库
 func NewMockFileRepository() FileRepository {
-	return &mockFileRepo{files: make(map[string]model.FileMeta)}
+	return &mockFileRepo{
+		files:    make(map[string]model.File),
+		userFile: make(map[string]map[string]string),
+	}
 }
 
-func (m *mockFileRepo) Create(f model.FileMeta) error {
+func (m *mockFileRepo) Create(f model.File) error {
 	m.files[f.FileSha1] = f
 	return nil
 }
 
+func (m *mockFileRepo) CreateUserFile(uf model.UserFile) error {
+	if _, ok := m.userFile[uf.Username]; !ok {
+		m.userFile[uf.Username] = make(map[string]string)
+	}
+	// 幂等：已存在则忽略
+	if _, exists := m.userFile[uf.Username][uf.FileSha1]; !exists {
+		m.userFile[uf.Username][uf.FileSha1] = uf.FileName
+	}
+	return nil
+}
+
 func (m *mockFileRepo) GetByHash(filehash, username string) (model.FileMeta, error) {
-	f, ok := m.files[filehash]
-	if !ok || f.Username != username {
+	name, ok := m.userFile[username][filehash]
+	if !ok || name == "" && !m.userHas(username, filehash) {
 		return model.FileMeta{}, fmt.Errorf("file not found")
 	}
-	return f, nil
+	f, ok := m.files[filehash]
+	if !ok {
+		return model.FileMeta{}, fmt.Errorf("file not found")
+	}
+	return model.FileMeta{
+		FileSha1: filehash,
+		FileName: name,
+		FileSize: f.FileSize,
+		Username: username,
+	}, nil
+}
+
+func (m *mockFileRepo) userHas(username, filehash string) bool {
+	_, ok := m.userFile[username][filehash]
+	return ok
 }
 
 func (m *mockFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 	var result []model.FileMeta
+	names := m.userFile[username]
+	for hash, name := range names {
+		f, ok := m.files[hash]
+		if !ok {
+			continue
+		}
+		result = append(result, model.FileMeta{
+			FileSha1: hash,
+			FileName: name,
+			FileSize: f.FileSize,
+			Username: username,
+		})
+	}
+	return result, nil
+}
+
+func (m *mockFileRepo) Delete(filehash, username string) (bool, error) {
+	if m.userHas(username, filehash) {
+		delete(m.userFile[username], filehash)
+		return true, nil
+	}
+	return false, nil
+}
+
+func (m *mockFileRepo) UpdateName(filehash, username, newFilename string) (bool, error) {
+	if !m.userHas(username, filehash) {
+		return false, nil
+	}
+	m.userFile[username][filehash] = newFilename
+	return true, nil
+}
+
+func (m *mockFileRepo) CountRefs(filehash string) (int64, error) {
+	var count int64
+	for _, names := range m.userFile {
+		if _, ok := names[filehash]; ok {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *mockFileRepo) ListOldest(before time.Time) ([]model.File, error) {
+	var result []model.File
 	for _, f := range m.files {
-		if f.Username == username {
+		if f.CreateAt.Before(before) {
 			result = append(result, f)
 		}
 	}
 	return result, nil
 }
 
-func (m *mockFileRepo) Delete(filehash string) (bool, error) {
-	_, ok := m.files[filehash]
-	if !ok {
-		return false, nil
-	}
+func (m *mockFileRepo) RemoveOrphan(filehash string) error {
 	delete(m.files, filehash)
-	return true, nil
-}
-
-func (m *mockFileRepo) UpdateName(filehash, newFilename string) (bool, error) {
-	f, ok := m.files[filehash]
-	if !ok {
-		return false, nil
-	}
-	f.FileName = newFilename
-	m.files[filehash] = f
-	return true, nil
+	return nil
 }
 
 // 确保编译时检查接口实现

@@ -37,7 +37,7 @@ func setupTestHandler(t *testing.T) (*FileHandler, *UserHandler, *AuthMiddleware
 	authSvc := service.NewAuthService(tokenRepo)
 
 	fileHandler := NewFileHandler(fileSvc, cfg)
-	userHandler := NewUserHandler(userSvc)
+	userHandler := NewUserHandler(userSvc, cfg)
 	authMiddleware := NewAuthMiddleware(authSvc)
 
 	return fileHandler, userHandler, authMiddleware

@@ -19,6 +19,8 @@ type Config struct {
 	MinioSecretKey string // MinIO SecretKey，默认 minioadmin
 	MinioBucket    string // MinIO Bucket，默认 filestore
 	MinioUseSSL    bool   // 是否使用 SSL，默认 false
+
+	CookieSecure bool // 生产环境为 true，Cookie 仅通过 HTTPS 传输
 }
 
 // Load 从环境变量加载配置，提供合理默认值
@@ -36,6 +38,8 @@ func Load() *Config {
 		MinioSecretKey: getEnv("MINIO_SECRET_KEY", "minioadmin"),
 		MinioBucket:    getEnv("MINIO_BUCKET", "filestore"),
 		MinioUseSSL:    getEnvBool("MINIO_USE_SSL", false),
+
+		CookieSecure: getEnvBool("COOKIE_SECURE", false),
 	}
 
 	// MySQL DSN 未设置时使用默认值（本地开发）

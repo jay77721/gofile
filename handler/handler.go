@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,14 @@ import (
 const (
 	MaxUploadSize = 100 << 20 // 100MB
 )
+
+// sha1HashPattern 40 位小写 hex（SHA1 文件名/目录安全校验）
+var sha1HashPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
+
+// isValidHash 校验是否为合法的 40 位 SHA1 hex，防止路径穿越
+func isValidHash(hash string) bool {
+	return sha1HashPattern.MatchString(hash)
+}
 
 // FileHandler 文件 HTTP 处理器，依赖注入 FileService
 type FileHandler struct {
@@ -290,7 +299,7 @@ func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fileMetas})
 }
 
-// UploadChunkHandler 分块上传
+// UploadChunkHandler 分块上传（用户隔离）
 func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	r := c.Request
 	r.Body = http.MaxBytesReader(c.Writer, r.Body, MaxUploadSize)
@@ -300,6 +309,12 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 
 	if fileHash == "" || index == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 index 参数", "data": nil})
+		return
+	}
+
+	// 校验 hash 格式，防止路径穿越
+	if !isValidHash(fileHash) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
 		return
 	}
 
@@ -316,8 +331,9 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	}
 	defer file.Close()
 
-	if err := h.fileSvc.UploadChunk(fileHash, chunkIndex, file); err != nil {
-		slog.Error("upload chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex)
+	username := c.GetString("username")
+	if err := h.fileSvc.UploadChunk(fileHash, chunkIndex, file, username); err != nil {
+		slog.Error("upload chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex, "username", username)
 		// 已上传的情况不算错误
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk already uploaded", "data": nil})
 		return
@@ -326,7 +342,7 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk upload success", "data": nil})
 }
 
-// UploadStatusHandler 断点续传状态查询
+// UploadStatusHandler 断点续传状态查询（用户隔离）
 func (h *FileHandler) UploadStatusHandler(c *gin.Context) {
 	fileHash := c.Query("filehash")
 	if fileHash == "" {
@@ -334,7 +350,13 @@ func (h *FileHandler) UploadStatusHandler(c *gin.Context) {
 		return
 	}
 
-	chunks, err := h.fileSvc.GetChunkStatus(fileHash)
+	// 校验 hash 格式，防止路径穿越
+	if !isValidHash(fileHash) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		return
+	}
+
+	chunks, err := h.fileSvc.GetChunkStatus(fileHash, c.GetString("username"))
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": []string{}})
 		return
@@ -354,13 +376,19 @@ func (h *FileHandler) MergeChunkHandler(c *gin.Context) {
 		return
 	}
 
+	// 校验 hash 格式，防止路径穿越
+	if !isValidHash(fileHash) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		return
+	}
+
 	// 路径穿越防护
 	fileName = filepath.Base(fileName)
 
 	fMeta, err := h.fileSvc.MergeChunks(context.Background(), fileHash, fileName, c.GetString("username"), totalStr)
 	if err != nil {
 		slog.Error("merge chunks failed", "error", err, "filehash", fileHash)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": err.Error(), "data": nil})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件合并失败", "data": nil})
 		return
 	}
 

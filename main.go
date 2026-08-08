@@ -67,12 +67,15 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	tokenRepo := repository.NewTokenRepository(db)
 
+	// 启动软删除文件垃圾回收（需要 fileRepo + store）
+	handler.StartSoftDeleteGC(fileRepo, store, 0)
+
 	fileSvc := service.NewFileService(fileRepo, store, cfg)
 	userSvc := service.NewUserService(userRepo, tokenRepo)
 	authSvc := service.NewAuthService(tokenRepo)
 
 	fileHandler := handler.NewFileHandler(fileSvc, cfg)
-	userHandler := handler.NewUserHandler(userSvc)
+	userHandler := handler.NewUserHandler(userSvc, cfg)
 	authMiddleware := handler.NewAuthMiddleware(authSvc)
 
 	// 初始化 Gin

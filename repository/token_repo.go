@@ -1,10 +1,11 @@
 package repository
 
 import (
-	"database/sql"
 	"fmt"
 	"gofile/model"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // TokenRepository 用户 token 数据访问接口
@@ -15,40 +16,36 @@ type TokenRepository interface {
 	Get(username string) (model.Token, error)
 }
 
-// mysqlTokenRepo MySQL 实现的 TokenRepository
+// mysqlTokenRepo GORM 实现的 TokenRepository
 type mysqlTokenRepo struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-// NewTokenRepository 创建 MySQL token 仓库
-func NewTokenRepository(db *sql.DB) TokenRepository {
+// NewTokenRepository 创建 GORM token 仓库
+func NewTokenRepository(db *gorm.DB) TokenRepository {
 	return &mysqlTokenRepo{db: db}
 }
 
 func (r *mysqlTokenRepo) Upsert(username, token string, expiredAt time.Time) (bool, error) {
-	stmt, err := r.db.Prepare(
-		"REPLACE INTO tbl_user_token(`user_name`,`user_token`,update_at,expired_at) VALUES (?,?,?,?)")
-	if err != nil {
-		return false, fmt.Errorf("prepare upsert token failed: %w", err)
+	t := model.Token{
+		Username:  username,
+		Token:     token,
+		UpdateAt:  time.Now(),
+		ExpiredAt: expiredAt,
 	}
-	defer stmt.Close()
-
-	_, err = stmt.Exec(username, token, time.Now(), expiredAt)
-	if err != nil {
-		return false, fmt.Errorf("exec upsert token failed: %w", err)
+	// 使用 Save 实现 upsert（主键存在则更新，不存在则创建）
+	if err := r.db.Save(&t).Error; err != nil {
+		return false, fmt.Errorf("upsert token failed: %w", err)
 	}
 	return true, nil
 }
 
 func (r *mysqlTokenRepo) Get(username string) (model.Token, error) {
 	var t model.Token
-	err := r.db.QueryRow(
-		"SELECT user_token, expired_at FROM tbl_user_token WHERE user_name=? LIMIT 1", username,
-	).Scan(&t.Token, &t.ExpiredAt)
+	err := r.db.Where("user_name = ?", username).First(&t).Error
 	if err != nil {
 		return model.Token{}, fmt.Errorf("get token failed: %w", err)
 	}
-	t.Username = username
 	return t, nil
 }
 

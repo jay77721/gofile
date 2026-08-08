@@ -6,9 +6,9 @@ import (
 	"strconv"
 )
 
-// GetUploadedChunks 获取已上传的 chunk 列表
-func GetUploadedChunks(chunkDir, filehash string) ([]string, error) {
-	dir := filepath.Join(chunkDir, filehash)
+// GetUploadedChunks 获取已上传的 chunk 列表（按用户隔离）
+func GetUploadedChunks(chunkDir, username, filehash string) ([]string, error) {
+	dir := filepath.Join(chunkDir, filepath.Base(username), filepath.Base(filehash))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -20,11 +20,9 @@ func GetUploadedChunks(chunkDir, filehash string) ([]string, error) {
 	return chunks, nil
 }
 
-
-// ChunkExists 判断 chunk 是否已存在
-func ChunkExists(chunkDir, filehash string, index int) bool {
-	chunkPath := filepath.Join(chunkDir, filehash, strconv.Itoa(index))
+// ChunkExists 判断 chunk 是否已存在（按用户隔离）
+func ChunkExists(chunkDir, username, filehash string, index int) bool {
+	chunkPath := filepath.Join(chunkDir, filepath.Base(username), filepath.Base(filehash), strconv.Itoa(index))
 	_, err := os.Stat(chunkPath)
 	return err == nil
 }
-

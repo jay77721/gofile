@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"gofile/config"
 	"gofile/service"
 	"log/slog"
 	"net/http"
@@ -11,11 +12,12 @@ import (
 // UserHandler 用户 HTTP 处理器，依赖注入 UserService
 type UserHandler struct {
 	userSvc *service.UserService
+	cfg     *config.Config
 }
 
 // NewUserHandler 创建用户处理器
-func NewUserHandler(userSvc *service.UserService) *UserHandler {
-	return &UserHandler{userSvc: userSvc}
+func NewUserHandler(userSvc *service.UserService, cfg *config.Config) *UserHandler {
+	return &UserHandler{userSvc: userSvc, cfg: cfg}
 }
 
 // SignupHandler 处理用户注册请求
@@ -56,8 +58,9 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 	}
 
 	// 设置 cookie（1h 有效期，token 本身在 DB 中 24h 过期）
-	c.SetCookie("token", token, 3600, "/", "", false, true)
-	c.SetCookie("username", username, 3600, "/", "", false, true)
+	// Secure: 生产环境强制 HTTPS
+	c.SetCookie("token", token, 3600, "/", "", h.cfg.CookieSecure, true)
+	c.SetCookie("username", username, 3600, "/", "", h.cfg.CookieSecure, true)
 
 	slog.Info("user logged in", "username", username)
 
