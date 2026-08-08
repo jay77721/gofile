@@ -67,3 +67,6 @@ Thumbs.db
 
 # Monitoring
 .nezha/
+
+# Local changelog (not uploaded to GitHub)
+CHANGELOG.local.md
