@@ -138,6 +138,10 @@ func main() {
 		file.POST("/upload/chunk", fileHandler.UploadChunkHandler)
 		file.GET("/upload/status", fileHandler.UploadStatusHandler)
 		file.POST("/upload/merge", fileHandler.MergeChunkHandler)
+		// 预签名 URL 直传直下
+		file.POST("/presigned/upload", fileHandler.PresignUploadHandler)
+		file.POST("/presigned/upload/confirm", fileHandler.ConfirmUploadHandler)
+		file.GET("/presigned/download", fileHandler.PresignDownloadHandler)
 	}
 
 	// 创建 HTTP Server（支持优雅关闭）

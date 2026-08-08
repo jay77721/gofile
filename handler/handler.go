@@ -411,3 +411,84 @@ func parseInt(s string) (int, error) {
 func HealthCheckHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": nil})
 }
+
+// PresignUploadHandler 获取预签名上传 URL
+func (h *FileHandler) PresignUploadHandler(c *gin.Context) {
+	fileHash := c.PostForm("filehash")
+	fileName := c.PostForm("filename")
+
+	if fileHash == "" || fileName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 filename 参数", "data": nil})
+		return
+	}
+
+	if !isValidHash(fileHash) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		return
+	}
+
+	uploadURL, err := h.fileSvc.PresignUpload(context.Background(), fileHash, c.GetString("username"))
+	if err != nil {
+		if err.Error() == "file already exists" {
+			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": gin.H{"filehash": fileHash}})
+			return
+		}
+		slog.Error("presign upload failed", "error", err, "filehash", fileHash)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "生成上传链接失败", "data": nil})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
+		"upload_url": uploadURL,
+		"filehash":   fileHash,
+	}})
+}
+
+// ConfirmUploadHandler 确认预签名上传完成
+func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
+	fileHash := c.PostForm("filehash")
+	fileName := c.PostForm("filename")
+
+	if fileHash == "" || fileName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 filename 参数", "data": nil})
+		return
+	}
+
+	if !isValidHash(fileHash) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		return
+	}
+
+	if err := h.fileSvc.ConfirmUpload(context.Background(), fileHash, fileName, c.GetString("username")); err != nil {
+		slog.Error("confirm upload failed", "error", err, "filehash", fileHash)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "确认上传失败", "data": nil})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传成功", "data": gin.H{"filehash": fileHash}})
+}
+
+// PresignDownloadHandler 获取预签名下载 URL
+func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
+	fileHash := c.Query("filehash")
+	if fileHash == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		return
+	}
+
+	if !isValidHash(fileHash) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		return
+	}
+
+	downloadURL, err := h.fileSvc.PresignDownload(context.Background(), fileHash, c.GetString("username"))
+	if err != nil {
+		slog.Error("presign download failed", "error", err, "filehash", fileHash)
+		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
+		"download_url": downloadURL,
+	}})
+}

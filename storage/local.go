@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // LocalStorage 本地文件系统存储实现
@@ -74,4 +75,14 @@ func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("delete file failed: %w", err)
 	}
 	return nil
+}
+
+// PresignPut 本地存储不支持预签名上传，返回 ErrPresignNotSupported
+func (s *LocalStorage) PresignPut(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	return "", ErrPresignNotSupported
+}
+
+// PresignGet 本地存储不支持预签名下载，返回 ErrPresignNotSupported
+func (s *LocalStorage) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	return "", ErrPresignNotSupported
 }

@@ -126,6 +126,80 @@ func (s *FileService) cacheMark(ctx context.Context, hash string) {
 	}
 }
 
+// PresignUpload 生成预签名上传 URL
+// 前端先算好文件 SHA1 传入 filehash，后端签发 URL + 秒传检测
+func (s *FileService) PresignUpload(ctx context.Context, fileHash, username string) (string, error) {
+	// 秒传检测：Redis 缓存命中 → 再确认存储层
+	if s.cache != nil {
+		if seen, _ := s.cache.HashExists(ctx, fileHash); seen {
+			if exists, _ := s.store.Exists(ctx, fileHash); exists {
+				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: 1})
+				return "", fmt.Errorf("file already exists")
+			}
+		}
+	}
+	// 传统秒传检测
+	if exists, _ := s.store.Exists(ctx, fileHash); exists {
+		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: 1})
+		s.cacheMark(ctx, fileHash)
+		return "", fmt.Errorf("file already exists")
+	}
+
+	// 签发预签名上传 URL（15 分钟有效）
+	url, err := s.store.PresignPut(ctx, fileHash, 15*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("presign upload failed: %w", err)
+	}
+
+	slog.Info("presigned upload URL generated", "filehash", fileHash, "username", username)
+	return url, nil
+}
+
+// ConfirmUpload 确认预签名上传完成
+// 前端 PUT 文件到 MinIO 后调用此接口，后端验证文件存在并创建元数据
+func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, username string) error {
+	// 验证文件确实存在于存储层
+	exists, err := s.store.Exists(ctx, fileHash)
+	if err != nil || !exists {
+		return fmt.Errorf("file not found in storage")
+	}
+
+	// 注册全局文件（幂等）
+	if err := s.fileRepo.Create(model.File{FileSha1: fileHash, FileSize: 0, FileAddr: fileHash}); err != nil {
+		slog.Warn("presigned confirm: save global file meta failed", "filehash", fileHash)
+	}
+
+	// 建立用户拥有关系
+	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: 1}); err != nil {
+		return fmt.Errorf("save user file relation failed: %w", err)
+	}
+
+	// 记入 Redis 缓存
+	s.cacheMark(ctx, fileHash)
+
+	slog.Info("presigned upload confirmed", "filehash", fileHash, "filename", fileName, "username", username)
+	return nil
+}
+
+// PresignDownload 生成预签名下载 URL
+// 验证用户所有权后签发 5 分钟有效的下载 URL
+func (s *FileService) PresignDownload(ctx context.Context, fileHash, username string) (string, error) {
+	// 验证文件所有权
+	_, err := s.fileRepo.GetByHash(fileHash, username)
+	if err != nil {
+		return "", fmt.Errorf("file not found or no permission")
+	}
+
+	// 签发预签名下载 URL（5 分钟有效）
+	url, err := s.store.PresignGet(ctx, fileHash, 5*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("presign download failed: %w", err)
+	}
+
+	slog.Info("presigned download URL generated", "filehash", fileHash, "username", username)
+	return url, nil
+}
+
 // FastUpload 秒传检测
 func (s *FileService) FastUpload(ctx context.Context, fileHash string) (bool, error) {
 	return s.store.Exists(ctx, fileHash)

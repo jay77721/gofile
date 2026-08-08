@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -83,4 +84,22 @@ func (s *MinIOStorage) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("remove object failed: %w", err)
 	}
 	return nil
+}
+
+// PresignPut 签发预签名上传 URL（前端直接 PUT 文件到 MinIO，不经过应用服务器）
+func (s *MinIOStorage) PresignPut(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	url, err := s.client.PresignedPutObject(ctx, s.bucket, key, expiry)
+	if err != nil {
+		return "", fmt.Errorf("presign put failed: %w", err)
+	}
+	return url.String(), nil
+}
+
+// PresignGet 签发预签名下载 URL（前端直接从 MinIO 下载，不经过应用服务器）
+func (s *MinIOStorage) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	url, err := s.client.PresignedGetObject(ctx, s.bucket, key, expiry, nil)
+	if err != nil {
+		return "", fmt.Errorf("presign get failed: %w", err)
+	}
+	return url.String(), nil
 }
