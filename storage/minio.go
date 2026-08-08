@@ -65,6 +65,26 @@ func (s *MinIOStorage) Get(ctx context.Context, key string) (io.ReadCloser, erro
 	return obj, nil
 }
 
+// GetRange 按字节区间读取 MinIO 文件（支持 HTTP Range 下载）
+func (s *MinIOStorage) GetRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
+	opts := minio.GetObjectOptions{}
+	opts.SetRange(offset, offset+length-1)
+	obj, err := s.client.GetObject(ctx, s.bucket, key, opts)
+	if err != nil {
+		return nil, fmt.Errorf("get range object failed: %w", err)
+	}
+	return obj, nil
+}
+
+// FileSize 获取 MinIO 文件大小
+func (s *MinIOStorage) FileSize(ctx context.Context, key string) (int64, error) {
+	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("stat object failed: %w", err)
+	}
+	return info.Size, nil
+}
+
 // Exists 检查文件是否存在于 MinIO
 func (s *MinIOStorage) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})

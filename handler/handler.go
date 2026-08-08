@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"gofile/config"
 	"gofile/service"
 	"io"
@@ -107,7 +108,7 @@ func sanitizeFilename(name string) string {
 	return name
 }
 
-// DownloadHandler 下载文件
+// DownloadHandler 下载文件（支持 HTTP Range 断点续传）
 func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
@@ -115,21 +116,104 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 		return
 	}
 
-	reader, fMeta, err := h.fileSvc.Download(context.Background(), filehash, c.GetString("username"))
+	username := c.GetString("username")
+
+	// 获取文件元信息（用于文件名和 Content-Type）
+	fMeta, err := h.fileSvc.GetMeta(filehash, username)
 	if err != nil {
-		slog.Error("download failed", "error", err, "filehash", filehash)
+		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		return
+	}
+
+	// 解析 Range 请求头
+	rangeHeader := c.GetHeader("Range")
+	if rangeHeader == "" {
+		// 无 Range 头：返回完整文件
+		reader, _, err := h.fileSvc.Download(context.Background(), filehash, username)
+		if err != nil {
+			slog.Error("download failed", "error", err, "filehash", filehash)
+			c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+			return
+		}
+		defer reader.Close()
+
+		safeName := sanitizeFilename(fMeta.FileName)
+		c.Header("Content-Disposition", buildContentDisposition(safeName))
+		c.Header("Content-Type", "application/octet-stream")
+		c.Header("Accept-Ranges", "bytes")
+
+		buf := make([]byte, 32*1024)
+		io.CopyBuffer(c.Writer, reader, buf)
+		return
+	}
+
+	// 有 Range 头：解析范围
+	offset, length, ok := parseRangeHeader(rangeHeader, 0) // 0 表示先获取总大小
+	if !ok {
+		c.Header("Content-Range", "bytes */0")
+		c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "无效的 Range 范围", "data": nil})
+		return
+	}
+
+	reader, _, totalSize, err := h.fileSvc.DownloadRange(context.Background(), filehash, username, offset, length)
+	if err != nil {
+		slog.Error("download range failed", "error", err, "filehash", filehash)
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
 	}
 	defer reader.Close()
 
-	// 使用 RFC 5987 编码，避免 Content-Disposition 头注入
 	safeName := sanitizeFilename(fMeta.FileName)
 	c.Header("Content-Disposition", buildContentDisposition(safeName))
 	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Accept-Ranges", "bytes")
+	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, totalSize))
+	c.Header("Content-Length", fmt.Sprintf("%d", length))
+
+	c.Status(http.StatusPartialContent) // 206
 
 	buf := make([]byte, 32*1024)
 	io.CopyBuffer(c.Writer, reader, buf)
+}
+
+// parseRangeHeader 解析 Range 头，返回 offset 和 length
+// totalSize=0 表示还不知道总大小，会先查 storage 获取
+func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64, ok bool) {
+	// 格式：bytes=start-end 或 bytes=start-
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return 0, 0, false
+	}
+	rangeSpec := strings.TrimPrefix(rangeHeader, "bytes=")
+	parts := strings.SplitN(rangeSpec, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+
+	start, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || start < 0 {
+		return 0, 0, false
+	}
+
+	if parts[1] == "" {
+		// bytes=100-  → 从 100 到末尾
+		if totalSize == 0 {
+			return 0, 0, false // 需要先知道 totalSize
+		}
+		offset = start
+		length = totalSize - start
+	} else {
+		end, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || end < start {
+			return 0, 0, false
+		}
+		offset = start
+		length = end - start + 1
+	}
+
+	if length <= 0 {
+		return 0, 0, false
+	}
+	return offset, length, true
 }
 
 func buildContentDisposition(name string) string {
@@ -287,16 +371,49 @@ func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功", "data": nil})
 }
 
-// FileQueryHandler 返回所有文件元信息列表
+// FileQueryHandler 返回用户文件列表（支持分页）
 func (h *FileHandler) FileQueryHandler(c *gin.Context) {
-	fileMetas, err := h.fileSvc.ListByUser(c.GetString("username"))
+	username := c.GetString("username")
+
+	// 检查是否有分页参数
+	pageStr := c.Query("page")
+	sizeStr := c.Query("size")
+
+	if pageStr == "" && sizeStr == "" {
+		// 无分页参数：返回全部（兼容旧逻辑）
+		fileMetas, err := h.fileSvc.ListByUser(username)
+		if err != nil {
+			slog.Error("query all files failed", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fileMetas})
+		return
+	}
+
+	// 有分页参数：走分页逻辑
+	page, _ := strconv.Atoi(pageStr)
+	size, _ := strconv.Atoi(sizeStr)
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+
+	files, total, err := h.fileSvc.ListByUserPaged(username, page, size)
 	if err != nil {
-		slog.Error("query all files failed", "error", err)
+		slog.Error("paged query files failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fileMetas})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
+		"list":  files,
+		"total": total,
+		"page":  page,
+		"size":  size,
+	}})
 }
 
 // UploadChunkHandler 分块上传（用户隔离）

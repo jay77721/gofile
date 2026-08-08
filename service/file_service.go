@@ -225,6 +225,27 @@ func (s *FileService) Download(ctx context.Context, filehash, username string) (
 	return reader, fMeta, nil
 }
 
+// DownloadRange 按字节区间下载文件（支持 HTTP Range）
+func (s *FileService) DownloadRange(ctx context.Context, filehash, username string, offset, length int64) (io.ReadCloser, model.FileMeta, int64, error) {
+	fMeta, err := s.fileRepo.GetByHash(filehash, username)
+	if err != nil {
+		return nil, model.FileMeta{}, 0, fmt.Errorf("file not found: %w", err)
+	}
+
+	// 获取文件总大小
+	totalSize, err := s.store.FileSize(ctx, fMeta.FileSha1)
+	if err != nil {
+		return nil, model.FileMeta{}, 0, fmt.Errorf("get file size failed: %w", err)
+	}
+
+	reader, err := s.store.GetRange(ctx, fMeta.FileSha1, offset, length)
+	if err != nil {
+		return nil, model.FileMeta{}, 0, fmt.Errorf("get range failed: %w", err)
+	}
+
+	return reader, fMeta, totalSize, nil
+}
+
 // Rename 重命名文件（含所有权验证）
 func (s *FileService) Rename(filehash, username, newName string) error {
 	// 验证文件所有权
@@ -252,6 +273,19 @@ func (s *FileService) Delete(filehash, username string) error {
 // ListByUser 获取用户的所有文件
 func (s *FileService) ListByUser(username string) ([]model.FileMeta, error) {
 	return s.fileRepo.ListByUser(username)
+}
+
+// ListByUserPaged 分页查询用户文件
+func (s *FileService) ListByUserPaged(username string, page, size int) ([]model.FileMeta, int64, error) {
+	total, err := s.fileRepo.CountByUser(username)
+	if err != nil {
+		return nil, 0, err
+	}
+	files, err := s.fileRepo.ListByUserPaged(username, page, size)
+	if err != nil {
+		return nil, 0, err
+	}
+	return files, total, nil
 }
 
 // UploadChunk 上传分片（用户隔离）

@@ -16,6 +16,10 @@ type Storage interface {
 	Put(ctx context.Context, key string, reader io.Reader, size int64) error
 	// Get 从存储读取文件
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
+	// GetRange 按字节区间读取文件（支持 HTTP Range 下载）
+	GetRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error)
+	// FileSize 获取文件大小（字节数）
+	FileSize(ctx context.Context, key string) (int64, error)
 	// Exists 检查文件是否存在
 	Exists(ctx context.Context, key string) (bool, error)
 	// Delete 删除文件

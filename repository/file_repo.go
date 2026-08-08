@@ -20,6 +20,10 @@ type FileRepository interface {
 	GetByHash(filehash, username string) (model.FileMeta, error)
 	// ListByUser 获取用户的所有文件
 	ListByUser(username string) ([]model.FileMeta, error)
+	// CountByUser 统计用户文件总数
+	CountByUser(username string) (int64, error)
+	// ListByUserPaged 分页查询用户文件
+	ListByUserPaged(username string, page, size int) ([]model.FileMeta, error)
 	// Delete 软删除用户文件（status=2）
 	Delete(filehash, username string) (bool, error)
 	// UpdateName 更新用户文件名
@@ -88,6 +92,48 @@ func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 		Order("create_at DESC").
 		Find(&ufs).Error; err != nil {
 		return nil, fmt.Errorf("query user files failed: %w", err)
+	}
+
+	files := make([]model.FileMeta, 0, len(ufs))
+	for _, uf := range ufs {
+		var f model.File
+		if err := r.db.Where("file_sha1 = ?", uf.FileSha1).First(&f).Error; err != nil {
+			slog.Warn("file record missing", "filehash", uf.FileSha1)
+			continue
+		}
+		files = append(files, model.FileMeta{
+			FileSha1: uf.FileSha1,
+			FileName: uf.FileName,
+			FileSize: f.FileSize,
+			Username: uf.Username,
+			UploadAt: uf.CreateAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+	return files, nil
+}
+
+// CountByUser 统计用户文件总数
+func (r *mysqlFileRepo) CountByUser(username string) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.UserFile{}).
+		Where("user_name = ? AND status = 1", username).
+		Count(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("count user files failed: %w", err)
+	}
+	return count, nil
+}
+
+// ListByUserPaged 分页查询用户文件
+func (r *mysqlFileRepo) ListByUserPaged(username string, page, size int) ([]model.FileMeta, error) {
+	var ufs []model.UserFile
+	offset := (page - 1) * size
+	if err := r.db.Where("user_name = ? AND status = 1", username).
+		Order("create_at DESC").
+		Offset(offset).
+		Limit(size).
+		Find(&ufs).Error; err != nil {
+		return nil, fmt.Errorf("paged query user files failed: %w", err)
 	}
 
 	files := make([]model.FileMeta, 0, len(ufs))
@@ -229,6 +275,23 @@ func (m *mockFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 		})
 	}
 	return result, nil
+}
+
+func (m *mockFileRepo) CountByUser(username string) (int64, error) {
+	return int64(len(m.userFile[username])), nil
+}
+
+func (m *mockFileRepo) ListByUserPaged(username string, page, size int) ([]model.FileMeta, error) {
+	all, _ := m.ListByUser(username)
+	start := (page - 1) * size
+	if start >= len(all) {
+		return []model.FileMeta{}, nil
+	}
+	end := start + size
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[start:end], nil
 }
 
 func (m *mockFileRepo) Delete(filehash, username string) (bool, error) {

@@ -55,6 +55,28 @@ func (s *LocalStorage) Get(ctx context.Context, key string) (io.ReadCloser, erro
 	return file, nil
 }
 
+// GetRange 按字节区间读取本地文件（io.SectionReader 支持零拷贝区间读取）
+func (s *LocalStorage) GetRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
+	path := filepath.Join(s.uploadDir, filepath.Base(key))
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open file failed: %w", err)
+	}
+	// SectionReader: 零拷贝区间读取，读取 [offset, offset+length) 范围
+	sr := io.NewSectionReader(file, offset, length)
+	return io.NopCloser(sr), nil
+}
+
+// FileSize 获取本地文件大小
+func (s *LocalStorage) FileSize(ctx context.Context, key string) (int64, error) {
+	path := filepath.Join(s.uploadDir, filepath.Base(key))
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, fmt.Errorf("stat file failed: %w", err)
+	}
+	return info.Size(), nil
+}
+
 // Exists 检查文件是否存在于本地磁盘
 func (s *LocalStorage) Exists(ctx context.Context, key string) (bool, error) {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
