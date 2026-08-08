@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"gofile/cache"
 	"gofile/config"
 	"gofile/db/mysql"
 	"gofile/handler"
@@ -28,6 +29,18 @@ func main() {
 
 	// 加载配置
 	cfg := config.Load()
+
+	// 初始化 Redis（可选，失败不影响启动）
+	var cacheClient *cache.Client
+	if cfg.RedisAddr != "" {
+		cc, err := cache.New(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+		if err != nil {
+			slog.Warn("Redis unavailable, running without cache", "error", err)
+		} else {
+			cacheClient = cc
+			slog.Info("Redis connected", "addr", cfg.RedisAddr)
+		}
+	}
 
 	// 初始化 MySQL
 	if err := mysql.Init(cfg.MySQLDSN); err != nil {
@@ -70,7 +83,7 @@ func main() {
 	// 启动软删除文件垃圾回收（需要 fileRepo + store）
 	handler.StartSoftDeleteGC(fileRepo, store, 0)
 
-	fileSvc := service.NewFileService(fileRepo, store, cfg)
+	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient)
 	userSvc := service.NewUserService(userRepo, tokenRepo)
 	authSvc := service.NewAuthService(tokenRepo)
 
@@ -107,7 +120,7 @@ func main() {
 	r.GET("/healthz", handler.HealthCheckHandler)
 
 	// 用户接口
-	rateLimit := handler.RateLimitMiddleware(5, 10)
+	rateLimit := handler.RateLimitMiddleware(5, 10, cacheClient)
 	r.POST("/user/signup", rateLimit, userHandler.SignupHandler)
 	r.POST("/user/signin", rateLimit, userHandler.SignInHandler)
 	r.GET("/user/info", authMiddleware.Middleware(), userHandler.UserInfoHandler)

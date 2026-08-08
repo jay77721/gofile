@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"gofile/cache"
 	"gofile/config"
 	"gofile/model"
 	"gofile/repository"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,11 +26,16 @@ type FileService struct {
 	fileRepo repository.FileRepository
 	store    storage.Storage
 	cfg      *config.Config
+	cache    *cache.Client // 可选，Redis 不可用时为 nil
 }
 
-// NewFileService 创建文件服务
-func NewFileService(fileRepo repository.FileRepository, store storage.Storage, cfg *config.Config) *FileService {
-	return &FileService{fileRepo: fileRepo, store: store, cfg: cfg}
+// NewFileService 创建文件服务（cache 为 nil 时回退到原有逻辑）
+func NewFileService(fileRepo repository.FileRepository, store storage.Storage, cfg *config.Config, c ...*cache.Client) *FileService {
+	var cc *cache.Client
+	if len(c) > 0 {
+		cc = c[0]
+	}
+	return &FileService{fileRepo: fileRepo, store: store, cfg: cfg, cache: cc}
 }
 
 // Upload 处理文件上传（含秒传检测）
@@ -52,22 +59,28 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	}
 	fileSha1 := sha1Stream.Sum()
 
-	// 秒传检测：文件已存在于存储层
+	// 秒传检测：先查 Redis 缓存（O(1)），命中再问存储层确认
+	if s.cache != nil {
+		seen, _ := s.cache.HashExists(ctx, fileSha1)
+		if seen {
+			// Redis 说见过，再确认存储层（防止误判）
+			exists, _ := s.store.Exists(ctx, fileSha1)
+			if exists {
+				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
+				slog.Info("fast upload (dedup, cache hit)", "filehash", fileSha1, "username", username)
+				return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
+			}
+		}
+	}
+
+	// 传统秒传检测：直接问存储层
 	exists, err := s.store.Exists(ctx, fileSha1)
 	if err != nil {
 		slog.Warn("dedup check failed", "error", err, "filehash", fileSha1)
 	} else if exists {
-		// 创建用户拥有关系（幂等）
-		uf := model.UserFile{
-			Username: username,
-			FileSha1: fileSha1,
-			FileName: filename,
-			Status:   1,
-		}
-		// 即使 CreateUserFile 失败，也视为秒传成功（已存在则忽略）
-		if ufErr := s.fileRepo.CreateUserFile(uf); ufErr != nil {
-			slog.Warn("create user file during dedup failed", "error", ufErr, "filehash", fileSha1)
-		}
+		// 秒传成功，记入 Redis 缓存供后续快速判断
+		s.cacheMark(ctx, fileSha1)
+		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
 		slog.Info("fast upload (dedup)", "filehash", fileSha1, "username", username)
 		return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 	}
@@ -85,34 +98,32 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	}
 
 	// 注册全局文件（INSERT IGNORE 幂等）
-	f := model.File{
-		FileSha1: fileSha1,
-		FileSize: totalSize,
-		FileAddr: fileSha1,
-	}
-	if err := s.fileRepo.Create(f); err != nil {
+	if err := s.fileRepo.Create(model.File{FileSha1: fileSha1, FileSize: totalSize, FileAddr: fileSha1}); err != nil {
 		slog.Warn("save global file meta failed, rolling back storage", "filehash", fileSha1)
-		if delErr := s.store.Delete(ctx, fileSha1); delErr != nil {
-			slog.Error("rollback storage failed", "error", delErr, "filehash", fileSha1)
-		}
+		s.store.Delete(ctx, fileSha1)
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
 	}
 
 	// 建立用户拥有关系
-	uf := model.UserFile{
-		Username: username,
-		FileSha1: fileSha1,
-		FileName: filename,
-		Status:   1,
-	}
-	if err := s.fileRepo.CreateUserFile(uf); err != nil {
+	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1}); err != nil {
 		slog.Warn("save user file relation failed", "error", err, "filehash", fileSha1)
-		// 用户关系失败不影响全局文件，但需要告知用户
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}
 
+	// 记入 Redis 缓存，后续秒传直接命中
+	s.cacheMark(ctx, fileSha1)
+
 	slog.Info("file uploaded", "filename", filename, "size", totalSize, "hash", fileSha1, "username", username)
 	return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
+}
+
+// cacheMark 静默将 hash 记入 Redis 缓存（失败不阻断业务）
+func (s *FileService) cacheMark(ctx context.Context, hash string) {
+	if s.cache != nil {
+		if err := s.cache.MarkHash(ctx, hash); err != nil {
+			slog.Warn("cache mark hash failed", "hash", hash, "error", err)
+		}
+	}
 }
 
 // FastUpload 秒传检测
@@ -213,6 +224,16 @@ func (s *FileService) GetChunkStatus(fileHash, username string) ([]string, error
 
 // MergeChunks 合并分片（用户隔离，UUID 临时文件防冲突）
 func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, username, totalStr string) (model.FileMeta, error) {
+	// 获取分布式锁（防止同一 hash 并发 merge）
+	if s.cache != nil {
+		lockToken := uuid.New().String()
+		locked, _ := s.cache.AcquireLock(ctx, "gofile:lock:merge:"+fileHash, lockToken, 2*time.Minute)
+		if !locked {
+			return model.FileMeta{}, fmt.Errorf("merge in progress, please try again later")
+		}
+		defer s.cache.ReleaseLock(ctx, "gofile:lock:merge:"+fileHash, lockToken)
+	}
+
 	chunkDir := filepath.Join(s.cfg.ChunkDir, filepath.Base(username), filepath.Base(fileHash))
 
 	files, err := readChunkDir(chunkDir, totalStr)
@@ -235,31 +256,21 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 	}
 
 	// 注册全局文件（幂等）
-	f := model.File{
-		FileSha1: fileHash,
-		FileSize: totalSize,
-		FileAddr: fileHash,
-	}
-	if err := s.fileRepo.Create(f); err != nil {
+	if err := s.fileRepo.Create(model.File{FileSha1: fileHash, FileSize: totalSize, FileAddr: fileHash}); err != nil {
 		slog.Warn("save global file meta failed, rolling back", "filehash", fileHash)
-		if delErr := s.store.Delete(ctx, fileHash); delErr != nil {
-			slog.Error("rollback merged storage failed", "error", delErr, "filehash", fileHash)
-		}
+		s.store.Delete(ctx, fileHash)
 		os.RemoveAll(chunkDir)
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
 	}
 
 	// 建立用户拥有关系
-	uf := model.UserFile{
-		Username: username,
-		FileSha1: fileHash,
-		FileName: fileName,
-		Status:   1,
-	}
-	if err := s.fileRepo.CreateUserFile(uf); err != nil {
+	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: 1}); err != nil {
 		slog.Warn("save user file relation failed", "error", err, "filehash", fileHash)
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}
+
+	// 记入 Redis 缓存
+	s.cacheMark(ctx, fileHash)
 
 	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize, "username", username)
 	return model.FileMeta{FileSha1: fileHash, FileName: fileName, FileSize: totalSize, Username: username}, nil

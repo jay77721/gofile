@@ -5,16 +5,19 @@ import (
 	"sync"
 	"time"
 
+	"gofile/cache"
+
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
-// ipLimiter 基于 IP 的令牌桶限流器
+// ipLimiter 基于 IP 的令牌桶限流器（内存版，作为 Redis 不可用时的回退）
 type ipLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*tokenBucket
-	rate     int           // 每秒允许的请求数
-	burst    int           // 突发容量
-	cleanup  time.Duration // 清理间隔
+	rate     int
+	burst    int
+	cleanup  time.Duration
 }
 
 type tokenBucket struct {
@@ -83,19 +86,51 @@ func (l *ipLimiter) allow(ip string) bool {
 	return false
 }
 
+// redisRateLimiterScript Lua 固定窗口计数器脚本
+var redisRateLimiterScript = redis.NewScript(`
+	local key = KEYS[1]
+	local now = tonumber(ARGV[1])
+	local windowMs = tonumber(ARGV[2])
+	local limit = tonumber(ARGV[3])
+	local prefix = key .. ":" .. math.floor(now / windowMs)
+	local current = redis.call("INCR", prefix)
+	if current == 1 then
+		redis.call("PEXPIRE", prefix, windowMs + 500)
+	end
+	return current <= limit
+`)
+
 // RateLimitMiddleware Gin 限流中间件
-// rate: 每秒允许的请求数，burst: 突发容量
-func RateLimitMiddleware(rate, burst int) gin.HandlerFunc {
+// 传入 cache 时用 Redis 全局限流；否则回退到内存限流（多实例下各自独立）
+func RateLimitMiddleware(rate, burst int, c ...*cache.Client) gin.HandlerFunc {
+	if len(c) > 0 && c[0] != nil {
+		return newRedisRateLimiter(rate, burst, c[0])
+	}
 	limiter := newIPLimiter(rate, burst)
-
 	return func(c *gin.Context) {
-		ip := c.ClientIP()
-
-		if !limiter.allow(ip) {
+		if !limiter.allow(c.ClientIP()) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"code": 1, "msg": "请求过于频繁，请稍后再试", "data": nil})
 			c.Abort()
 			return
 		}
 		c.Next()
+	}
+}
+
+// newRedisRateLimiter 基于 Redis 的限流器（Lua 原子固定窗口）
+func newRedisRateLimiter(rate, burst int, c *cache.Client) gin.HandlerFunc {
+	window := time.Second
+	return func(ginCtx *gin.Context) {
+		key := "gofile:ratelimit:" + ginCtx.ClientIP()
+		nowMs := time.Now().UnixNano() / int64(time.Millisecond)
+
+		result, err := redisRateLimiterScript.Run(ginCtx.Request.Context(), c.Rdb(),
+			[]string{key}, nowMs, window.Milliseconds(), rate).Int()
+		if err != nil || result == 0 {
+			ginCtx.JSON(http.StatusTooManyRequests, gin.H{"code": 1, "msg": "请求过于频繁，请稍后再试", "data": nil})
+			ginCtx.Abort()
+			return
+		}
+		ginCtx.Next()
 	}
 }
