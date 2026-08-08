@@ -7,6 +7,8 @@
 ![Gin](https://img.shields.io/badge/Gin-1.12-0090D1?style=flat-square&logo=go)
 ![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?style=flat-square&logo=mysql)
 ![MinIO](https://img.shields.io/badge/MinIO-Latest-C72E49?style=flat-square&logo=minio)
+![GORM](https://img.shields.io/badge/GORM-v1.31-00ADD8?style=flat-square&logo=go)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
 **Lightweight Self-hosted File Storage**
@@ -21,14 +23,17 @@
 
 | | Feature | Description |
 |---|---------|-------------|
-| 📤 | **File Upload** | Normal upload + instant dedup via SHA1 hash |
-| 📥 | **File Download** | Range request support, safe Content-Disposition encoding |
+| 📤 | **File Upload** | Normal upload + instant dedup via SHA1 hash with Redis cache |
+| 📥 | **File Download** | HTTP Range support (206 Partial Content), safe Content-Disposition |
+| ⚡ | **Presigned URL** | Direct upload/download to MinIO, zero-proxy file transfer |
 | ✂️ | **Chunked Upload** | Large file splitting, resumable, idempotent retry, auto-merge |
 | 🔐 | **User Auth** | bcrypt password hashing + HttpOnly Cookie Session |
-| 👤 | **File Ownership** | Every file scoped to uploader; all operations verify ownership |
-| 🛡️ | **Security** | Path traversal protection, IP rate limiting (5 req/s, burst 10), RFC 5987 encoding |
+| 👤 | **File Ownership** | `tbl_user_file` association table, each user owns their copy |
+| 🔒 | **Distributed Lock** | Redis SETNX + Lua CAS for concurrent merge safety |
+| ⏱️ | **Rate Limiting** | Redis fixed-window counter, multi-instance shared |
+| 🛡️ | **Security** | Path traversal protection (40-hex validation), chunk user isolation, RFC 5987 |
 | ☁️ | **Storage Backend** | MinIO (S3) prioritized, auto-fallback to local disk |
-| 🧹 | **Auto Cleanup** | Expired chunks cleaned periodically (1h interval, 24h retention) |
+| 🧹 | **Auto Cleanup** | Expired chunks (1h interval) + orphaned file GC (24h interval) |
 | 📊 | **Structured Logs** | JSON log/slog output, easy to collect and analyze |
 
 ---
@@ -42,16 +47,16 @@
 └─────────────┘     └─────────────┘     └────────┬────────┘
                                                   │
                     ┌─────────────┐     ┌─────────▼────────┐
-                    │    MySQL    │◀────│   db/meta Layer  │
-                    │  (metadata) │     │   (FileMeta)     │
+                    │    MySQL    │◀────│   Service Layer  │
+                    │  (GORM)     │     │  (file/user/auth)│
                     └─────────────┘     └─────────┬────────┘
                                                   │
                               ┌───────────────────┼───────────────────┐
                               │                   │                   │
-                    ┌─────────▼────────┐  ┌───────▼───────┐   ┌───────▼───────┐
-                    │      MinIO       │  │  Local Disk   │   │   (future)    │
-                    │   (S3 compat)    │  │  (fallback)   │   │               │
-                    └──────────────────┘  └───────────────┘   └───────────────┘
+                    ┌─────────▼────────┐  ┌───────▼───────┐  ┌──────▼──────┐
+                    │      MinIO       │  │  Local Disk   │  │    Redis    │
+                    │   (S3 compat)    │  │  (fallback)   │  │  (cache)    │
+                    └──────────────────┘  └───────────────┘  └─────────────┘
 ```
 
 ---
@@ -72,6 +77,7 @@ Once started:
 |---------|-----|-------|
 | 🌐 App | http://localhost:8080 | Main service |
 | 🗄️ MinIO | http://localhost:9001 | Credentials: `minioadmin` / `minioadmin` |
+| 🔴 Redis | localhost:6379 | Optional, app works without it |
 
 ### Option 2: Manual Setup
 
@@ -83,11 +89,11 @@ go mod tidy
 cp .env.example .env
 # Edit .env to match your setup
 
-# 3. Initialize database
-mysql -u root -p gofile < schema.sql
-
-# 4. Run
+# 3. Initialize database (GORM AutoMigrate handles tables automatically)
 go run main.go
+
+# Or manually:
+mysql -u root -p gofile < schema.sql
 ```
 
 Or use startup scripts (loads `.env` automatically):
@@ -120,8 +126,12 @@ start.bat --build      # Build binary then run
 | `MINIO_SECRET_KEY` | `minioadmin` | MinIO secret key |
 | `MINIO_BUCKET` | `filestore` | MinIO bucket name |
 | `MINIO_USE_SSL` | `false` | Enable SSL for MinIO |
+| `REDIS_ADDR` | `localhost:6379` | Redis address (empty = skip Redis) |
+| `REDIS_PASSWORD` | `` | Redis password |
+| `REDIS_DB` | `0` | Redis database number |
+| `COOKIE_SECURE` | `false` | Cookie Secure flag (true in production) |
 
-> 💡 The server attempts MinIO first. If `MINIO_ENDPOINT` is empty or MinIO init fails, it falls back to local storage at `UPLOAD_DIR`.
+> 💡 The server attempts MinIO first. If `MINIO_ENDPOINT` is empty or MinIO init fails, it falls back to local storage at `UPLOAD_DIR`. Redis is optional — all Redis features gracefully degrade when unavailable.
 
 ---
 
@@ -133,18 +143,27 @@ start.bat --build      # Build binary then run
 |--------|-------|-------------|
 | `POST` | `/file/upload` | Upload file (supports instant dedup) |
 | `GET` | `/file/meta` | Get file metadata by hash |
-| `GET` | `/file/query` | List all files for current user |
-| `GET` | `/file/download` | Download file by hash |
+| `GET` | `/file/query` | List user files (supports pagination: `?page=1&size=20`) |
+| `GET` | `/file/download` | Download file by hash (supports Range header) |
+| `GET` | `/file/preview` | Online preview (images/PDF/video/text) |
 | `POST` | `/file/update` | Rename file |
 | `POST` | `/file/delete` | Soft delete file |
+
+### Presigned URL (Auth Required)
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/file/presigned/upload` | Get presigned PUT URL for direct upload to MinIO |
+| `POST` | `/file/presigned/upload/confirm` | Confirm presigned upload completion |
+| `GET` | `/file/presigned/download` | Get presigned GET URL for direct download from MinIO |
 
 ### Chunked Upload (Auth Required)
 
 | Method | Route | Description |
 |--------|-------|-------------|
-| `POST` | `/file/upload/chunk` | Upload a single chunk (idempotent) |
+| `POST` | `/file/upload/chunk` | Upload a single chunk (idempotent, user-isolated) |
 | `GET` | `/file/upload/status` | Check uploaded chunk indices |
-| `POST` | `/file/upload/merge` | Merge chunks into final file |
+| `POST` | `/file/upload/merge` | Merge chunks (distributed lock, UUID temp files) |
 
 ### User Operations
 
@@ -176,9 +195,27 @@ curl -X POST -F "username=test&password=123456" http://localhost:8080/user/signi
 curl -X POST -F "file=@./test.txt" -b cookies.txt \
   http://localhost:8080/file/upload
 
-# Download a file
-curl -b cookies.txt \
-  "http://localhost:8080/file/download?filehash=HASH" -o output.txt
+# Download with Range support
+curl -b cookies.txt -H "Range: bytes=0-1023" \
+  "http://localhost:8080/file/download?filehash=HASH" -o partial.bin
+
+# List files with pagination
+curl -b cookies.txt "http://localhost:8080/file/query?page=1&size=10"
+
+# Presigned upload (two-step)
+# Step 1: Get presigned URL (frontend computes SHA1 first)
+curl -X POST -F "filehash=HASH" -F "filename=test.txt" -b cookies.txt \
+  http://localhost:8080/file/presigned/upload
+
+# Step 2: PUT directly to MinIO
+curl -X PUT -T ./test.txt "PRESIGNED_URL"
+
+# Step 3: Confirm
+curl -X POST -F "filehash=HASH" -F "filename=test.txt" -b cookies.txt \
+  http://localhost:8080/file/presigned/upload/confirm
+
+# Presigned download
+curl -b cookies.txt "http://localhost:8080/file/presigned/download?filehash=HASH"
 ```
 
 ---
@@ -193,7 +230,7 @@ go test ./util/         # Util tests only
 
 **Coverage:**
 - `util/` — SHA1, MD5, file operations, path utilities
-- `handler/` — HTTP responses, status codes, JSON format, auth middleware, rate limiting, user signup/signin validation, edge cases (missing params, invalid input, not-found, panic recovery)
+- `handler/` — HTTP responses, status codes, JSON format, auth middleware, rate limiting, user signup/signin validation, edge cases
 
 ---
 
@@ -201,34 +238,50 @@ go test ./util/         # Util tests only
 
 ```
 gofile/
-├── main.go                 # Entry point, route registration, graceful shutdown
-├── schema.sql              # Database schema (tables + indexes, single file)
+├── main.go                 # Entry point, DI wiring, route registration, graceful shutdown
+├── schema.sql              # Database schema (tables + indexes, reference only)
 ├── config/
-│   └── config.go           # Environment-based configuration
+│   └── config.go           # Environment-based configuration (.env support)
 ├── db/
-│   ├── mysql/
-│   │   └── conn.go         # MySQL connection pool
-│   ├── file.go             # tbl_file CRUD + FileMeta domain model
-│   └── user.go             # tbl_user / tbl_user_token CRUD
+│   └── mysql/
+│       └── conn.go         # GORM connection pool + AutoMigrate
+├── model/
+│   ├── file.go             # File (global registry) + UserFile (ownership) + FileMeta (DTO)
+│   ├── user.go             # User GORM model
+│   └── token.go            # Token GORM model
+├── repository/
+│   ├── file_repo.go        # FileRepository (GORM, with mock)
+│   ├── user_repo.go        # UserRepository (GORM, with mock)
+│   └── token_repo.go       # TokenRepository (GORM, with mock)
+├── service/
+│   ├── file_service.go     # Upload/download/merge/presign/dedup business logic
+│   ├── user_service.go     # Signup/signin/token generation
+│   └── auth_service.go     # Token validation
 ├── handler/
-│   ├── handler.go          # File upload/download/query/delete + chunked upload
-│   ├── user.go             # Signup/signin + bcrypt + token generation
+│   ├── handler.go          # File HTTP handlers (upload/download/merge/presign/range)
+│   ├── user.go             # User HTTP handlers (signup/signin/info)
 │   ├── auth.go             # Auth middleware (Cookie session)
-│   ├── ratelimit.go        # IP rate limiting middleware
-│   └── cleanup.go          # Periodic chunk directory cleanup
+│   ├── ratelimit.go        # Rate limiting (Redis or in-memory fallback)
+│   ├── handler_test.go     # Handler tests
+│   └── cleanup.go          # Periodic chunk cleanup + soft-delete GC
 ├── storage/
-│   ├── storage.go          # Storage interface definition
-│   ├── minio.go            # MinIO object storage implementation
-│   └── local.go            # Local filesystem storage implementation
+│   ├── storage.go          # Storage interface (Put/Get/Exists/Delete/Presign/Range)
+│   ├── minio.go            # MinIO S3 implementation
+│   └── local.go            # Local filesystem implementation
+├── cache/
+│   ├── cache.go            # Redis client wrapper
+│   ├── hash.go             # File hash dedup cache (Set)
+│   └── lock.go             # Distributed lock (SETNX + Lua CAS)
 ├── util/
-│   ├── hash.go             # SHA1, MD5, file hash, path utilities
-│   └── chunk.go            # Disk-based chunk tracking helpers
-├── static/                 # Frontend HTML pages
+│   ├── hash.go             # SHA1, MD5, file hash utilities
+│   ├── hash_test.go        # Util tests
+│   └── chunk.go            # Disk-based chunk tracking
+├── static/                 # Frontend HTML (Vue 3 + Dark Mode SPA)
 ├── start.sh                # Unix/macOS startup script
 ├── start.bat               # Windows startup script
 ├── .env.example            # Environment variable template
 ├── Dockerfile              # Multi-stage Docker build
-├── docker-compose.yml      # Docker Compose orchestration
+├── docker-compose.yml      # Docker Compose orchestration (MySQL + MinIO + Redis)
 ├── README_CN.md            # 项目说明文档 (ZH)
 └── AGENTS.md               # AI 开发协作文档
 ```
@@ -239,9 +292,13 @@ gofile/
 
 | Component | Choice | Notes |
 |-----------|--------|-------|
+| Language | Go 1.25 | Strong typing, concurrency, performance |
 | HTTP Framework | Gin | High performance, active ecosystem |
-| Storage | MySQL + MinIO | Relational DB + Object Storage (MinIO with local fallback) |
-| Auth | bcrypt + Cookie/Session | Password hashing, token-based sessions |
+| ORM | GORM | AutoMigrate, model tags, prepared statements |
+| Database | MySQL 8.0 | Relational metadata storage |
+| Object Storage | MinIO (S3) | Presigned URLs, direct client upload/download |
+| Cache | Redis 7 (optional) | File hash dedup cache, distributed lock, rate limiting |
+| Auth | bcrypt + Cookie/Session | Password hashing, HttpOnly Cookie |
 | Logging | log/slog | Structured JSON output |
 | Deployment | Docker Compose | One-command startup for all services |
 
