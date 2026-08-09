@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"gofile/ai"
 	"gofile/cache"
 	"gofile/config"
 	"gofile/db/mysql"
@@ -85,7 +86,32 @@ func main() {
 	// 启动软删除文件垃圾回收（需要 fileRepo + store）
 	handler.StartSoftDeleteGC(fileRepo, store, 0)
 
-	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient)
+	// 初始化 AI 功能（可选，AI_ENABLED=false 时跳过，不影响主链路）
+	var aiProcessor *ai.Processor
+	var aiHandler *handler.AIHandler
+	if cfg.AIEnabled {
+		aiRepo := repository.NewAITaskRepository(db)
+		provider := ai.NewMockProvider(cfg.AIEmbedDim)
+		indexer := ai.NewTypesenseIndexer(cfg.TypesenseURL, cfg.TypesenseAPIKey, cfg.AIEmbedDim)
+
+		// 幂等创建 Typesense collection（失败则降级为 MySQL LIKE 搜索，不阻断启动）
+		initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := indexer.EnsureCollection(initCtx); err != nil {
+			slog.Warn("Typesense unavailable, AI search will fallback to LIKE", "error", err)
+		}
+		cancel()
+
+		aiProcessor = ai.NewProcessor(provider, indexer, fileRepo, aiRepo, store, cfg)
+		aiProcessor.Start()
+		handler.StartAICompensation(aiProcessor)
+
+		aiSvc := service.NewAIService(indexer, provider, fileRepo)
+		aiHandler = handler.NewAIHandler(aiSvc)
+
+		slog.Info("AI features enabled", "provider", cfg.AIProvider, "embedDim", cfg.AIEmbedDim, "workers", cfg.AIWorkers)
+	}
+
+	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).WithAI(aiProcessor)
 	userSvc := service.NewUserService(userRepo, tokenRepo)
 	authSvc := service.NewAuthService(tokenRepo)
 
@@ -153,6 +179,12 @@ func main() {
 		file.POST("/presigned/upload", fileHandler.PresignUploadHandler)
 		file.POST("/presigned/upload/confirm", fileHandler.ConfirmUploadHandler)
 		file.GET("/presigned/download", fileHandler.PresignDownloadHandler)
+		// AI 语义检索（全部需要鉴权）
+		if aiHandler != nil {
+			file.GET("/ai/search", aiHandler.SearchHandler)
+			file.GET("/ai/similar", aiHandler.SimilarHandler)
+			file.GET("/ai/duplicates", aiHandler.DuplicatesHandler)
+		}
 	}
 
 	// 创建 HTTP Server（支持优雅关闭）

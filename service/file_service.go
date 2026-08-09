@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"gofile/ai"
 	"gofile/cache"
 	"gofile/config"
 	"gofile/metrics"
@@ -28,6 +29,7 @@ type FileService struct {
 	store    storage.Storage
 	cfg      *config.Config
 	cache    *cache.Client // 可选，Redis 不可用时为 nil
+	ai       *ai.Processor // 可选，AI 功能关闭时为 nil
 }
 
 // NewFileService 创建文件服务（cache 为 nil 时回退到原有逻辑）
@@ -37,6 +39,19 @@ func NewFileService(fileRepo repository.FileRepository, store storage.Storage, c
 		cc = c[0]
 	}
 	return &FileService{fileRepo: fileRepo, store: store, cfg: cfg, cache: cc}
+}
+
+// WithAI 注入 AI 异步编排器（main 组装时调用，可选）
+func (s *FileService) WithAI(p *ai.Processor) *FileService {
+	s.ai = p
+	return s
+}
+
+// enqueue 触发 AI 异步分析（nil 安全，不阻断上传主链路）
+func (s *FileService) enqueue(ctx context.Context, filehash, filename, username string) {
+	if s.ai != nil {
+		s.ai.Enqueue(ctx, filehash, filename, username)
+	}
 }
 
 // Upload 处理文件上传（含秒传检测）
@@ -68,6 +83,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 			exists, _ := s.store.Exists(ctx, fileSha1)
 			if exists {
 				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
+				s.enqueue(ctx, fileSha1, filename, username)
 				slog.InfoContext(ctx, "fast upload (dedup, cache hit)", "filehash", fileSha1, "username", username)
 				return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 			}
@@ -82,6 +98,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 		// 秒传成功，记入 Redis 缓存供后续快速判断
 		s.cacheMark(ctx, fileSha1)
 		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
+		s.enqueue(ctx, fileSha1, filename, username)
 		slog.InfoContext(ctx, "fast upload (dedup)", "filehash", fileSha1, "username", username)
 		return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 	}
@@ -113,6 +130,9 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 
 	// 记入 Redis 缓存，后续秒传直接命中
 	s.cacheMark(ctx, fileSha1)
+
+	// 触发 AI 异步分析（秒传命中会提前 return，不会走到这里）
+	s.enqueue(ctx, fileSha1, filename, username)
 
 	// 业务指标：累计真实上传字节（秒传命中会提前 return，不会走到这里）
 	metrics.AddUploadBytes(totalSize)
@@ -179,6 +199,9 @@ func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, use
 
 	// 记入 Redis 缓存
 	s.cacheMark(ctx, fileHash)
+
+	// 触发 AI 异步分析
+	s.enqueue(ctx, fileHash, fileName, username)
 
 	slog.InfoContext(ctx, "presigned upload confirmed", "filehash", fileHash, "filename", fileName, "username", username)
 	return nil
@@ -382,6 +405,9 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 
 	// 记入 Redis 缓存
 	s.cacheMark(ctx, fileHash)
+
+	// 触发 AI 异步分析
+	s.enqueue(ctx, fileHash, fileName, username)
 
 	// 业务指标：分片合并成功也计入上传字节
 	metrics.AddUploadBytes(totalSize)

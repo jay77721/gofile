@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"gofile/ai"
 	"gofile/repository"
 	"gofile/storage"
 	"log/slog"
@@ -76,7 +77,22 @@ func cleanupExpiredChunks(chunkDir string) {
 	}
 }
 
-// StartSoftDeleteGC 启动软删除文件的垃圾回收任务
+// StartAICompensation 启动 AI 失败任务补偿（周期性重新入队 failed 任务）
+func StartAICompensation(aiProcessor *ai.Processor) {
+	if aiProcessor == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+
+		slog.InfoContext(context.Background(), "ai compensation started", "interval", "1m")
+		ctx := context.Background()
+		for range ticker.C {
+			aiProcessor.RequeueFailed(ctx)
+		}
+	}()
+}
 // 逻辑：统计 tbl_user_file 中每个 file_sha1 的活跃引用数，
 // 引用数为 0（即所有用户都已软删除该文件）时，从存储层删除文件内容。
 func StartSoftDeleteGC(fileRepo repository.FileRepository, store storage.Storage, orphanAge time.Duration) {

@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS tbl_file (
   file_name varchar(256) NOT NULL DEFAULT '' COMMENT '文件名',
   file_size bigint(20) DEFAULT 0 COMMENT '文件大小(字节)',
   file_addr varchar(512) DEFAULT '' COMMENT '文件存储路径',
+  file_summary TEXT DEFAULT NULL COMMENT 'AI 生成的内容摘要',
+  tags varchar(255) DEFAULT '' COMMENT 'AI 生成的标签，逗号分隔',
   create_at datetime DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
   status tinyint(4) NOT NULL DEFAULT 0 COMMENT '状态: 0-正常, 1-已删除, 2-禁止'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件元信息表';
@@ -29,3 +31,19 @@ CREATE TABLE IF NOT EXISTS tbl_user_token (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户会话 Token 表';
 
 CREATE INDEX idx_token_expired_at ON tbl_user_token(expired_at);
+
+-- AI 异步分析任务状态机
+-- 状态: 0-pending, 1-processing, 2-done, 3-failed(可补偿重试)
+CREATE TABLE IF NOT EXISTS tbl_ai_task (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  file_sha1 char(40) NOT NULL,
+  user_name varchar(64) NOT NULL,
+  status tinyint(4) NOT NULL DEFAULT 0,
+  retry_count INT NOT NULL DEFAULT 0,
+  error_msg varchar(512) DEFAULT '',
+  create_at datetime DEFAULT CURRENT_TIMESTAMP,
+  update_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_sha1_user (file_sha1, user_name),
+  INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 异步分析任务表';

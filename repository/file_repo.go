@@ -34,6 +34,10 @@ type FileRepository interface {
 	ListOldest(before time.Time) ([]model.File, error)
 	// RemoveOrphan 从 tbl_file 删除无引用的全局文件记录
 	RemoveOrphan(filehash string) error
+	// SaveAnalysis 写入 AI 生成的摘要与标签（全局文件维度，幂等）
+	SaveAnalysis(filehash, summary, tags string) error
+	// GetGlobalFile 按 hash 读取全局文件（含摘要/标签），不带用户维度
+	GetGlobalFile(filehash string) (model.File, error)
 }
 
 // mysqlFileRepo GORM 实现的 FileRepository
@@ -82,6 +86,8 @@ func (r *mysqlFileRepo) GetByHash(filehash, username string) (model.FileMeta, er
 		FileSize: f.FileSize,
 		Username: uf.Username,
 		UploadAt: uf.CreateAt.Format("2006-01-02 15:04:05"),
+		Summary:  f.Summary,
+		Tags:     f.Tags,
 	}, nil
 }
 
@@ -107,6 +113,8 @@ func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 			FileSize: f.FileSize,
 			Username: uf.Username,
 			UploadAt: uf.CreateAt.Format("2006-01-02 15:04:05"),
+			Summary:  f.Summary,
+			Tags:     f.Tags,
 		})
 	}
 	return files, nil
@@ -149,6 +157,8 @@ func (r *mysqlFileRepo) ListByUserPaged(username string, page, size int) ([]mode
 			FileSize: f.FileSize,
 			Username: uf.Username,
 			UploadAt: uf.CreateAt.Format("2006-01-02 15:04:05"),
+			Summary:  f.Summary,
+			Tags:     f.Tags,
 		})
 	}
 	return files, nil
@@ -203,6 +213,26 @@ func (r *mysqlFileRepo) RemoveOrphan(filehash string) error {
 		return fmt.Errorf("remove orphan file failed: %w", err)
 	}
 	return nil
+}
+
+// SaveAnalysis 写入 AI 生成的摘要与标签（全局文件维度）
+func (r *mysqlFileRepo) SaveAnalysis(filehash, summary, tags string) error {
+	res := r.db.Model(&model.File{}).
+		Where("file_sha1 = ?", filehash).
+		Updates(map[string]any{"file_summary": summary, "tags": tags})
+	if res.Error != nil {
+		return fmt.Errorf("save file analysis failed: %w", res.Error)
+	}
+	return nil
+}
+
+// GetGlobalFile 按 hash 读取全局文件（含摘要/标签），不带用户维度
+func (r *mysqlFileRepo) GetGlobalFile(filehash string) (model.File, error) {
+	var f model.File
+	if err := r.db.Where("file_sha1 = ?", filehash).First(&f).Error; err != nil {
+		return model.File{}, fmt.Errorf("get global file failed: %w", err)
+	}
+	return f, nil
 }
 
 // ---- Mock 实现 ----
@@ -333,6 +363,22 @@ func (m *mockFileRepo) ListOldest(before time.Time) ([]model.File, error) {
 func (m *mockFileRepo) RemoveOrphan(filehash string) error {
 	delete(m.files, filehash)
 	return nil
+}
+
+func (m *mockFileRepo) SaveAnalysis(filehash, summary, tags string) error {
+	f := m.files[filehash]
+	f.Summary = summary
+	f.Tags = tags
+	m.files[filehash] = f
+	return nil
+}
+
+func (m *mockFileRepo) GetGlobalFile(filehash string) (model.File, error) {
+	f, ok := m.files[filehash]
+	if !ok {
+		return model.File{}, fmt.Errorf("file not found")
+	}
+	return f, nil
 }
 
 // 确保编译时检查接口实现

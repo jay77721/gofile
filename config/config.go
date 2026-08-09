@@ -25,6 +25,15 @@ type Config struct {
 	RedisAddr     string // Redis 地址，默认 localhost:6379
 	RedisPassword string // Redis 密码，默认空
 	RedisDB       int    // Redis 数据库编号，默认 0
+
+	// AI 功能配置
+	AIEnabled      bool   // AI 功能总开关，默认 false
+	AIProvider     string // LLM 供应商：mock | anthropic | openai，默认 mock
+	AIAPIKey       string // LLM API Key（mock 下忽略）
+	AIEmbedDim     int    // 向量维度，默认 128
+	AIWorkers      int    // 异步 worker 数量，默认 4
+	TypesenseURL   string // Typesense 地址，默认 http://localhost:8108
+	TypesenseAPIKey string // Typesense API Key，默认 xyz
 }
 
 // Load 从环境变量加载配置，提供合理默认值
@@ -48,6 +57,14 @@ func Load() *Config {
 		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvInt("REDIS_DB", 0),
+
+		AIEnabled:       getEnvBool("AI_ENABLED", false),
+		AIProvider:      getEnv("AI_PROVIDER", "mock"),
+		AIAPIKey:        getEnv("AI_API_KEY", ""),
+		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 128),
+		AIWorkers:       getEnvInt("AI_WORKERS", 4),
+		TypesenseURL:    getEnv("TYPESENSE_URL", "http://localhost:8108"),
+		TypesenseAPIKey: getEnv("TYPESENSE_API_KEY", "xyz"),
 	}
 
 	// MySQL DSN 未设置时使用默认值（本地开发）

@@ -39,6 +39,34 @@ var (
 		},
 	)
 
+	// aiTasksTotal AI 异步任务计数器，按 status 分桶（pending/done/failed）
+	aiTasksTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ai_tasks_total",
+			Help: "Total number of AI analysis tasks processed, partitioned by status.",
+		},
+		[]string{"status"},
+	)
+
+	// aiLLMDuration LLM 调用耗时直方图（Analyze + Embed）
+	aiLLMDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "ai_llm_duration_seconds",
+			Help:    "Duration of LLM API calls in seconds, partitioned by operation.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"operation"},
+	)
+
+	// aiIndexOps 检索引擎操作计数器，按 op/result 分桶
+	aiIndexOps = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ai_index_ops_total",
+			Help: "Total number of AI index operations, partitioned by operation and result.",
+		},
+		[]string{"operation", "result"},
+	)
+
 	registered bool // 幂等注册守卫，防止重复 MustRegister panic
 )
 
@@ -47,7 +75,7 @@ func Register() {
 	if registered {
 		return
 	}
-	prometheus.MustRegister(httpRequestsTotal, httpRequestDuration, fileUploadBytes)
+	prometheus.MustRegister(httpRequestsTotal, httpRequestDuration, fileUploadBytes, aiTasksTotal, aiLLMDuration, aiIndexOps)
 	registered = true
 }
 
@@ -60,6 +88,21 @@ func RecordHTTPRequest(method, path, status string, durSec float64) {
 // AddUploadBytes 由 service 层在上传成功后调用，累计业务上传字节
 func AddUploadBytes(bytes int64) {
 	fileUploadBytes.Add(float64(bytes))
+}
+
+// RecordAITask 由 ai.Processor 在任务状态变更时调用
+func RecordAITask(status string) {
+	aiTasksTotal.WithLabelValues(status).Inc()
+}
+
+// ObserveLLMDuration 由 ai.Provider 调用方记录 LLM 耗时
+func ObserveLLMDuration(operation string, durSec float64) {
+	aiLLMDuration.WithLabelValues(operation).Observe(durSec)
+}
+
+// RecordIndexOp 由 ai.Indexer 调用方记录检索引擎操作
+func RecordIndexOp(operation, result string) {
+	aiIndexOps.WithLabelValues(operation, result).Inc()
 }
 
 // Handler 返回 /metrics 抓取端点

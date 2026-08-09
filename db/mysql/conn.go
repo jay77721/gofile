@@ -44,6 +44,7 @@ func Init(dsn string) error {
 		&model.UserFile{},
 		&model.User{},
 		&model.Token{},
+		&model.AITask{},
 	); err != nil {
 		return fmt.Errorf("auto migrate failed: %w", err)
 	}

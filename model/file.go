@@ -8,6 +8,8 @@ type File struct {
 	FileSha1 string    `gorm:"column:file_sha1;primaryKey;size:40"`
 	FileSize int64     `gorm:"column:file_size;default:0"`
 	FileAddr string    `gorm:"column:file_addr;size:512;default:''"`
+	Summary  string    `gorm:"column:file_summary;type:text"`   // AI 生成的内容摘要
+	Tags     string    `gorm:"column:tags;size:255;default:''"` // AI 生成的标签，逗号分隔
 	CreateAt time.Time `gorm:"column:create_at;autoCreateTime"`
 }
 
@@ -33,4 +35,6 @@ type FileMeta struct {
 	FileSize int64  `json:"size"`
 	Username string `json:"username"`
 	UploadAt string `json:"upload_time"` // 字符串格式，方便前端直接展示
+	Summary  string `json:"summary"`     // AI 生成摘要，未分析时为空
+	Tags     string `json:"tags"`        // AI 生成标签，逗号分隔
 }

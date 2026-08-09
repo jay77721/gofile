@@ -35,6 +35,23 @@ services:
       retries: 3
     restart: unless-stopped
 
+  typesense:
+    image: typesense/typesense:27.1
+    ports:
+      - "8108:8108"
+    environment:
+      - TYPESENSE_API_KEY=xyz
+      - TYPESENSE_DATA_DIR=/data
+      - TYPESENSE_ENABLE_CORS=true
+    volumes:
+      - typesense_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8108/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
   mysql:
     image: mysql:8.0
     environment:
@@ -97,3 +114,4 @@ volumes:
   uploads_data:
   chunks_data:
   minio_data:
+  typesense_data:
