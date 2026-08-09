@@ -6,6 +6,7 @@ import (
 	"gofile/config"
 	"gofile/db/mysql"
 	"gofile/handler"
+	"gofile/metrics"
 	"gofile/repository"
 	"gofile/service"
 	"gofile/storage"
@@ -21,11 +22,12 @@ import (
 )
 
 func main() {
-	// 初始化结构化日志
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	// 初始化结构化日志：ContextHandler 从 context 提取 request_id 自动附加到每条日志
+	slog.SetDefault(slog.New(metrics.NewContextHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	}))))
+	// 注册 Prometheus 指标（幂等，可重复调用）
+	metrics.Register()
 
 	// 加载配置
 	cfg := config.Load()
@@ -94,6 +96,12 @@ func main() {
 	// 初始化 Gin
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// 中间件顺序是关键不变量：
+	//   1. RequestIDMiddleware 先生成 request_id 注入 context，供后续日志/指标使用
+	//   2. MetricsMiddleware 计时 + 写访问日志 + 记录指标（依赖 request_id 已注入）
+	//   3. gin.Recovery 最内层，捕获 handler 与 MetricsMiddleware 的 panic
+	r.Use(metrics.RequestIDMiddleware())
+	r.Use(metrics.MetricsMiddleware())
 	r.Use(gin.Recovery())
 
 	// 配置可信代理
@@ -118,6 +126,9 @@ func main() {
 
 	// 健康检查（不需要鉴权）
 	r.GET("/healthz", handler.HealthCheckHandler)
+
+	// Prometheus 指标端点（不需要鉴权，供监控系统抓取）
+	r.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// 用户接口
 	rateLimit := handler.RateLimitMiddleware(5, 10, cacheClient)

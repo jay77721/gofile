@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"gofile/cache"
 	"gofile/config"
+	"gofile/metrics"
 	"gofile/model"
 	"gofile/repository"
 	"gofile/storage"
@@ -67,7 +68,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 			exists, _ := s.store.Exists(ctx, fileSha1)
 			if exists {
 				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
-				slog.Info("fast upload (dedup, cache hit)", "filehash", fileSha1, "username", username)
+				slog.InfoContext(ctx, "fast upload (dedup, cache hit)", "filehash", fileSha1, "username", username)
 				return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 			}
 		}
@@ -76,12 +77,12 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	// 传统秒传检测：直接问存储层
 	exists, err := s.store.Exists(ctx, fileSha1)
 	if err != nil {
-		slog.Warn("dedup check failed", "error", err, "filehash", fileSha1)
+		slog.WarnContext(ctx, "dedup check failed", "error", err, "filehash", fileSha1)
 	} else if exists {
 		// 秒传成功，记入 Redis 缓存供后续快速判断
 		s.cacheMark(ctx, fileSha1)
 		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
-		slog.Info("fast upload (dedup)", "filehash", fileSha1, "username", username)
+		slog.InfoContext(ctx, "fast upload (dedup)", "filehash", fileSha1, "username", username)
 		return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 	}
 
@@ -99,21 +100,23 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 
 	// 注册全局文件（INSERT IGNORE 幂等）
 	if err := s.fileRepo.Create(model.File{FileSha1: fileSha1, FileSize: totalSize, FileAddr: fileSha1}); err != nil {
-		slog.Warn("save global file meta failed, rolling back storage", "filehash", fileSha1)
+		slog.WarnContext(ctx, "save global file meta failed, rolling back storage", "filehash", fileSha1)
 		s.store.Delete(ctx, fileSha1)
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
 	}
 
 	// 建立用户拥有关系
 	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1}); err != nil {
-		slog.Warn("save user file relation failed", "error", err, "filehash", fileSha1)
+		slog.WarnContext(ctx, "save user file relation failed", "error", err, "filehash", fileSha1)
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}
 
 	// 记入 Redis 缓存，后续秒传直接命中
 	s.cacheMark(ctx, fileSha1)
 
-	slog.Info("file uploaded", "filename", filename, "size", totalSize, "hash", fileSha1, "username", username)
+	// 业务指标：累计真实上传字节（秒传命中会提前 return，不会走到这里）
+	metrics.AddUploadBytes(totalSize)
+	slog.InfoContext(ctx, "file uploaded", "filename", filename, "size", totalSize, "hash", fileSha1, "username", username)
 	return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
 }
 
@@ -121,7 +124,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 func (s *FileService) cacheMark(ctx context.Context, hash string) {
 	if s.cache != nil {
 		if err := s.cache.MarkHash(ctx, hash); err != nil {
-			slog.Warn("cache mark hash failed", "hash", hash, "error", err)
+			slog.WarnContext(ctx, "cache mark hash failed", "hash", hash, "error", err)
 		}
 	}
 }
@@ -151,7 +154,7 @@ func (s *FileService) PresignUpload(ctx context.Context, fileHash, username stri
 		return "", fmt.Errorf("presign upload failed: %w", err)
 	}
 
-	slog.Info("presigned upload URL generated", "filehash", fileHash, "username", username)
+	slog.InfoContext(ctx, "presigned upload URL generated", "filehash", fileHash, "username", username)
 	return url, nil
 }
 
@@ -166,7 +169,7 @@ func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, use
 
 	// 注册全局文件（幂等）
 	if err := s.fileRepo.Create(model.File{FileSha1: fileHash, FileSize: 0, FileAddr: fileHash}); err != nil {
-		slog.Warn("presigned confirm: save global file meta failed", "filehash", fileHash)
+		slog.WarnContext(ctx, "presigned confirm: save global file meta failed", "filehash", fileHash)
 	}
 
 	// 建立用户拥有关系
@@ -177,7 +180,7 @@ func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, use
 	// 记入 Redis 缓存
 	s.cacheMark(ctx, fileHash)
 
-	slog.Info("presigned upload confirmed", "filehash", fileHash, "filename", fileName, "username", username)
+	slog.InfoContext(ctx, "presigned upload confirmed", "filehash", fileHash, "filename", fileName, "username", username)
 	return nil
 }
 
@@ -196,7 +199,7 @@ func (s *FileService) PresignDownload(ctx context.Context, fileHash, username st
 		return "", fmt.Errorf("presign download failed: %w", err)
 	}
 
-	slog.Info("presigned download URL generated", "filehash", fileHash, "username", username)
+	slog.InfoContext(ctx, "presigned download URL generated", "filehash", fileHash, "username", username)
 	return url, nil
 }
 
@@ -289,7 +292,7 @@ func (s *FileService) ListByUserPaged(username string, page, size int) ([]model.
 }
 
 // UploadChunk 上传分片（用户隔离）
-func (s *FileService) UploadChunk(fileHash string, index int, file io.Reader, username string) error {
+func (s *FileService) UploadChunk(ctx context.Context, fileHash string, index int, file io.Reader, username string) error {
 	// 已上传过的分片直接返回
 	if util.ChunkExists(s.cfg.ChunkDir, username, fileHash, index) {
 		return nil
@@ -310,7 +313,7 @@ func (s *FileService) UploadChunk(fileHash string, index int, file io.Reader, us
 		return fmt.Errorf("write chunk failed: %w", err)
 	}
 
-	slog.Info("chunk uploaded", "filehash", fileHash, "index", index, "username", username)
+	slog.InfoContext(ctx, "chunk uploaded", "filehash", fileHash, "index", index, "username", username)
 	return nil
 }
 
@@ -359,13 +362,13 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 
 	// 上传到存储层
 	if err := saveMergedFile(ctx, s.store, fileHash, tmpPath, totalSize); err != nil {
-		slog.Error("store merged file failed", "error", err)
+		slog.ErrorContext(ctx, "store merged file failed", "error", err)
 		return model.FileMeta{}, fmt.Errorf("store merged file failed: %w", err)
 	}
 
 	// 注册全局文件（幂等）
 	if err := s.fileRepo.Create(model.File{FileSha1: fileHash, FileSize: totalSize, FileAddr: fileHash}); err != nil {
-		slog.Warn("save global file meta failed, rolling back", "filehash", fileHash)
+		slog.WarnContext(ctx, "save global file meta failed, rolling back", "filehash", fileHash)
 		s.store.Delete(ctx, fileHash)
 		os.RemoveAll(chunkDir)
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
@@ -373,14 +376,16 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 
 	// 建立用户拥有关系
 	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: 1}); err != nil {
-		slog.Warn("save user file relation failed", "error", err, "filehash", fileHash)
+		slog.WarnContext(ctx, "save user file relation failed", "error", err, "filehash", fileHash)
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}
 
 	// 记入 Redis 缓存
 	s.cacheMark(ctx, fileHash)
 
-	slog.Info("chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize, "username", username)
+	// 业务指标：分片合并成功也计入上传字节
+	metrics.AddUploadBytes(totalSize)
+	slog.InfoContext(ctx, "chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize, "username", username)
 	return model.FileMeta{FileSha1: fileHash, FileName: fileName, FileSize: totalSize, Username: username}, nil
 }
 

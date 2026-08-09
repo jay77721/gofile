@@ -30,13 +30,13 @@ func (h *UserHandler) SignupHandler(c *gin.Context) {
 		return
 	}
 
-	if err := h.userSvc.Signup(username, password); err != nil {
+	if err := h.userSvc.Signup(c.Request.Context(), username, password); err != nil {
 		// 用户已存在
 		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在", "data": nil})
 		return
 	}
 
-	slog.Info("user registered", "username", username)
+	slog.InfoContext(c.Request.Context(), "user registered", "username", username)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "注册成功", "data": nil})
 }
 
@@ -50,9 +50,9 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 		return
 	}
 
-	token, err := h.userSvc.Signin(username, password)
+	token, err := h.userSvc.Signin(c.Request.Context(), username, password)
 	if err != nil {
-		slog.Warn("login failed", "username", username, "reason", "invalid credentials")
+		slog.WarnContext(c.Request.Context(), "login failed", "username", username, "reason", "invalid credentials")
 		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名或密码错误", "data": nil})
 		return
 	}
@@ -62,7 +62,7 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 	c.SetCookie("token", token, 3600, "/", "", h.cfg.CookieSecure, true)
 	c.SetCookie("username", username, 3600, "/", "", h.cfg.CookieSecure, true)
 
-	slog.Info("user logged in", "username", username)
+	slog.InfoContext(c.Request.Context(), "user logged in", "username", username)
 
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
@@ -84,7 +84,7 @@ func (h *UserHandler) UserInfoHandler(c *gin.Context) {
 
 	user, err := h.userSvc.GetUserInfo(username)
 	if err != nil {
-		slog.Error("get user info failed", "error", err, "username", username)
+		slog.ErrorContext(c.Request.Context(), "get user info failed", "error", err, "username", username)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "获取用户信息失败", "data": nil})
 		return
 	}

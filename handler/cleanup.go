@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"fmt"
 	"gofile/repository"
 	"gofile/storage"
 	"log/slog"
@@ -29,7 +28,7 @@ func StartChunkCleanup(chunkDir string) {
 		ticker := time.NewTicker(ChunkCleanupInterval)
 		defer ticker.Stop()
 
-		slog.Info("chunk cleanup started", "interval", ChunkCleanupInterval, "maxAge", ChunkMaxAge, "dir", chunkDir)
+		slog.InfoContext(context.Background(), "chunk cleanup started", "interval", ChunkCleanupInterval, "maxAge", ChunkMaxAge, "dir", chunkDir)
 		for range ticker.C {
 			cleanupExpiredChunks(chunkDir)
 		}
@@ -42,7 +41,7 @@ func cleanupExpiredChunks(chunkDir string) {
 	userEntries, err := os.ReadDir(chunkDir)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			slog.Error("read chunk dir failed", "error", err, "dir", chunkDir)
+			slog.ErrorContext(context.Background(), "read chunk dir failed", "error", err, "dir", chunkDir)
 		}
 		return
 	}
@@ -68,9 +67,9 @@ func cleanupExpiredChunks(chunkDir string) {
 			if now.Sub(info.ModTime()) > ChunkMaxAge {
 				dirPath := filepath.Join(userDir, hashEntry.Name())
 				if err := os.RemoveAll(dirPath); err != nil {
-					slog.Error("remove expired chunk dir failed", "error", err, "dir", dirPath)
+					slog.ErrorContext(context.Background(), "remove expired chunk dir failed", "error", err, "dir", dirPath)
 				} else {
-					slog.Info("removed expired chunk dir", "dir", dirPath, "age", now.Sub(info.ModTime()))
+					slog.InfoContext(context.Background(), "removed expired chunk dir", "dir", dirPath, "age", now.Sub(info.ModTime()))
 				}
 			}
 		}
@@ -88,7 +87,7 @@ func StartSoftDeleteGC(fileRepo repository.FileRepository, store storage.Storage
 		ticker := time.NewTicker(SoftDeleteGCInterval)
 		defer ticker.Stop()
 
-		slog.Info("soft-delete GC started", "interval", SoftDeleteGCInterval, "orphanAge", orphanAge)
+		slog.InfoContext(context.Background(), "soft-delete GC started", "interval", SoftDeleteGCInterval, "orphanAge", orphanAge)
 		// 启动时先跑一次，避免等待首个周期
 		cleanupOrphanedFiles(fileRepo, store, orphanAge)
 		for range ticker.C {
@@ -103,7 +102,7 @@ func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Stor
 	before := time.Now().Add(-orphanAge)
 	files, err := fileRepo.ListOldest(before)
 	if err != nil {
-		slog.Error("GC: list oldest files failed", "error", err)
+		slog.ErrorContext(context.Background(), "GC: list oldest files failed", "error", err)
 		return
 	}
 
@@ -111,7 +110,7 @@ func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Stor
 		// 二次确认：检查 tbl_user_file 中活跃引用数
 		refs, err := fileRepo.CountRefs(f.FileSha1)
 		if err != nil {
-			slog.Warn("GC: count refs failed", "filehash", f.FileSha1, "error", err)
+			slog.WarnContext(context.Background(), "GC: count refs failed", "filehash", f.FileSha1, "error", err)
 			continue
 		}
 		if refs > 0 {
@@ -121,15 +120,15 @@ func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Stor
 		// 从存储层删除文件内容
 		ctx := context.Background()
 		if err := store.Delete(ctx, f.FileSha1); err != nil {
-			slog.Error("GC: delete file from storage failed", "filehash", f.FileSha1, "error", err)
+			slog.ErrorContext(context.Background(), "GC: delete file from storage failed", "filehash", f.FileSha1, "error", err)
 			continue
 		}
 
 		// 从 tbl_file 删除记录
 		if err := fileRepo.RemoveOrphan(f.FileSha1); err != nil {
-			slog.Error(fmt.Sprintf("GC: remove orphan file record failed: %v", err), "filehash", f.FileSha1)
+			slog.ErrorContext(context.Background(), "GC: remove orphan file record failed", "error", err, "filehash", f.FileSha1)
 		} else {
-			slog.Info("GC: removed orphan file", "filehash", f.FileSha1, "size", f.FileSize)
+			slog.InfoContext(context.Background(), "GC: removed orphan file", "filehash", f.FileSha1, "size", f.FileSize)
 		}
 	}
 }

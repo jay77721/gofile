@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -24,7 +25,7 @@ func NewUserService(userRepo repository.UserRepository, tokenRepo repository.Tok
 }
 
 // Signup 用户注册
-func (s *UserService) Signup(username, password string) error {
+func (s *UserService) Signup(ctx context.Context, username, password string) error {
 	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("bcrypt hash failed: %w", err)
@@ -38,22 +39,22 @@ func (s *UserService) Signup(username, password string) error {
 		return fmt.Errorf("username already exists")
 	}
 
-	slog.Info("user registered", "username", username)
+	slog.InfoContext(ctx, "user registered", "username", username)
 	return nil
 }
 
 // Signin 用户登录，返回 token
-func (s *UserService) Signin(username, password string) (string, error) {
+func (s *UserService) Signin(ctx context.Context, username, password string) (string, error) {
 	// 获取密码哈希
 	storedHash, err := s.userRepo.GetPasswordHash(username)
 	if err != nil {
-		slog.Warn("login failed: user not found", "username", username)
+		slog.WarnContext(ctx, "login failed: user not found", "username", username)
 		return "", fmt.Errorf("invalid credentials")
 	}
 
 	// 验证密码
 	if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)); err != nil {
-		slog.Warn("login failed: wrong password", "username", username)
+		slog.WarnContext(ctx, "login failed: wrong password", "username", username)
 		return "", fmt.Errorf("invalid credentials")
 	}
 
@@ -69,7 +70,7 @@ func (s *UserService) Signin(username, password string) (string, error) {
 		return "", fmt.Errorf("save token failed: %w", err)
 	}
 
-	slog.Info("user logged in", "username", username)
+	slog.InfoContext(ctx, "user logged in", "username", username)
 	return token, nil
 }
 

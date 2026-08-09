@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"gofile/repository"
 	"log/slog"
 	"time"
@@ -17,20 +18,20 @@ func NewAuthService(tokenRepo repository.TokenRepository) *AuthService {
 }
 
 // ValidateToken 验证 token 是否有效
-func (s *AuthService) ValidateToken(username, token string) bool {
+func (s *AuthService) ValidateToken(ctx context.Context, username, token string) bool {
 	t, err := s.tokenRepo.Get(username)
 	if err != nil {
-		slog.Warn("token validation failed: not found", "username", username)
+		slog.WarnContext(ctx, "token validation failed: not found", "username", username)
 		return false
 	}
 
 	if t.Token != token {
-		slog.Warn("token mismatch", "username", username)
+		slog.WarnContext(ctx, "token mismatch", "username", username)
 		return false
 	}
 
 	if t.ExpiredAt.Before(time.Now()) {
-		slog.Warn("token expired", "username", username, "expired_at", t.ExpiredAt)
+		slog.WarnContext(ctx, "token expired", "username", username, "expired_at", t.ExpiredAt)
 		return false
 	}
 

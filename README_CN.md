@@ -178,6 +178,7 @@ start.bat --build      # 构建二进制后运行
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | `GET` | `/healthz` | 健康检查 |
+| `GET` | `/metrics` | Prometheus 指标端点 |
 | `GET` | `/static/*` | 静态前端页面 |
 
 ---
@@ -231,6 +232,36 @@ go test ./util/         # 工具函数测试
 **测试覆盖：**
 - `util/` — SHA1, MD5, 文件操作, 路径工具
 - `handler/` — HTTP 响应, 状态码, JSON 格式, 认证中间件, 限流, 用户注册/登录验证, 边界情况
+- `metrics/` — request_id 中间件/日志 ContextHandler, Prometheus 指标中间件, `/metrics` 端点
+- `handler/observability_test.go` — 全链路可观测性测试（RequestID → Metrics → Recovery）
+
+---
+
+## 📊 可观测性
+
+服务暴露 Prometheus 指标，并通过 request_id 跨层串联日志。
+
+### 指标
+
+| 指标 | 类型 | 标签 | 说明 |
+|------|------|------|------|
+| `http_requests_total` | Counter | `method`, `path`, `status` | HTTP 请求计数 |
+| `http_request_duration_seconds` | Histogram | `method`, `path` | 请求耗时（默认分桶） |
+| `file_upload_bytes_total` | Counter | — | 上传成功的文件字节数 |
+
+- **path 标签使用路由模板**（`c.FullPath()`），而非原始 URL —— 避免 query 参数 / 文件 hash 造成标签基数爆炸。未匹配路由回退为 `unknown`。
+- 每 15s 抓取 `GET /metrics`。`docker compose up -d` 会启动 **Prometheus**（`http://localhost:9090`）和 **Grafana**（`http://localhost:3000`，admin/admin），并预置 "gofile Overview" 大盘（RPS、P95 延迟、5xx 错误率、上传字节）。
+
+### request_id 日志串联
+
+每个请求生成 UUID（响应头 `X-Request-ID`）并注入请求 `context`。自定义 `slog.Handler`（`metrics.ContextHandler`）从 context 提取 `request_id` 附加到每条日志 —— 因此 handler、service、访问日志可按请求串联：
+
+```json
+{"level":"INFO","msg":"access","method":"GET","path":"/file/upload","status":200,"request_id":"fd2d1cdf-..."}
+{"level":"INFO","msg":"file uploaded","size":2048,"request_id":"fd2d1cdf-..."}
+```
+
+后台任务（chunk 清理、软删除 GC）故意**不带** request_id。
 
 ---
 
@@ -263,7 +294,14 @@ gofile/
 │   ├── auth.go             # 认证中间件（Cookie session）
 │   ├── ratelimit.go        # 限流中间件（Redis 或内存回退）
 │   ├── handler_test.go     # Handler 测试
+│   ├── observability_test.go # 全链路可观测性测试
 │   └── cleanup.go          # 定时清理过期分片 + 软删除文件 GC
+├── metrics/
+│   ├── metrics.go          # Prometheus 指标定义 + /metrics 端点
+│   ├── middleware.go       # 指标中间件（计数器 + 直方图 + 访问日志）
+│   ├── request_id.go       # RequestID 中间件 + slog context handler
+│   ├── metrics_test.go     # 指标测试
+│   └── request_id_test.go  # Request ID 测试
 ├── storage/
 │   ├── storage.go          # Storage 接口（Put/Get/Exists/Delete/Presign/Range）
 │   ├── minio.go            # MinIO S3 实现
@@ -279,9 +317,12 @@ gofile/
 ├── static/                 # 前端 HTML（Vue 3 + Dark Mode SPA）
 ├── start.sh                # Unix/macOS 启动脚本
 ├── start.bat               # Windows 启动脚本
+├── deploy/
+│   ├── prometheus/         # Prometheus 抓取配置
+│   └── grafana/            # Grafana 数据源 + 大盘预置
 ├── .env.example            # 环境变量模板
 ├── Dockerfile              # 多阶段 Docker 构建
-├── docker-compose.yml      # Docker Compose 编排（MySQL + MinIO + Redis）
+├── docker-compose.yml      # Docker Compose 编排（MySQL + MinIO + Redis + Prometheus + Grafana）
 ├── README.md               # 项目说明文档 (EN)
 └── AGENTS.md               # AI 开发协作文档
 ```
@@ -299,7 +340,9 @@ gofile/
 | 对象存储 | MinIO (S3) | 预签名 URL，客户端直传直下 |
 | 缓存 | Redis 7（可选） | 秒传 hash 去重缓存、分布式锁、全局限流 |
 | 认证 | bcrypt + Cookie/Session | 密码哈希，HttpOnly Cookie |
-| 日志 | log/slog | 结构化 JSON 输出 |
+| 日志 | log/slog | 结构化 JSON 输出 + request_id 串联 |
+| 指标 | Prometheus client_golang | 自定义 Gin 中间件，`/metrics` 端点 |
+| 监控 | Prometheus + Grafana | 预置 "gofile Overview" 大盘 |
 | 部署 | Docker Compose | 一键启动所有依赖服务 |
 
 ---

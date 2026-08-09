@@ -2,7 +2,6 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"gofile/config"
 	"gofile/service"
@@ -48,9 +47,9 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
 	// 秒传检测
 	if fileHash != "" {
-		exists, err := h.fileSvc.FastUpload(context.Background(), fileHash)
+		exists, err := h.fileSvc.FastUpload(c.Request.Context(), fileHash)
 		if err != nil {
-			slog.Warn("upload: fast upload check failed", "error", err, "filehash", fileHash)
+			slog.WarnContext(c.Request.Context(), "upload: fast upload check failed", "error", err, "filehash", fileHash)
 		} else if exists {
 			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": nil})
 			return
@@ -68,9 +67,9 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	// 路径穿越防护
 	filename := filepath.Base(header.Filename)
 
-	fMeta, err := h.fileSvc.Upload(context.Background(), file, filename, 0, c.GetString("username"))
+	fMeta, err := h.fileSvc.Upload(c.Request.Context(), file, filename, 0, c.GetString("username"))
 	if err != nil {
-		slog.Error("upload failed", "error", err, "filename", filename)
+		slog.ErrorContext(c.Request.Context(), "upload failed", "error", err, "filename", filename)
 		// 秒传成功的情况
 		if fMeta.FileSha1 != "" && strings.Contains(err.Error(), "save file meta") {
 			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": gin.H{"filehash": fMeta.FileSha1}})
@@ -129,9 +128,9 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	rangeHeader := c.GetHeader("Range")
 	if rangeHeader == "" {
 		// 无 Range 头：返回完整文件
-		reader, _, err := h.fileSvc.Download(context.Background(), filehash, username)
+		reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
 		if err != nil {
-			slog.Error("download failed", "error", err, "filehash", filehash)
+			slog.ErrorContext(c.Request.Context(), "download failed", "error", err, "filehash", filehash)
 			c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 			return
 		}
@@ -155,9 +154,9 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 		return
 	}
 
-	reader, _, totalSize, err := h.fileSvc.DownloadRange(context.Background(), filehash, username, offset, length)
+	reader, _, totalSize, err := h.fileSvc.DownloadRange(c.Request.Context(), filehash, username, offset, length)
 	if err != nil {
-		slog.Error("download range failed", "error", err, "filehash", filehash)
+		slog.ErrorContext(c.Request.Context(), "download range failed", "error", err, "filehash", filehash)
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
 	}
@@ -228,9 +227,9 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 		return
 	}
 
-	reader, fMeta, err := h.fileSvc.Download(context.Background(), filehash, c.GetString("username"))
+	reader, fMeta, err := h.fileSvc.Download(c.Request.Context(), filehash, c.GetString("username"))
 	if err != nil {
-		slog.Error("preview failed", "error", err, "filehash", filehash)
+		slog.ErrorContext(c.Request.Context(), "preview failed", "error", err, "filehash", filehash)
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
 	}
@@ -346,7 +345,7 @@ func (h *FileHandler) FileMetaUpdateHandler(c *gin.Context) {
 	}
 
 	if err := h.fileSvc.Rename(fileSha1, username, filepath.Base(newFileName)); err != nil {
-		slog.Error("rename failed", "error", err, "filehash", fileSha1)
+		slog.ErrorContext(c.Request.Context(), "rename failed", "error", err, "filehash", fileSha1)
 		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
 		return
 	}
@@ -367,7 +366,7 @@ func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Info("file deleted", "filehash", fileSha1, "username", c.GetString("username"))
+	slog.InfoContext(c.Request.Context(), "file deleted", "filehash", fileSha1, "username", c.GetString("username"))
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功", "data": nil})
 }
 
@@ -383,7 +382,7 @@ func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 		// 无分页参数：返回全部（兼容旧逻辑）
 		fileMetas, err := h.fileSvc.ListByUser(username)
 		if err != nil {
-			slog.Error("query all files failed", "error", err)
+			slog.ErrorContext(c.Request.Context(), "query all files failed", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
 			return
 		}
@@ -403,7 +402,7 @@ func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 
 	files, total, err := h.fileSvc.ListByUserPaged(username, page, size)
 	if err != nil {
-		slog.Error("paged query files failed", "error", err)
+		slog.ErrorContext(c.Request.Context(), "paged query files failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
 		return
 	}
@@ -449,8 +448,8 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	defer file.Close()
 
 	username := c.GetString("username")
-	if err := h.fileSvc.UploadChunk(fileHash, chunkIndex, file, username); err != nil {
-		slog.Error("upload chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex, "username", username)
+	if err := h.fileSvc.UploadChunk(c.Request.Context(), fileHash, chunkIndex, file, username); err != nil {
+		slog.ErrorContext(c.Request.Context(), "upload chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex, "username", username)
 		// 已上传的情况不算错误
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk already uploaded", "data": nil})
 		return
@@ -502,9 +501,9 @@ func (h *FileHandler) MergeChunkHandler(c *gin.Context) {
 	// 路径穿越防护
 	fileName = filepath.Base(fileName)
 
-	fMeta, err := h.fileSvc.MergeChunks(context.Background(), fileHash, fileName, c.GetString("username"), totalStr)
+	fMeta, err := h.fileSvc.MergeChunks(c.Request.Context(), fileHash, fileName, c.GetString("username"), totalStr)
 	if err != nil {
-		slog.Error("merge chunks failed", "error", err, "filehash", fileHash)
+		slog.ErrorContext(c.Request.Context(), "merge chunks failed", "error", err, "filehash", fileHash)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件合并失败", "data": nil})
 		return
 	}
@@ -544,13 +543,13 @@ func (h *FileHandler) PresignUploadHandler(c *gin.Context) {
 		return
 	}
 
-	uploadURL, err := h.fileSvc.PresignUpload(context.Background(), fileHash, c.GetString("username"))
+	uploadURL, err := h.fileSvc.PresignUpload(c.Request.Context(), fileHash, c.GetString("username"))
 	if err != nil {
 		if err.Error() == "file already exists" {
 			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": gin.H{"filehash": fileHash}})
 			return
 		}
-		slog.Error("presign upload failed", "error", err, "filehash", fileHash)
+		slog.ErrorContext(c.Request.Context(), "presign upload failed", "error", err, "filehash", fileHash)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "生成上传链接失败", "data": nil})
 		return
 	}
@@ -576,8 +575,8 @@ func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
 		return
 	}
 
-	if err := h.fileSvc.ConfirmUpload(context.Background(), fileHash, fileName, c.GetString("username")); err != nil {
-		slog.Error("confirm upload failed", "error", err, "filehash", fileHash)
+	if err := h.fileSvc.ConfirmUpload(c.Request.Context(), fileHash, fileName, c.GetString("username")); err != nil {
+		slog.ErrorContext(c.Request.Context(), "confirm upload failed", "error", err, "filehash", fileHash)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "确认上传失败", "data": nil})
 		return
 	}
@@ -598,9 +597,9 @@ func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
 		return
 	}
 
-	downloadURL, err := h.fileSvc.PresignDownload(context.Background(), fileHash, c.GetString("username"))
+	downloadURL, err := h.fileSvc.PresignDownload(c.Request.Context(), fileHash, c.GetString("username"))
 	if err != nil {
-		slog.Error("presign download failed", "error", err, "filehash", fileHash)
+		slog.ErrorContext(c.Request.Context(), "presign download failed", "error", err, "filehash", fileHash)
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
 	}

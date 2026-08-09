@@ -178,6 +178,7 @@ start.bat --build      # Build binary then run
 | Method | Route | Description |
 |--------|-------|-------------|
 | `GET` | `/healthz` | Health check |
+| `GET` | `/metrics` | Prometheus metrics endpoint |
 | `GET` | `/static/*` | Static frontend pages |
 
 ---
@@ -231,6 +232,36 @@ go test ./util/         # Util tests only
 **Coverage:**
 - `util/` — SHA1, MD5, file operations, path utilities
 - `handler/` — HTTP responses, status codes, JSON format, auth middleware, rate limiting, user signup/signin validation, edge cases
+- `metrics/` — request_id middleware/context handler, Prometheus metrics middleware, `/metrics` endpoint
+- `handler/observability_test.go` — full-chain observability test (RequestID → Metrics → Recovery)
+
+---
+
+## 📊 Observability
+
+The service exposes Prometheus metrics and correlates logs across layers with a request ID.
+
+### Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `http_requests_total` | Counter | `method`, `path`, `status` | HTTP request count |
+| `http_request_duration_seconds` | Histogram | `method`, `path` | Request latency (default buckets) |
+| `file_upload_bytes_total` | Counter | — | Bytes of successfully uploaded files |
+
+- **Path label uses the route template** (`c.FullPath()`), not the raw URL — avoids label cardinality explosion from query params / file hashes. Unmatched routes fall back to `unknown`.
+- Scrape `GET /metrics` every 15s. `docker compose up -d` starts **Prometheus** (`http://localhost:9090`) and **Grafana** (`http://localhost:3000`, admin/admin) with a pre-provisioned "gofile Overview" dashboard (RPS, P95 latency, 5xx error rate, upload bytes).
+
+### Request ID Correlation
+
+Every request gets a UUID (`X-Request-ID` response header) injected into its request `context`. A custom `slog.Handler` (`metrics.ContextHandler`) extracts it and attaches `request_id` to every log line emitted with `slog.InfoContext/WarnContext/ErrorContext(ctx, ...)` — so handler, service, and access logs for one request can be correlated:
+
+```json
+{"level":"INFO","msg":"access","method":"GET","path":"/file/upload","status":200,"request_id":"fd2d1cdf-..."}
+{"level":"INFO","msg":"file uploaded","size":2048,"request_id":"fd2d1cdf-..."}
+```
+
+Background tasks (chunk cleanup, soft-delete GC) intentionally carry **no** request_id.
 
 ---
 
@@ -263,7 +294,14 @@ gofile/
 │   ├── auth.go             # Auth middleware (Cookie session)
 │   ├── ratelimit.go        # Rate limiting (Redis or in-memory fallback)
 │   ├── handler_test.go     # Handler tests
+│   ├── observability_test.go # Full-chain observability test
 │   └── cleanup.go          # Periodic chunk cleanup + soft-delete GC
+├── metrics/
+│   ├── metrics.go          # Prometheus metric definitions + /metrics handler
+│   ├── middleware.go       # Metrics middleware (counter + histogram + access log)
+│   ├── request_id.go       # RequestID middleware + slog context handler
+│   ├── metrics_test.go     # Metrics tests
+│   └── request_id_test.go  # Request ID tests
 ├── storage/
 │   ├── storage.go          # Storage interface (Put/Get/Exists/Delete/Presign/Range)
 │   ├── minio.go            # MinIO S3 implementation
@@ -279,9 +317,12 @@ gofile/
 ├── static/                 # Frontend HTML (Vue 3 + Dark Mode SPA)
 ├── start.sh                # Unix/macOS startup script
 ├── start.bat               # Windows startup script
+├── deploy/
+│   ├── prometheus/         # Prometheus scrape config
+│   └── grafana/            # Grafana datasource + dashboard provisioning
 ├── .env.example            # Environment variable template
 ├── Dockerfile              # Multi-stage Docker build
-├── docker-compose.yml      # Docker Compose orchestration (MySQL + MinIO + Redis)
+├── docker-compose.yml      # Docker Compose orchestration (MySQL + MinIO + Redis + Prometheus + Grafana)
 ├── README_CN.md            # 项目说明文档 (ZH)
 └── AGENTS.md               # AI 开发协作文档
 ```
@@ -299,7 +340,9 @@ gofile/
 | Object Storage | MinIO (S3) | Presigned URLs, direct client upload/download |
 | Cache | Redis 7 (optional) | File hash dedup cache, distributed lock, rate limiting |
 | Auth | bcrypt + Cookie/Session | Password hashing, HttpOnly Cookie |
-| Logging | log/slog | Structured JSON output |
+| Logging | log/slog | Structured JSON output with request_id correlation |
+| Metrics | Prometheus client_golang | Custom Gin middleware, `/metrics` endpoint |
+| Monitoring | Prometheus + Grafana | Pre-provisioned "gofile Overview" dashboard |
 | Deployment | Docker Compose | One-command startup for all services |
 
 ---

@@ -1,0 +1,16 @@
+# Prometheus 抓取配置
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # gofile 应用服务
+  - job_name: 'gofile'
+    static_configs:
+      - targets: ['app:8080']
+        labels:
+          service: gofile
+  # Prometheus 自身
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
