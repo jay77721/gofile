@@ -312,6 +312,15 @@ curl -b cookies.txt "http://localhost:8080/file/ai/duplicates?filehash=HASH&thre
 | `POST` | `/file/presigned/upload/confirm` | `filehash`、`filename` | 直传完成后确认,写入元数据 |
 | `GET` | `/file/presigned/download` | `filehash` | 签发 GET URL,客户端直下 |
 
+### 文件分享
+
+| 方法 | 路由 | 参数 | 认证 | 说明 |
+|------|------|------|:----:|------|
+| `POST` | `/file/share` | `filehash`、`days`(1-30,默认 7)、`password`(可选提取码) | ✓ | 创建分享,返回 `share_token` 与 `url` |
+| `GET` | `/file/share/list` | — | ✓ | 我的分享列表 |
+| `POST` | `/file/share/revoke` | `share_token` | ✓ | 撤销分享 |
+| `GET` | `/share/:token` | `?pwd=`(可选) | × | 免登录下载(支持 Range,过期/撤销后 404,提取码错误 403) |
+
 ### AI 检索(需认证,需启用 AI)
 
 | 方法 | 路由 | 参数 | 说明 |

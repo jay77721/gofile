@@ -144,6 +144,8 @@
         .fc-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
         .fc-tags .tag{background:var(--surface-hover);color:var(--text-dim);font-size:11px;padding:1px 8px;border-radius:10px}
         .fc-score{color:var(--primary);font-family:"JetBrains Mono",monospace}
+        .share-result{display:flex;gap:8px;margin-top:10px}
+        .share-result input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 10px;color:var(--text);font-size:12px;font-family:"JetBrains Mono",monospace;outline:none}
         .upload-row{display:flex;gap:10px;margin-top:16px;justify-content:center}
         .progress-wrap{display:none;margin-top:18px}
         .progress-wrap.active{display:block}
@@ -362,6 +364,7 @@
                     <div class="fc-actions">
                         <button class="act-pv" v-if="canPreview(f.filename)" @click="openPreview(f)">预览</button>
                         <button class="act-pv" @click="findSimilar(f)">相似</button>
+                        <button class="act-pv" @click="openShare(f)">分享</button>
                         <a class="act-dl" :href="'/file/download?filehash='+encodeURIComponent(f.filehash)">下载</a>
                         <button class="act-rn" @click="openRename(f)">重命名</button>
                         <button class="act-del" @click="openDelete(f)">删除</button>
@@ -458,6 +461,28 @@
             <div class="modal-ft">
                 <button class="btn btn-ghost btn-sm" @click="purgeTarget=null">取消</button>
                 <button class="btn btn-danger btn-sm" @click="doPurge">彻底删除</button>
+            </div>
+        </div>
+    </div>
+    <!-- Share Modal -->
+    <div class="modal-mask" :class="{on:shareTarget}">
+        <div class="modal" v-if="shareTarget">
+            <h4>分享「{{shareTarget.filename}}」</h4>
+            <div class="field">
+                <label>有效期(天,1-30)</label>
+                <input type="number" v-model="shareDays" min="1" max="30">
+            </div>
+            <div class="field">
+                <label>提取码(留空为无密码)</label>
+                <input type="text" v-model="sharePwd" placeholder="可选">
+            </div>
+            <div class="share-result" v-if="shareURL">
+                <input type="text" :value="shareURL" readonly @click="$event.target.select()">
+                <button class="btn btn-primary btn-sm" @click="copyShareURL">复制</button>
+            </div>
+            <div class="modal-ft">
+                <button class="btn btn-ghost btn-sm" @click="closeShare">关闭</button>
+                <button class="btn btn-primary btn-sm" @click="doShare" :disabled="shareCreating">{{shareCreating?'创建中…':'创建分享'}}</button>
             </div>
         </div>
     </div>
@@ -658,6 +683,25 @@ createApp({
                 searchResults.value=[];
                 searchMsg.value=/Unexpected|Failed to fetch|404/.test(e.message)?'AI 功能未启用,请设置 AI_ENABLED=true':e.message;
             }finally{searching.value=false}
+        }
+        // Share
+        const shareTarget=ref(null),shareDays=ref(7),sharePwd=ref(''),shareURL=ref(''),shareCreating=ref(false);
+        function openShare(f){shareTarget.value=f;shareDays.value=7;sharePwd.value='';shareURL.value=''}
+        function closeShare(){shareTarget.value=null;shareURL.value=''}
+        async function doShare(){
+            if(!shareTarget.value)return;
+            shareCreating.value=true;
+            const fd=new FormData();fd.append('filehash',shareTarget.value.filehash);fd.append('days',String(shareDays.value));
+            if(sharePwd.value)fd.append('password',sharePwd.value);
+            try{
+                const d=await apiPost('/file/share',fd);
+                shareURL.value=location.origin+d.url;
+                toast('分享成功','ok');
+            }catch(e){toast(e.message,'err')}finally{shareCreating.value=false}
+        }
+        async function copyShareURL(){
+            try{await navigator.clipboard.writeText(shareURL.value);toast('链接已复制','ok')}
+            catch(e){toast('复制失败,请手动选择复制','warn')}
         }
         // Trash
         const mainTab=ref('files'),trash=ref([]),purgeTarget=ref(null);

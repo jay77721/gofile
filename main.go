@@ -82,6 +82,7 @@ func main() {
 	fileRepo := repository.NewFileRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	tokenRepo := repository.NewTokenRepository(db)
+	shareRepo := repository.NewShareRepository(db)
 
 	var indexer ai.Indexer
 
@@ -116,9 +117,12 @@ func main() {
 	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).WithAI(aiProcessor).WithIndexer(indexer)
 	userSvc := service.NewUserService(userRepo, tokenRepo)
 	authSvc := service.NewAuthService(tokenRepo)
+	shareSvc := service.NewShareService(shareRepo, fileRepo)
 
 	fileHandler := handler.NewFileHandler(fileSvc, cfg)
 	userHandler := handler.NewUserHandler(userSvc, cfg)
+	shareHandler := handler.NewShareHandler(shareSvc, fileSvc)
+	handler.StartShareCleanup(shareRepo)
 	authMiddleware := handler.NewAuthMiddleware(authSvc)
 
 	// 初始化 Gin
@@ -158,6 +162,9 @@ func main() {
 	// Prometheus 指标端点（不需要鉴权，供监控系统抓取）
 	r.GET("/metrics", gin.WrapH(metrics.Handler()))
 
+	// 免登录分享下载（公开路由,分享令牌即访问凭证;限流防提取码爆破）
+	r.GET("/share/:token", handler.RateLimitMiddleware(10, 20, cacheClient), shareHandler.ShareDownloadHandler)
+
 	// 用户接口
 	rateLimit := handler.RateLimitMiddleware(5, 10, cacheClient)
 	r.POST("/user/signup", rateLimit, userHandler.SignupHandler)
@@ -178,6 +185,10 @@ func main() {
 		file.GET("/trash", fileHandler.TrashHandler)
 		file.POST("/restore", fileHandler.RestoreHandler)
 		file.POST("/purge", fileHandler.PurgeHandler)
+		// 文件分享
+		file.POST("/share", shareHandler.CreateShareHandler)
+		file.GET("/share/list", shareHandler.ShareListHandler)
+		file.POST("/share/revoke", shareHandler.RevokeShareHandler)
 		file.POST("/upload/chunk", fileHandler.UploadChunkHandler)
 		file.GET("/upload/status", fileHandler.UploadStatusHandler)
 		file.POST("/upload/merge", fileHandler.MergeChunkHandler)

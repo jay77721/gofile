@@ -77,6 +77,22 @@ func cleanupExpiredChunks(chunkDir string) {
 	}
 }
 
+// StartShareCleanup 定时清理过期分享（每天）
+func StartShareCleanup(shareRepo repository.ShareRepository) {
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			before := time.Now()
+			if err := shareRepo.DeleteExpired(before); err != nil {
+				slog.ErrorContext(context.Background(), "cleanup expired shares failed", "error", err)
+			} else {
+				slog.InfoContext(context.Background(), "cleaned up expired shares", "before", before)
+			}
+		}
+	}()
+}
+
 // StartAICompensation 启动 AI 失败任务补偿（周期性重新入队 failed 任务）
 // StartAITaskCleanup 启动 AI 任务 TTL 清理（每天清理过期任务）
 func StartAITaskCleanup(aiRepo repository.AITaskRepository, retention time.Duration) {

@@ -61,3 +61,18 @@ CREATE TABLE IF NOT EXISTS tbl_ai_task (
   INDEX idx_status (status),
   INDEX idx_task_expired_at (expired_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 异步分析任务表';
+
+-- 文件分享表
+CREATE TABLE IF NOT EXISTS tbl_share (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  share_token varchar(64) NOT NULL COMMENT '分享令牌',
+  file_sha1 char(40) NOT NULL COMMENT '分享的文件 hash',
+  user_name varchar(64) NOT NULL COMMENT '分享者',
+  password_hash varchar(255) NOT NULL DEFAULT '' COMMENT '提取码 bcrypt 哈希,空为无密码',
+  expire_at datetime NOT NULL COMMENT '过期时间',
+  create_at datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_share_token (share_token),
+  INDEX idx_share_file (file_sha1),
+  INDEX idx_share_expire (expire_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件分享表';

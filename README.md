@@ -311,6 +311,15 @@ All `/file/*` routes and `/user/info` require the session cookie set by `/user/s
 | `POST` | `/file/presigned/upload/confirm` | `filehash`, `filename` | Confirm after direct upload, persist metadata |
 | `GET` | `/file/presigned/download` | `filehash` | Issue GET URL; client downloads directly |
 
+### File Sharing
+
+| Method | Route | Params | Auth | Description |
+|--------|-------|--------|:----:|-------------|
+| `POST` | `/file/share` | `filehash`, `days` (1-30, default 7), `password` (optional code) | ✓ | Create share; returns `share_token` & `url` |
+| `GET` | `/file/share/list` | — | ✓ | My shares |
+| `POST` | `/file/share/revoke` | `share_token` | ✓ | Revoke share |
+| `GET` | `/share/:token` | `?pwd=` (optional) | × | Anonymous download (Range supported; 404 when expired/revoked, 403 on wrong code) |
+
 ### AI Search (auth required, AI enabled)
 
 | Method | Route | Params | Description |
