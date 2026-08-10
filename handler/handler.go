@@ -2,9 +2,11 @@ package handler
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"gofile/config"
 	"gofile/service"
+	"gofile/storage"
 	"io"
 	"log/slog"
 	"net/http"
@@ -70,11 +72,6 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	fMeta, err := h.fileSvc.Upload(c.Request.Context(), file, filename, 0, c.GetString("username"))
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "upload failed", "error", err, "filename", filename)
-		// 秒传成功的情况
-		if fMeta.FileSha1 != "" && strings.Contains(err.Error(), "save file meta") {
-			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": gin.H{"filehash": fMeta.FileSha1}})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件上传失败", "data": nil})
 		return
 	}
@@ -146,16 +143,23 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 		return
 	}
 
-	// 有 Range 头：解析范围
-	offset, length, ok := parseRangeHeader(rangeHeader, 0) // 0 表示先获取总大小
+	// 有 Range 头：解析范围（开放区间 bytes=a- 由 service 按文件大小补齐）
+	offset, length, ok := parseRangeHeader(rangeHeader, 0)
 	if !ok {
-		c.Header("Content-Range", "bytes */0")
+		if size, err := h.fileSvc.FileSize(c.Request.Context(), filehash, username); err == nil {
+			c.Header("Content-Range", fmt.Sprintf("bytes */%d", size))
+		}
 		c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "无效的 Range 范围", "data": nil})
 		return
 	}
 
-	reader, _, totalSize, err := h.fileSvc.DownloadRange(c.Request.Context(), filehash, username, offset, length)
+	reader, _, totalSize, actualLen, err := h.fileSvc.DownloadRange(c.Request.Context(), filehash, username, offset, length)
 	if err != nil {
+		if errors.Is(err, service.ErrRangeOutOfBounds) {
+			c.Header("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+			c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "Range 越界", "data": nil})
+			return
+		}
 		slog.ErrorContext(c.Request.Context(), "download range failed", "error", err, "filehash", filehash)
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return
@@ -166,8 +170,8 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	c.Header("Content-Disposition", buildContentDisposition(safeName))
 	c.Header("Content-Type", "application/octet-stream")
 	c.Header("Accept-Ranges", "bytes")
-	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, totalSize))
-	c.Header("Content-Length", fmt.Sprintf("%d", length))
+	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+actualLen-1, totalSize))
+	c.Header("Content-Length", fmt.Sprintf("%d", actualLen))
 
 	c.Status(http.StatusPartialContent) // 206
 
@@ -194,12 +198,15 @@ func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64
 	}
 
 	if parts[1] == "" {
-		// bytes=100-  → 从 100 到末尾
-		if totalSize == 0 {
-			return 0, 0, false // 需要先知道 totalSize
-		}
+		// bytes=100-  → 从 100 到末尾；length 未知时返回 -1，由 service 按文件大小补齐
 		offset = start
-		length = totalSize - start
+		length = -1
+		if totalSize > 0 {
+			length = totalSize - start
+		}
+		if length == 0 {
+			return 0, 0, false
+		}
 	} else {
 		end, err := strconv.ParseInt(parts[1], 10, 64)
 		if err != nil || end < start {
@@ -207,9 +214,14 @@ func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64
 		}
 		offset = start
 		length = end - start + 1
+		// 空区间或溢出（end-start 达到 MaxInt64 时 +1 变负）均非法
+		if length <= 0 {
+			return 0, 0, false
+		}
 	}
 
-	if length <= 0 {
+	// length == 0 表示空区间（非法）；-1 表示开放区间未知大小，放行由 service 补齐
+	if length == 0 {
 		return 0, 0, false
 	}
 	return offset, length, true
@@ -219,7 +231,7 @@ func buildContentDisposition(name string) string {
 	return `attachment; filename="` + name + `"; filename*=UTF-8''` + url.PathEscape(name)
 }
 
-// PreviewHandler 在线预览文件（图片/PDF/文本/视频等）
+// PreviewHandler 在线预览文件（图片/PDF/文本/视频等，支持 Range 拖动）
 func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
@@ -227,7 +239,58 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 		return
 	}
 
-	reader, fMeta, err := h.fileSvc.Download(c.Request.Context(), filehash, c.GetString("username"))
+	username := c.GetString("username")
+
+	// 获取文件元信息（用于文件名和 Content-Type）
+	fMeta, err := h.fileSvc.GetMeta(filehash, username)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		return
+	}
+
+	// 根据扩展名检测 Content-Type
+	ext := strings.ToLower(filepath.Ext(fMeta.FileName))
+	contentType := detectMimeType(ext)
+	safeName := sanitizeFilename(fMeta.FileName)
+
+	// Range 请求：206 区间响应（视频/音频拖动播放依赖）
+	if rangeHeader := c.GetHeader("Range"); rangeHeader != "" {
+		offset, length, ok := parseRangeHeader(rangeHeader, 0)
+		if !ok {
+			if size, err := h.fileSvc.FileSize(c.Request.Context(), filehash, username); err == nil {
+				c.Header("Content-Range", fmt.Sprintf("bytes */%d", size))
+			}
+			c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "无效的 Range 范围", "data": nil})
+			return
+		}
+
+		reader, _, totalSize, actualLen, err := h.fileSvc.DownloadRange(c.Request.Context(), filehash, username, offset, length)
+		if err != nil {
+			if errors.Is(err, service.ErrRangeOutOfBounds) {
+				c.Header("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+				c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "Range 越界", "data": nil})
+				return
+			}
+			slog.ErrorContext(c.Request.Context(), "preview range failed", "error", err, "filehash", filehash)
+			c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+			return
+		}
+		defer reader.Close()
+
+		c.Header("Content-Disposition", "inline; filename=\""+safeName+"\"")
+		c.Header("Content-Type", contentType)
+		c.Header("Accept-Ranges", "bytes")
+		c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+actualLen-1, totalSize))
+		c.Header("Content-Length", fmt.Sprintf("%d", actualLen))
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Status(http.StatusPartialContent) // 206
+
+		io.CopyBuffer(c.Writer, reader, make([]byte, 32*1024))
+		return
+	}
+
+	// 无 Range 头：返回完整文件
+	reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "preview failed", "error", err, "filehash", filehash)
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
@@ -235,30 +298,26 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	}
 	defer reader.Close()
 
-	// 根据扩展名检测 Content-Type
-	ext := strings.ToLower(filepath.Ext(fMeta.FileName))
-	contentType := detectMimeType(ext)
+	c.Header("Content-Disposition", "inline; filename=\""+safeName+"\"")
+	c.Header("Content-Type", contentType)
+	c.Header("Accept-Ranges", "bytes")
+	c.Header("X-Content-Type-Options", "nosniff")
+
+	// 扩展名无法识别时，读取文件头探测真实类型
 	if contentType == "application/octet-stream" {
-		// 尝试读取文件头检测
 		buf := make([]byte, 512)
 		n, _ := reader.Read(buf)
 		if n > 0 {
 			contentType = http.DetectContentType(buf[:n])
+			c.Header("Content-Type", contentType)
 		}
 		// 重新组合读取器
 		combinedReader := io.MultiReader(bytes.NewReader(buf[:n]), reader)
-		// 写文件内容到响应
 		io.CopyBuffer(c.Writer, combinedReader, make([]byte, 32*1024))
 		return
 	}
 
-	safeName := sanitizeFilename(fMeta.FileName)
-	c.Header("Content-Disposition", "inline; filename=\""+safeName+"\"")
-	c.Header("Content-Type", contentType)
-	c.Header("X-Content-Type-Options", "nosniff")
-
-	buf := make([]byte, 32*1024)
-	io.CopyBuffer(c.Writer, reader, buf)
+	io.CopyBuffer(c.Writer, reader, make([]byte, 32*1024))
 }
 
 // detectMimeType 根据文件扩展名返回 MIME 类型
@@ -549,6 +608,10 @@ func (h *FileHandler) PresignUploadHandler(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": gin.H{"filehash": fileHash}})
 			return
 		}
+		if errors.Is(err, storage.ErrPresignNotSupported) {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "预签名上传仅支持 MinIO 存储，当前为本地存储", "data": nil})
+			return
+		}
 		slog.ErrorContext(c.Request.Context(), "presign upload failed", "error", err, "filehash", fileHash)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "生成上传链接失败", "data": nil})
 		return
@@ -599,6 +662,10 @@ func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
 
 	downloadURL, err := h.fileSvc.PresignDownload(c.Request.Context(), fileHash, c.GetString("username"))
 	if err != nil {
+		if errors.Is(err, storage.ErrPresignNotSupported) {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "预签名下载仅支持 MinIO 存储，当前为本地存储", "data": nil})
+			return
+		}
 		slog.ErrorContext(c.Request.Context(), "presign download failed", "error", err, "filehash", fileHash)
 		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
 		return

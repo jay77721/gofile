@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"gofile/ai"
 	"gofile/cache"
@@ -22,6 +23,9 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrRangeOutOfBounds Range 请求越界（offset >= 文件大小），handler 据此返回 416
+var ErrRangeOutOfBounds = errors.New("range out of bounds")
 
 // FileService 文件业务逻辑
 type FileService struct {
@@ -243,6 +247,18 @@ func (s *FileService) GetMeta(filehash, username string) (model.FileMeta, error)
 	return s.fileRepo.GetByHash(filehash, username)
 }
 
+// FileSize 获取文件大小（含所有权校验），供 416 响应等场景使用
+func (s *FileService) FileSize(ctx context.Context, filehash, username string) (int64, error) {
+	if _, err := s.fileRepo.GetByHash(filehash, username); err != nil {
+		return 0, fmt.Errorf("file not found: %w", err)
+	}
+	size, err := s.store.FileSize(ctx, filehash)
+	if err != nil {
+		return 0, fmt.Errorf("get file size failed: %w", err)
+	}
+	return size, nil
+}
+
 // Download 获取文件读取流
 func (s *FileService) Download(ctx context.Context, filehash, username string) (io.ReadCloser, model.FileMeta, error) {
 	fMeta, err := s.fileRepo.GetByHash(filehash, username)
@@ -259,24 +275,33 @@ func (s *FileService) Download(ctx context.Context, filehash, username string) (
 }
 
 // DownloadRange 按字节区间下载文件（支持 HTTP Range）
-func (s *FileService) DownloadRange(ctx context.Context, filehash, username string, offset, length int64) (io.ReadCloser, model.FileMeta, int64, error) {
+// 返回裁剪后的实际 length（开放区间/越界请求按文件大小收敛），供 handler 构造响应头
+func (s *FileService) DownloadRange(ctx context.Context, filehash, username string, offset, length int64) (io.ReadCloser, model.FileMeta, int64, int64, error) {
 	fMeta, err := s.fileRepo.GetByHash(filehash, username)
 	if err != nil {
-		return nil, model.FileMeta{}, 0, fmt.Errorf("file not found: %w", err)
+		return nil, model.FileMeta{}, 0, 0, fmt.Errorf("file not found: %w", err)
 	}
 
 	// 获取文件总大小
 	totalSize, err := s.store.FileSize(ctx, fMeta.FileSha1)
 	if err != nil {
-		return nil, model.FileMeta{}, 0, fmt.Errorf("get file size failed: %w", err)
+		return nil, model.FileMeta{}, 0, 0, fmt.Errorf("get file size failed: %w", err)
+	}
+
+	// 开放区间（bytes=a-）时 length 为 -1，按文件总大小补齐；越界时裁剪到文件末尾
+	if offset < 0 || offset >= totalSize {
+		return nil, model.FileMeta{}, totalSize, 0, ErrRangeOutOfBounds
+	}
+	if length < 0 || offset+length > totalSize {
+		length = totalSize - offset
 	}
 
 	reader, err := s.store.GetRange(ctx, fMeta.FileSha1, offset, length)
 	if err != nil {
-		return nil, model.FileMeta{}, 0, fmt.Errorf("get range failed: %w", err)
+		return nil, model.FileMeta{}, 0, 0, fmt.Errorf("get range failed: %w", err)
 	}
 
-	return reader, fMeta, totalSize, nil
+	return reader, fMeta, totalSize, length, nil
 }
 
 // Rename 重命名文件（含所有权验证）

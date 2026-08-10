@@ -58,17 +58,23 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 	}
 
 	// 设置 cookie（1h 有效期，token 本身在 DB 中 24h 过期）
-	// Secure: 生产环境强制 HTTPS
+	// Secure: 生产环境强制 HTTPS;SameSite=Lax: 缓解 CSRF(跨站请求不携带 Cookie)
+	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie("token", token, 3600, "/", "", h.cfg.CookieSecure, true)
 	c.SetCookie("username", username, 3600, "/", "", h.cfg.CookieSecure, true)
 
 	slog.InfoContext(c.Request.Context(), "user logged in", "username", username)
 
+	// Location 协议与 Cookie Secure 保持一致（HTTPS 部署时避免跳回 http）
+	scheme := "http"
+	if h.cfg.CookieSecure {
+		scheme = "https"
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"msg":  "ok",
 		"data": gin.H{
-			"Location": "http://" + c.Request.Host + "/static/index.html",
+			"Location": scheme + "://" + c.Request.Host + "/static/index.html",
 			"Username": username,
 		},
 	})

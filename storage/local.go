@@ -21,7 +21,7 @@ func NewLocal(uploadDir string) *LocalStorage {
 	return &LocalStorage{uploadDir: uploadDir}
 }
 
-// Put 将文件写入本地磁盘
+// Put 将文件写入本地磁盘（原子写：先写临时文件，成功后 rename，避免中断留下半截文件）
 func (s *LocalStorage) Put(ctx context.Context, key string, reader io.Reader, size int64) error {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
 
@@ -31,14 +31,31 @@ func (s *LocalStorage) Put(ctx context.Context, key string, reader io.Reader, si
 		return fmt.Errorf("create dir failed: %w", err)
 	}
 
-	dst, err := os.Create(path)
+	// 写临时文件（同目录保证 rename 原子性）
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create file failed: %w", err)
+		return fmt.Errorf("create temp file failed: %w", err)
 	}
-	defer dst.Close()
+	tmpName := tmp.Name()
+	defer func() {
+		// 成功 rename 后 tmpName 已不存在，Remove 报错被忽略
+		tmp.Close()
+		os.Remove(tmpName)
+	}()
 
-	if _, err := io.Copy(dst, reader); err != nil {
+	if _, err := io.Copy(tmp, reader); err != nil {
 		return fmt.Errorf("write file failed: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync file failed: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file failed: %w", err)
+	}
+
+	// 原子替换：中断只会留下临时文件，不会产生"半截"目标文件
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename file failed: %w", err)
 	}
 
 	slog.Info("file stored locally", "key", key, "size", size)
@@ -63,9 +80,17 @@ func (s *LocalStorage) GetRange(ctx context.Context, key string, offset, length 
 		return nil, fmt.Errorf("open file failed: %w", err)
 	}
 	// SectionReader: 零拷贝区间读取，读取 [offset, offset+length) 范围
-	sr := io.NewSectionReader(file, offset, length)
-	return io.NopCloser(sr), nil
+	// 用自定义 ReadCloser 包装：NopCloser 不会关闭底层 fd，会导致文件句柄泄漏
+	return &sectionReadCloser{SectionReader: io.NewSectionReader(file, offset, length), f: file}, nil
 }
+
+// sectionReadCloser 组合 SectionReader 与底层文件，Close 时释放 fd
+type sectionReadCloser struct {
+	*io.SectionReader
+	f *os.File
+}
+
+func (s *sectionReadCloser) Close() error { return s.f.Close() }
 
 // FileSize 获取本地文件大小
 func (s *LocalStorage) FileSize(ctx context.Context, key string) (int64, error) {

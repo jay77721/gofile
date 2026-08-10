@@ -2,8 +2,10 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"gofile/config"
+	"gofile/model"
 	"gofile/repository"
 	"gofile/service"
 	"gofile/storage"
@@ -439,5 +441,104 @@ func TestUserInfoHandler_NoCookie(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected status 401, got %d", w.Code)
+	}
+}
+
+func TestParseRangeHeader(t *testing.T) {
+	cases := []struct {
+		name      string
+		header    string
+		totalSize int64
+		wantOK    bool
+		wantOff   int64
+		wantLen   int64
+	}{
+		{"closed range", "bytes=0-1023", 0, true, 0, 1024},
+		{"closed range mid", "bytes=100-199", 0, true, 100, 100},
+		{"open range with known size", "bytes=100-", 1000, true, 100, 900},
+		{"open range unknown size -> -1", "bytes=100-", 0, true, 100, -1},
+		{"open range beyond size", "bytes=900-", 900, false, 0, 0},
+		{"reversed range", "bytes=200-100", 0, false, 0, 0},
+		{"non-bytes unit", "items=0-10", 0, false, 0, 0},
+		{"empty spec", "bytes=", 0, false, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			off, length, ok := parseRangeHeader(tc.header, tc.totalSize)
+			if ok != tc.wantOK || off != tc.wantOff || length != tc.wantLen {
+				t.Errorf("parseRangeHeader(%q, %d) = (%d, %d, %v), want (%d, %d, %v)",
+					tc.header, tc.totalSize, off, length, ok, tc.wantOff, tc.wantLen, tc.wantOK)
+			}
+		})
+	}
+}
+
+// setupRangeTestHandler 准备一个包含 10 字节文件(alice 拥有)的 handler 测试环境
+func setupRangeTestHandler(t *testing.T) (*FileHandler, string) {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewLocal(dir)
+	cfg := &config.Config{UploadDir: dir, ChunkDir: dir}
+	fileRepo := repository.NewMockFileRepository()
+	fileSvc := service.NewFileService(fileRepo, store, cfg)
+	fh := NewFileHandler(fileSvc, cfg)
+
+	const hash = "abcdef0123456789abcdef0123456789abcdef01"
+	content := []byte("0123456789")
+	if err := fileRepo.Create(model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fileRepo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), hash, bytes.NewReader(content), int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	return fh, hash
+}
+
+func TestDownloadHandler_Range(t *testing.T) {
+	fh, hash := setupRangeTestHandler(t)
+	r := setupRouter()
+	// 模拟 AuthMiddleware 写入的 username
+	r.GET("/file/download", func(c *gin.Context) {
+		c.Set("username", "alice")
+		fh.DownloadHandler(c)
+	})
+
+	cases := []struct {
+		name        string
+		rangeHeader string
+		wantStatus  int
+		wantCR      string // Content-Range 期望值;为空则不校验
+		wantBody    string // 期望响应体;为空则不校验
+	}{
+		{"open range", "bytes=2-", http.StatusPartialContent, "bytes 2-9/10", "23456789"},
+		{"closed range", "bytes=1-3", http.StatusPartialContent, "bytes 1-3/10", "123"},
+		{"clamped closed range", "bytes=5-99", http.StatusPartialContent, "bytes 5-9/10", "56789"},
+		{"out of bounds", "bytes=10-", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
+		{"invalid range", "bytes=9-2", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/file/download?filehash="+hash, nil)
+			req.Header.Set("Range", tc.rangeHeader)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+			if tc.wantCR != "" {
+				if got := w.Header().Get("Content-Range"); got != tc.wantCR {
+					t.Errorf("Content-Range = %q, want %q", got, tc.wantCR)
+				}
+			}
+			if tc.wantBody != "" {
+				if got := w.Body.String(); got != tc.wantBody {
+					t.Errorf("body = %q, want %q", got, tc.wantBody)
+				}
+			}
+		})
 	}
 }
