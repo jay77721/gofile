@@ -429,6 +429,63 @@ func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功", "data": nil})
 }
 
+// TrashHandler 回收站文件列表（分页）
+func (h *FileHandler) TrashHandler(c *gin.Context) {
+	username := c.GetString("username")
+	page, _ := strconv.Atoi(c.Query("page"))
+	size, _ := strconv.Atoi(c.Query("size"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+
+	files, total, err := h.fileSvc.ListTrash(username, page, size)
+	if err != nil {
+		slog.ErrorContext(c.Request.Context(), "list trash failed", "error", err, "username", username)
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询回收站失败")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{"list": files, "total": total, "page": page, "size": size}})
+}
+
+// RestoreHandler 恢复回收站文件
+func (h *FileHandler) RestoreHandler(c *gin.Context) {
+	filehash := c.PostForm("filehash")
+	if filehash == "" || !isValidHash(filehash) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
+		return
+	}
+
+	if err := h.fileSvc.Restore(c.Request.Context(), filehash, c.GetString("username")); err != nil {
+		slog.ErrorContext(c.Request.Context(), "restore failed", "error", err, "filehash", filehash)
+		respondError(c, http.StatusNotFound, CodeNotFound, "回收站中不存在该文件")
+		return
+	}
+
+	slog.InfoContext(c.Request.Context(), "file restored", "filehash", filehash, "username", c.GetString("username"))
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "恢复成功", "data": nil})
+}
+
+// PurgeHandler 彻底删除回收站文件（不可恢复）
+func (h *FileHandler) PurgeHandler(c *gin.Context) {
+	filehash := c.PostForm("filehash")
+	if filehash == "" || !isValidHash(filehash) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
+		return
+	}
+
+	if err := h.fileSvc.Purge(c.Request.Context(), filehash, c.GetString("username")); err != nil {
+		slog.ErrorContext(c.Request.Context(), "purge failed", "error", err, "filehash", filehash)
+		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
+		return
+	}
+
+	slog.InfoContext(c.Request.Context(), "file purged", "filehash", filehash, "username", c.GetString("username"))
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已彻底删除", "data": nil})
+}
+
 // FileQueryHandler 返回用户文件列表（支持分页）
 func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 	username := c.GetString("username")

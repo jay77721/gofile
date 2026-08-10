@@ -106,3 +106,62 @@ func TestDownloadRange(t *testing.T) {
 		}
 	})
 }
+
+// TestTrashLifecycle 回收站全流程:删除 → 回收站可见 → 恢复 → 再次删除 → 彻底删除
+func TestTrashLifecycle(t *testing.T) {
+	const hash = "abcdef0123456789abcdef0123456789abcdef01"
+	content := "0123456789"
+	svc := newTestFileService(t, hash, content)
+	ctx := context.Background()
+
+	// 软删除
+	if err := svc.Delete(hash, "alice"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	// 删除后正常列表不可见
+	if files, _, err := svc.ListByUserPaged("alice", 1, 10); err != nil || len(files) != 0 {
+		t.Errorf("active list after delete = %d files (err=%v), want 0", len(files), err)
+	}
+	// 回收站可见
+	trash, total, err := svc.ListTrash("alice", 1, 10)
+	if err != nil || total != 1 || len(trash) != 1 {
+		t.Fatalf("ListTrash = %d/%d (err=%v), want 1/1", len(trash), total, err)
+	}
+	if trash[0].FileSha1 != hash {
+		t.Errorf("trash item = %s, want %s", trash[0].FileSha1, hash)
+	}
+
+	// 恢复
+	if err := svc.Restore(ctx, hash, "alice"); err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+	if files, _, _ := svc.ListByUserPaged("alice", 1, 10); len(files) != 1 {
+		t.Errorf("active list after restore = %d, want 1", len(files))
+	}
+	if _, total, _ := svc.ListTrash("alice", 1, 10); total != 0 {
+		t.Errorf("trash after restore = %d, want 0", total)
+	}
+
+	// 恢复后再次删除 → 彻底删除
+	if err := svc.Delete(hash, "alice"); err != nil {
+		t.Fatalf("second Delete failed: %v", err)
+	}
+	if err := svc.Purge(ctx, hash, "alice"); err != nil {
+		t.Fatalf("Purge failed: %v", err)
+	}
+	// 彻底删除后列表与回收站都为空
+	if files, _, _ := svc.ListByUserPaged("alice", 1, 10); len(files) != 0 {
+		t.Errorf("active list after purge = %d, want 0", len(files))
+	}
+	if _, total, _ := svc.ListTrash("alice", 1, 10); total != 0 {
+		t.Errorf("trash after purge = %d, want 0", total)
+	}
+	// 存储层已清理
+	if exists, _ := svc.store.Exists(ctx, hash); exists {
+		t.Errorf("storage object still exists after purge")
+	}
+	// 重复彻底删除应报错(已不存在)
+	if err := svc.Purge(ctx, hash, "alice"); err == nil {
+		t.Errorf("second Purge should fail, got nil")
+	}
+}

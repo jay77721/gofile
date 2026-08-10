@@ -290,7 +290,10 @@ All `/file/*` routes and `/user/info` require the session cookie set by `/user/s
 | `GET` | `/file/download` | `filehash` | Download; supports `Range` header (206) |
 | `GET` | `/file/preview` | `filehash` | Inline preview |
 | `POST` | `/file/update` | `op=0`, `filehash`, `filename` | Rename |
-| `POST` | `/file/delete` | `filehash` | Soft delete |
+| `POST` | `/file/delete` | `filehash` | Soft delete (moves to trash) |
+| `GET` | `/file/trash` | optional `page`, `size` | Trash listing |
+| `POST` | `/file/restore` | `filehash` | Restore from trash |
+| `POST` | `/file/purge` | `filehash` | Purge permanently (unrecoverable; cleans storage & index when unreferenced) |
 
 ### Chunked Upload (auth required)
 

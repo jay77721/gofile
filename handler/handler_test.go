@@ -10,9 +10,11 @@ import (
 	"gofile/service"
 	"gofile/storage"
 	"mime/multipart"
+	"net/url"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -540,5 +542,103 @@ func TestDownloadHandler_Range(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// setupTrashTestHandler 准备 alice 已软删除一个文件的环境
+func setupTrashTestHandler(t *testing.T) (*FileHandler, string) {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewLocal(dir)
+	cfg := &config.Config{UploadDir: dir, ChunkDir: dir}
+	fileRepo := repository.NewMockFileRepository()
+	fileSvc := service.NewFileService(fileRepo, store, cfg)
+	fh := NewFileHandler(fileSvc, cfg)
+
+	const hash = "abcdef0123456789abcdef0123456789abcdef01"
+	content := []byte("0123456789")
+	if err := fileRepo.Create(model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fileRepo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), hash, bytes.NewReader(content), int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	if err := fileSvc.Delete(hash, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	return fh, hash
+}
+
+func TestTrashHandlers(t *testing.T) {
+	fh, hash := setupTrashTestHandler(t)
+	r := setupRouter()
+	auth := func(h func(*gin.Context)) gin.HandlerFunc {
+		return func(c *gin.Context) { c.Set("username", "alice"); h(c) }
+	}
+	r.GET("/file/trash", auth(fh.TrashHandler))
+	r.POST("/file/restore", auth(fh.RestoreHandler))
+	r.POST("/file/purge", auth(fh.PurgeHandler))
+	r.POST("/file/delete", auth(fh.FileDeleteHandler))
+
+	post := func(path, filehash string) *httptest.ResponseRecorder {
+		form := url.Values{"filehash": {filehash}}
+		req := httptest.NewRequest("POST", path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	// 1. 回收站列表包含已删除文件
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/file/trash?page=1&size=20", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("trash status = %d, want 200", w.Code)
+	}
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			List  []map[string]any `json:"list"`
+			Total int64            `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != 0 || resp.Data.Total != 1 {
+		t.Fatalf("trash = code %d total %d, want 0/1", resp.Code, resp.Data.Total)
+	}
+
+	// 2. 恢复
+	if w := post("/file/restore", hash); w.Code != http.StatusOK {
+		t.Fatalf("restore status = %d, want 200", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/file/trash", nil))
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Data.Total != 0 {
+		t.Fatalf("trash after restore = %d, want 0", resp.Data.Total)
+	}
+
+	// 3. 恢复后删除 → 彻底删除
+	if w := post("/file/delete", hash); w.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", w.Code)
+	}
+	if w := post("/file/purge", hash); w.Code != http.StatusOK {
+		t.Fatalf("purge status = %d, want 200", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/file/trash", nil))
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Data.Total != 0 {
+		t.Fatalf("trash after purge = %d, want 0", resp.Data.Total)
+	}
+
+	// 4. 越权:bob 无法恢复 alice 的文件
+	if w := post("/file/restore", hash); w.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized restore status = %d, want 404", w.Code)
 	}
 }

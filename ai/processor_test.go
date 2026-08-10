@@ -153,6 +153,13 @@ func (m *mockFileRepoForProc) UpdateName(filehash, username, newFilename string)
 	return false, nil
 }
 func (m *mockFileRepoForProc) CountRefs(filehash string) (int64, error) { return 0, nil }
+func (m *mockFileRepoForProc) ListTrash(username string, page, size int) ([]model.FileMeta, int64, error) {
+	return nil, 0, nil
+}
+func (m *mockFileRepoForProc) Restore(filehash, username string) (bool, error) { return false, nil }
+func (m *mockFileRepoForProc) PurgeUserFile(filehash, username string) (bool, error) {
+	return false, nil
+}
 func (m *mockFileRepoForProc) ListOldest(before time.Time) ([]model.File, error) {
 	return nil, nil
 }

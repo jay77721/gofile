@@ -291,7 +291,10 @@ curl -b cookies.txt "http://localhost:8080/file/ai/duplicates?filehash=HASH&thre
 | `GET` | `/file/download` | `filehash` | 下载,支持 `Range` 头(206) |
 | `GET` | `/file/preview` | `filehash` | 在线预览(inline) |
 | `POST` | `/file/update` | `op=0`、`filehash`、`filename` | 重命名 |
-| `POST` | `/file/delete` | `filehash` | 软删除 |
+| `POST` | `/file/delete` | `filehash` | 软删除(进回收站) |
+| `GET` | `/file/trash` | 可选 `page`、`size` | 回收站列表 |
+| `POST` | `/file/restore` | `filehash` | 从回收站恢复 |
+| `POST` | `/file/purge` | `filehash` | 彻底删除(不可恢复;无引用时同步清理存储层与索引) |
 
 ### 分片上传(需认证)
 

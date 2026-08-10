@@ -174,6 +174,10 @@ func main() {
 		file.GET("/preview", fileHandler.PreviewHandler)
 		file.POST("/update", fileHandler.FileMetaUpdateHandler)
 		file.POST("/delete", fileHandler.FileDeleteHandler)
+		// 回收站
+		file.GET("/trash", fileHandler.TrashHandler)
+		file.POST("/restore", fileHandler.RestoreHandler)
+		file.POST("/purge", fileHandler.PurgeHandler)
 		file.POST("/upload/chunk", fileHandler.UploadChunkHandler)
 		file.GET("/upload/status", fileHandler.UploadStatusHandler)
 		file.POST("/upload/merge", fileHandler.MergeChunkHandler)

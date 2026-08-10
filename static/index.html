@@ -306,10 +306,16 @@
             </div>
             <!-- Files -->
             <div class="files-header" style="margin-top:32px">
-                <h3>我的文件</h3>
-                <span class="count">{{files.length}} 项</span>
+                <div style="display:flex;align-items:center;gap:14px">
+                    <h3 style="margin:0">我的文件</h3>
+                    <div class="auth-tabs" style="margin:0;padding:2px">
+                        <button :class="{active:mainTab==='files'}" @click="switchTab('files')">文件</button>
+                        <button :class="{active:mainTab==='trash'}" @click="switchTab('trash')">回收站</button>
+                    </div>
+                </div>
+                <span class="count">{{mainTab==='files'?files.length+' 项':trash.length+' 项'}}</span>
             </div>
-            <div class="file-grid">
+            <div class="file-grid" v-if="mainTab==='files'">
                 <div class="file-card" v-for="f in files" :key="f.filehash">
                     <div class="fc-icon">&#128196;</div>
                     <div class="fc-name" :title="f.filename">{{f.filename}}</div>
@@ -328,6 +334,25 @@
                     <div class="empty-icon">&#128451;</div>
                     <div class="empty-text">还没有文件</div>
                     <div class="empty-hint">拖拽文件到上方区域开始上传</div>
+                </div>
+            </div>
+            <div class="file-grid" v-else>
+                <div class="file-card" v-for="f in trash" :key="f.filehash">
+                    <div class="fc-icon">&#128465;</div>
+                    <div class="fc-name" :title="f.filename">{{f.filename}}</div>
+                    <div class="fc-meta">
+                        <span>{{fmtSize(f.size)}}</span>
+                        <span>{{fmtDate(f.upload_time)}}</span>
+                    </div>
+                    <div class="fc-actions">
+                        <button class="act-rn" @click="doRestore(f)">恢复</button>
+                        <button class="act-del" @click="openPurge(f)">彻底删除</button>
+                    </div>
+                </div>
+                <div class="empty-state" v-if="trash.length===0">
+                    <div class="empty-icon">&#128465;</div>
+                    <div class="empty-text">回收站是空的</div>
+                    <div class="empty-hint">删除的文件会在这里保留 7 天</div>
                 </div>
             </div>
         </div>
@@ -381,10 +406,21 @@
     <div class="modal-mask" :class="{on:deleteTarget}">
         <div class="modal" v-if="deleteTarget">
             <h4>删除文件</h4>
-            <p>确定要删除 <strong style="color:var(--text)">{{deleteTarget.filename}}</strong> 吗？此操作不可撤销。</p>
+            <p>确定要删除 <strong style="color:var(--text)">{{deleteTarget.filename}}</strong> 吗？可在回收站中恢复。</p>
             <div class="modal-ft">
                 <button class="btn btn-ghost btn-sm" @click="deleteTarget=null">取消</button>
                 <button class="btn btn-danger btn-sm" @click="doDelete">删除</button>
+            </div>
+        </div>
+    </div>
+    <!-- Purge Modal -->
+    <div class="modal-mask" :class="{on:purgeTarget}">
+        <div class="modal" v-if="purgeTarget">
+            <h4>彻底删除</h4>
+            <p>确定要彻底删除 <strong style="color:var(--text)">{{purgeTarget.filename}}</strong> 吗？此操作不可恢复。</p>
+            <div class="modal-ft">
+                <button class="btn btn-ghost btn-sm" @click="purgeTarget=null">取消</button>
+                <button class="btn btn-danger btn-sm" @click="doPurge">彻底删除</button>
             </div>
         </div>
     </div>
@@ -456,7 +492,7 @@ createApp({
             }catch(e){authMsg.value=e.message;authMsgType.value='error'}finally{authLoading.value=false}
         }
         function logout(){
-            username.value='';files.value=[];selectedFile.value=null;view.value='auth';
+            username.value='';files.value=[];trash.value=[];mainTab.value='files';selectedFile.value=null;view.value='auth';
         }
         async function loadUser(){
             try{const u=await api('/user/info');username.value=u.Username||u.username||''}catch(e){}
@@ -550,6 +586,22 @@ createApp({
             if(!deleteTarget.value)return;
             const fd=new FormData();fd.append('filehash',deleteTarget.value.filehash);
             try{await apiPost('/file/delete',fd);toast('已删除','ok');loadFiles()}catch(e){toast(e.message,'err')}finally{deleteTarget.value=null}
+        }
+        // Trash
+        const mainTab=ref('files'),trash=ref([]),purgeTarget=ref(null);
+        function switchTab(t){mainTab.value=t;if(t==='trash')loadTrash()}
+        async function loadTrash(){
+            try{const d=await api('/file/trash?page=1&size=100');trash.value=d&&d.list?d.list:[]}catch(e){toast(e.message,'err')}
+        }
+        async function doRestore(f){
+            const fd=new FormData();fd.append('filehash',f.filehash);
+            try{await apiPost('/file/restore',fd);toast('已恢复','ok');loadTrash();loadFiles()}catch(e){toast(e.message,'err')}
+        }
+        function openPurge(f){purgeTarget.value=f}
+        async function doPurge(){
+            if(!purgeTarget.value)return;
+            const fd=new FormData();fd.append('filehash',purgeTarget.value.filehash);
+            try{await apiPost('/file/purge',fd);toast('已彻底删除','ok');loadTrash();loadFiles()}catch(e){toast(e.message,'err')}finally{purgeTarget.value=null}
         }
         // Preview
         const previewFile=ref(null),previewKind=ref(''),previewURL=ref(''),previewText=ref(''),previewLoading=ref(false);

@@ -22,6 +22,12 @@ type FileRepository interface {
 	ListByUser(username string) ([]model.FileMeta, error)
 	// CountByUser 统计用户文件总数
 	CountByUser(username string) (int64, error)
+	// ListTrash 分页查询用户回收站文件（status=2）
+	ListTrash(username string, page, size int) ([]model.FileMeta, int64, error)
+	// Restore 恢复软删除文件（status 2→1）
+	Restore(filehash, username string) (bool, error)
+	// PurgeUserFile 彻底删除用户文件关联行
+	PurgeUserFile(filehash, username string) (bool, error)
 	// ListByUserPaged 分页查询用户文件（批量查询避免 N+1）
 	ListByUserPaged(username string, page, size int) ([]model.FileMeta, error)
 	// Delete 软删除用户文件（status=2）
@@ -191,6 +197,82 @@ func (r *mysqlFileRepo) Delete(filehash, username string) (bool, error) {
 	return res.RowsAffected > 0, nil
 }
 
+// ListTrash 分页查询回收站文件（status=2），批量查询避免 N+1
+func (r *mysqlFileRepo) ListTrash(username string, page, size int) ([]model.FileMeta, int64, error) {
+	var total int64
+	if err := r.db.Model(&model.UserFile{}).
+		Where("user_name = ? AND status = ?", username, model.UserFileStatusDeleted).
+		Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count trash failed: %w", err)
+	}
+	if total == 0 {
+		return []model.FileMeta{}, 0, nil
+	}
+
+	var ufs []model.UserFile
+	offset := (page - 1) * size
+	if err := r.db.Where("user_name = ? AND status = ?", username, model.UserFileStatusDeleted).
+		Order("create_at DESC").
+		Offset(offset).
+		Limit(size).
+		Find(&ufs).Error; err != nil {
+		return nil, 0, fmt.Errorf("list trash failed: %w", err)
+	}
+
+	hashes := make([]string, len(ufs))
+	for i, uf := range ufs {
+		hashes[i] = uf.FileSha1
+	}
+	var globalFiles []model.File
+	if err := r.db.Where("file_sha1 IN ?", hashes).Find(&globalFiles).Error; err != nil {
+		return nil, 0, fmt.Errorf("query global files failed: %w", err)
+	}
+	fileMap := make(map[string]model.File, len(globalFiles))
+	for i := range globalFiles {
+		fileMap[globalFiles[i].FileSha1] = globalFiles[i]
+	}
+
+	files := make([]model.FileMeta, 0, len(ufs))
+	for _, uf := range ufs {
+		f, ok := fileMap[uf.FileSha1]
+		if !ok {
+			slog.Warn("trash: file record missing", "filehash", uf.FileSha1)
+			continue
+		}
+		files = append(files, model.FileMeta{
+			FileSha1: uf.FileSha1,
+			FileName: uf.FileName,
+			FileSize: f.FileSize,
+			Username: uf.Username,
+			UploadAt: uf.CreateAt.Format("2006-01-02 15:04:05"),
+			Summary:  f.Summary,
+			Tags:     f.Tags,
+		})
+	}
+	return files, total, nil
+}
+
+// Restore 恢复软删除文件（status 2→1）
+func (r *mysqlFileRepo) Restore(filehash, username string) (bool, error) {
+	res := r.db.Model(&model.UserFile{}).
+		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusDeleted).
+		Update("status", model.UserFileStatusActive)
+	if res.Error != nil {
+		return false, fmt.Errorf("restore user file failed: %w", res.Error)
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// PurgeUserFile 彻底删除用户文件关联行（回收站场景，不触发 GC 兜底条件检查）
+func (r *mysqlFileRepo) PurgeUserFile(filehash, username string) (bool, error) {
+	res := r.db.Where("file_sha1 = ? AND user_name = ?", filehash, username).
+		Delete(&model.UserFile{})
+	if res.Error != nil {
+		return false, fmt.Errorf("purge user file failed: %w", res.Error)
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // UpdateName 更新用户文件名
 func (r *mysqlFileRepo) UpdateName(filehash, username, newFilename string) (bool, error) {
 	res := r.db.Model(&model.UserFile{}).
@@ -257,6 +339,7 @@ func (r *mysqlFileRepo) GetGlobalFile(filehash string) (model.File, error) {
 type mockFileRepo struct {
 	files    map[string]model.File        // key: filehash -> 全局文件
 	userFile map[string]map[string]string // key: username -> filehash -> filename
+	deleted  map[string]map[string]bool   // key: username -> filehash -> 已软删除
 }
 
 // NewMockFileRepository 创建 mock 文件仓库
@@ -264,6 +347,7 @@ func NewMockFileRepository() FileRepository {
 	return &mockFileRepo{
 		files:    make(map[string]model.File),
 		userFile: make(map[string]map[string]string),
+		deleted:  make(map[string]map[string]bool),
 	}
 }
 
@@ -288,6 +372,9 @@ func (m *mockFileRepo) GetByHash(filehash, username string) (model.FileMeta, err
 	if !ok || name == "" && !m.userHas(username, filehash) {
 		return model.FileMeta{}, fmt.Errorf("file not found")
 	}
+	if m.deleted[username][filehash] {
+		return model.FileMeta{}, fmt.Errorf("file not found") // 软删除后不可见
+	}
 	f, ok := m.files[filehash]
 	if !ok {
 		return model.FileMeta{}, fmt.Errorf("file not found")
@@ -309,6 +396,9 @@ func (m *mockFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 	var result []model.FileMeta
 	names := m.userFile[username]
 	for hash, name := range names {
+		if m.deleted[username][hash] {
+			continue
+		}
 		f, ok := m.files[hash]
 		if !ok {
 			continue
@@ -324,7 +414,13 @@ func (m *mockFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 }
 
 func (m *mockFileRepo) CountByUser(username string) (int64, error) {
-	return int64(len(m.userFile[username])), nil
+	n := 0
+	for hash := range m.userFile[username] {
+		if !m.deleted[username][hash] {
+			n++
+		}
+	}
+	return int64(n), nil
 }
 
 func (m *mockFileRepo) ListByUserPaged(username string, page, size int) ([]model.FileMeta, error) {
@@ -341,11 +437,59 @@ func (m *mockFileRepo) ListByUserPaged(username string, page, size int) ([]model
 }
 
 func (m *mockFileRepo) Delete(filehash, username string) (bool, error) {
-	if m.userHas(username, filehash) {
-		delete(m.userFile[username], filehash)
-		return true, nil
+	if !m.userHas(username, filehash) {
+		return false, nil
 	}
-	return false, nil
+	if m.deleted[username] == nil {
+		m.deleted[username] = make(map[string]bool)
+	}
+	m.deleted[username][filehash] = true
+	return true, nil
+}
+
+func (m *mockFileRepo) ListTrash(username string, page, size int) ([]model.FileMeta, int64, error) {
+	var trash []model.FileMeta
+	for hash := range m.deleted[username] {
+		f, ok := m.files[hash]
+		if !ok {
+			continue
+		}
+		trash = append(trash, model.FileMeta{
+			FileSha1: hash,
+			FileName: m.userFile[username][hash],
+			FileSize: f.FileSize,
+			Username: username,
+		})
+	}
+	total := int64(len(trash))
+	start := (page - 1) * size
+	if start >= len(trash) {
+		return []model.FileMeta{}, total, nil
+	}
+	end := start + size
+	if end > len(trash) {
+		end = len(trash)
+	}
+	return trash[start:end], total, nil
+}
+
+func (m *mockFileRepo) Restore(filehash, username string) (bool, error) {
+	if !m.deleted[username][filehash] {
+		return false, nil
+	}
+	delete(m.deleted[username], filehash)
+	return true, nil
+}
+
+func (m *mockFileRepo) PurgeUserFile(filehash, username string) (bool, error) {
+	if !m.userHas(username, filehash) {
+		return false, nil
+	}
+	delete(m.userFile[username], filehash)
+	if m.deleted[username] != nil {
+		delete(m.deleted[username], filehash)
+	}
+	return true, nil
 }
 
 func (m *mockFileRepo) UpdateName(filehash, username, newFilename string) (bool, error) {
