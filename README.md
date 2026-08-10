@@ -320,6 +320,8 @@ All `/file/*` routes and `/user/info` require the session cookie set by `/user/s
 | `POST` | `/file/share/revoke` | `share_token` | ✓ | Revoke share |
 | `GET` | `/share/:token` | `?pwd=` (optional) | × | Anonymous download (Range supported; 404 when expired/revoked, 403 on wrong code) |
 
+> Tip: use an 8+ character mixed-code password. The public route is IP-rate-limited (10 req/s) against brute force; heavy concurrent video streaming behind a shared egress IP may hit the limit.
+
 ### AI Search (auth required, AI enabled)
 
 | Method | Route | Params | Description |

@@ -321,6 +321,8 @@ curl -b cookies.txt "http://localhost:8080/file/ai/duplicates?filehash=HASH&thre
 | `POST` | `/file/share/revoke` | `share_token` | ✓ | 撤销分享 |
 | `GET` | `/share/:token` | `?pwd=`(可选) | × | 免登录下载(支持 Range,过期/撤销后 404,提取码错误 403) |
 
+> 提示:提取码建议使用 8 位以上混合字符;公开下载路由有 IP 限流(10 req/s)防暴力破解,多用户共享出口 IP 时视频拖动可能触发限流。
+
 ### AI 检索(需认证,需启用 AI)
 
 | 方法 | 路由 | 参数 | 说明 |
