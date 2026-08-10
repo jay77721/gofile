@@ -18,6 +18,7 @@ type AITask struct {
 	Status     int       `gorm:"column:status;default:0;index"`
 	RetryCount int       `gorm:"column:retry_count;default:0"`
 	ErrorMsg   string    `gorm:"column:error_msg;size:512;default:''"`
+	ExpiredAt  time.Time `gorm:"column:expired_at;index:idx_task_expired_at"`
 	CreateAt   time.Time `gorm:"column:create_at;autoCreateTime"`
 	UpdateAt   time.Time `gorm:"column:update_at;autoUpdateTime"`
 }

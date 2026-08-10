@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"math"
 	"strings"
 	"sync"
 )
@@ -91,6 +92,17 @@ func (m *MockIndexer) SearchHybrid(ctx context.Context, q, username string, vect
 	return scored[start:end], nil
 }
 
+func (m *MockIndexer) DeleteByFilehash(_ context.Context, filehash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, d := range m.docs {
+		if d.Filehash == filehash {
+			delete(m.docs, id)
+		}
+	}
+	return nil
+}
+
 func (m *MockIndexer) Similar(_ context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]Doc, error) {
 	m.mu.RLock()
 	var candidates []*Doc
@@ -143,16 +155,5 @@ func cosine(a, b []float32) float64 {
 	if na == 0 || nb == 0 {
 		return 0
 	}
-	return dot / (sqrt(na) * sqrt(nb))
-}
-
-func sqrt(x float64) float64 {
-	if x <= 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 20; i++ {
-		z = (z + x/z) / 2
-	}
-	return z
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }

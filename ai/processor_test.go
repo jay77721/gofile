@@ -94,6 +94,17 @@ func (m *mockAITaskRepo) ListRequeueable(maxRetry int) ([]model.AITask, error) {
 	return out, nil
 }
 
+func (m *mockAITaskRepo) CleanupExpired(before time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, t := range m.tasks {
+		if (t.Status == 2 || t.Status == 3) && t.ExpiredAt.Before(before) {
+			delete(m.tasks, k)
+		}
+	}
+	return nil
+}
+
 // --- 内存 mock：FileRepository（最小实现，只覆盖 processor 用到的方法） ---
 
 type mockFileRepoForProc struct {
@@ -125,8 +136,8 @@ func (m *mockFileRepoForProc) GetGlobalFile(filehash string) (model.File, error)
 }
 
 // 以下方法仅为满足 repository.FileRepository 接口，processor 不调用
-func (m *mockFileRepoForProc) Create(f model.File) error                     { return nil }
-func (m *mockFileRepoForProc) CreateUserFile(uf model.UserFile) error        { return nil }
+func (m *mockFileRepoForProc) Create(f model.File) error              { return nil }
+func (m *mockFileRepoForProc) CreateUserFile(uf model.UserFile) error { return nil }
 func (m *mockFileRepoForProc) GetByHash(filehash, username string) (model.FileMeta, error) {
 	return model.FileMeta{}, nil
 }
@@ -172,7 +183,7 @@ func (m mockStorage) FileSize(ctx context.Context, key string) (int64, error) {
 	return int64(len(m.content)), nil
 }
 func (m mockStorage) Exists(ctx context.Context, key string) (bool, error) { return true, nil }
-func (m mockStorage) Delete(ctx context.Context, key string) error        { return nil }
+func (m mockStorage) Delete(ctx context.Context, key string) error         { return nil }
 func (m mockStorage) PresignPut(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	return "", nil
 }

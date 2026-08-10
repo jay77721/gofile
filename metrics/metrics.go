@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -67,16 +68,14 @@ var (
 		[]string{"operation", "result"},
 	)
 
-	registered bool // 幂等注册守卫，防止重复 MustRegister panic
+	registerOnce sync.Once
 )
 
 // Register 将指标注册到默认注册表。幂等，可安全重复调用（测试 + main 多次调用）。
 func Register() {
-	if registered {
-		return
-	}
-	prometheus.MustRegister(httpRequestsTotal, httpRequestDuration, fileUploadBytes, aiTasksTotal, aiLLMDuration, aiIndexOps)
-	registered = true
+	registerOnce.Do(func() {
+		prometheus.MustRegister(httpRequestsTotal, httpRequestDuration, fileUploadBytes, aiTasksTotal, aiLLMDuration, aiIndexOps)
+	})
 }
 
 // RecordHTTPRequest 由 MetricsMiddleware 在请求结束时调用

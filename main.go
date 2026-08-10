@@ -83,16 +83,15 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	tokenRepo := repository.NewTokenRepository(db)
 
-	// 启动软删除文件垃圾回收（需要 fileRepo + store）
-	handler.StartSoftDeleteGC(fileRepo, store, 0)
+	var indexer ai.Indexer
 
 	// 初始化 AI 功能（可选，AI_ENABLED=false 时跳过，不影响主链路）
 	var aiProcessor *ai.Processor
 	var aiHandler *handler.AIHandler
 	if cfg.AIEnabled {
 		aiRepo := repository.NewAITaskRepository(db)
-		provider := ai.NewMockProvider(cfg.AIEmbedDim)
-		indexer := ai.NewTypesenseIndexer(cfg.TypesenseURL, cfg.TypesenseAPIKey, cfg.AIEmbedDim)
+		provider := ai.NewProvider(cfg)
+		indexer = ai.NewTypesenseIndexer(cfg.TypesenseURL, cfg.TypesenseAPIKey, cfg.AIEmbedDim)
 
 		// 幂等创建 Typesense collection（失败则降级为 MySQL LIKE 搜索，不阻断启动）
 		initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -104,6 +103,7 @@ func main() {
 		aiProcessor = ai.NewProcessor(provider, indexer, fileRepo, aiRepo, store, cfg)
 		aiProcessor.Start()
 		handler.StartAICompensation(aiProcessor)
+		handler.StartAITaskCleanup(aiRepo, 0)
 
 		aiSvc := service.NewAIService(indexer, provider, fileRepo)
 		aiHandler = handler.NewAIHandler(aiSvc)
@@ -111,7 +111,9 @@ func main() {
 		slog.Info("AI features enabled", "provider", cfg.AIProvider, "embedDim", cfg.AIEmbedDim, "workers", cfg.AIWorkers)
 	}
 
-	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).WithAI(aiProcessor)
+	handler.StartSoftDeleteGC(fileRepo, store, 0, indexer)
+
+	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).WithAI(aiProcessor).WithIndexer(indexer)
 	userSvc := service.NewUserService(userRepo, tokenRepo)
 	authSvc := service.NewAuthService(tokenRepo)
 

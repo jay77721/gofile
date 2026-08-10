@@ -13,9 +13,9 @@ import (
 
 // TypesenseIndexer Typesense 实现的检索引擎
 type TypesenseIndexer struct {
-	client    *typesense.Client
+	client     *typesense.Client
 	collection string
-	dim       int
+	dim        int
 }
 
 // NewTypesenseIndexer 创建 Typesense 检索引擎
@@ -110,7 +110,7 @@ func (t *TypesenseIndexer) SearchHybrid(ctx context.Context, q, username string,
 
 	req := &api.SearchCollectionParams{
 		Q:           ptrString(q),
-		QueryBy:     ptrString("filename,summary"),
+		QueryBy:     ptrString("filename,summary,tags"),
 		FilterBy:    &filterBy,
 		VectorQuery: &vectorQuery,
 		Page:        ptrInt(page),
@@ -213,11 +213,54 @@ func hitsToDocs(hits []api.SearchResultHit) []Doc {
 				}
 			}
 		}
+		// Score: TextMatch > (1-VectorDistance)
+		if hits[i].TextMatch != nil {
+			doc.Score = float64(*hits[i].TextMatch)
+		} else if hits[i].VectorDistance != nil {
+			doc.Score = 1.0 - float64(*hits[i].VectorDistance)
+		}
 		out = append(out, doc)
 	}
 	return out
 }
 
+// DeleteByFilehash 删除指定 filehash 的所有用户文档（GC 用）
+func (t *TypesenseIndexer) DeleteByFilehash(ctx context.Context, filehash string) error {
+	filterBy := fmt.Sprintf("filehash:=%s", filehash)
+	page := 1
+	for {
+		req := &api.SearchCollectionParams{
+			Q:        ptrString("*"),
+			QueryBy:  ptrString("filename"),
+			FilterBy: &filterBy,
+			Page:     ptrInt(page),
+			PerPage:  ptrInt(250),
+		}
+		res, err := t.client.Collection(t.collection).Documents().Search(ctx, req)
+		if err != nil {
+			return fmt.Errorf("typesense search for delete failed: %w", err)
+		}
+		if res.Hits == nil || len(*res.Hits) == 0 {
+			return nil
+		}
+		for _, hit := range *res.Hits {
+			if hit.Document == nil {
+				continue
+			}
+			if id, ok := (*hit.Document)["id"].(string); ok {
+				if _, err := t.client.Collection(t.collection).Document(id).Delete(ctx); err != nil {
+					return fmt.Errorf("typesense delete doc %s failed: %w", id, err)
+				}
+			}
+		}
+		// 翻页直到取完所有命中：共享该文件的用户数可能超过单页上限（250），
+		// 否则会留下孤儿文档，仍可被语义搜索命中
+		if len(*res.Hits) < 250 {
+			return nil
+		}
+		page++
+	}
+}
 func ptrInt(n int) *int {
 	return &n
 }

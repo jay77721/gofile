@@ -1,6 +1,18 @@
 -- gofile 数据库初始化 Schema
 -- 使用方法: mysql -u root -p gofile < migrations/000001_init_schema.up.sql
 
+CREATE TABLE IF NOT EXISTS tbl_user_file (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  user_name varchar(64) NOT NULL,
+  file_sha1 char(40) NOT NULL,
+  file_name varchar(256) NOT NULL DEFAULT '',
+  status tinyint(4) NOT NULL DEFAULT 1 COMMENT '状态: 1-拥有(正常), 2-已删除',
+  create_at datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_file (user_name, file_sha1),
+  INDEX idx_user_file_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户文件拥有关系表';
+
 CREATE TABLE IF NOT EXISTS tbl_file (
   file_sha1 char(40) NOT NULL PRIMARY KEY COMMENT '文件 SHA1 哈希',
   user_name varchar(64) NOT NULL DEFAULT '' COMMENT '文件所有者',
@@ -41,9 +53,11 @@ CREATE TABLE IF NOT EXISTS tbl_ai_task (
   status tinyint(4) NOT NULL DEFAULT 0,
   retry_count INT NOT NULL DEFAULT 0,
   error_msg varchar(512) DEFAULT '',
+  expired_at datetime DEFAULT (CURRENT_TIMESTAMP + INTERVAL 7 DAY) COMMENT '任务过期时间（7天后可清理）',
   create_at datetime DEFAULT CURRENT_TIMESTAMP,
   update_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_sha1_user (file_sha1, user_name),
-  INDEX idx_status (status)
+  INDEX idx_status (status),
+  INDEX idx_task_expired_at (expired_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 异步分析任务表';

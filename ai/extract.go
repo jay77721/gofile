@@ -136,25 +136,43 @@ func extractOffice(buf []byte, ext string) string {
 	if err != nil {
 		return ""
 	}
-	var target string
 	switch ext {
 	case ".docx":
-		target = "word/document.xml"
+		return extractDocx(zr)
 	case ".xlsx":
-		target = "xl/sharedStrings.xml"
+		target := "xl/sharedStrings.xml"
+		for _, f := range zr.File {
+			if f.Name == target {
+				rc, err := f.Open()
+				if err != nil {
+					continue
+				}
+				b, _ := io.ReadAll(rc)
+				rc.Close()
+				return stripXML(string(b))
+			}
+		}
 	case ".pptx":
-		// pptx 多 slide，逐个读
 		return extractPPTXSlides(zr)
 	}
+	return ""
+}
+
+// extractDocx 从 docx 提取文本（按段落组织，保留结构）
+func extractDocx(zr *zip.Reader) string {
 	for _, f := range zr.File {
-		if f.Name == target {
+		if f.Name == "word/document.xml" {
 			rc, err := f.Open()
 			if err != nil {
 				continue
 			}
 			b, _ := io.ReadAll(rc)
 			rc.Close()
-			return stripXML(string(b))
+			// 先将段落分隔符转为换行，再剥离标签：
+			// 若先 stripXML，"</w:p>" 已被剥掉，ReplaceAll 永远匹配不到，段落结构丢失
+			text := strings.ReplaceAll(string(b), "</w:p>", "\n")
+			text = stripXML(text)
+			return text
 		}
 	}
 	return ""
@@ -201,23 +219,74 @@ func extractArchiveList(buf []byte, ext string) string {
 	return sb.String()
 }
 
-// stripXML 极简 XML 标签剥离（仅取文本节点，够用即可）
+// stripXML 剥离 XML 标签，保留文本内容
+// 处理：标签剥离、CDATA 段、常见 XML 实体解码
 func stripXML(s string) string {
 	var sb strings.Builder
 	inTag := false
-	for _, r := range s {
+	inCDATA := false
+	i := 0
+	runes := []rune(s)
+	for i < len(runes) {
+		r := runes[i]
 		switch {
+		case inCDATA:
+			if i+2 < len(runes) && runes[i] == ']' && runes[i+1] == ']' && runes[i+2] == '>' {
+				inCDATA = false
+				i += 3
+				continue
+			}
+			sb.WriteRune(r)
+			i++
+		case i+8 < len(runes) && string(runes[i:i+9]) == "<![CDATA[":
+			inCDATA = true
+			i += 9
 		case r == '<':
 			inTag = true
+			i++
 		case r == '>':
 			inTag = false
-		default:
-			if !inTag {
-				sb.WriteRune(r)
+			i++
+		case !inTag:
+			// 解码常见 XML 实体
+			if r == '&' && i+3 < len(runes) {
+				entity := string(runes[i:min(i+6, len(runes))])
+				switch {
+				case strings.HasPrefix(entity, "&amp;"):
+					sb.WriteByte('&')
+					i += 5
+				case strings.HasPrefix(entity, "&lt;"):
+					sb.WriteByte('<')
+					i += 4
+				case strings.HasPrefix(entity, "&gt;"):
+					sb.WriteByte('>')
+					i += 4
+				case strings.HasPrefix(entity, "&quot;"):
+					sb.WriteByte('"')
+					i += 6
+				case strings.HasPrefix(entity, "&apos;"):
+					sb.WriteByte('\'')
+					i += 6
+				default:
+					sb.WriteRune(r)
+					i++
+				}
+				continue
 			}
+			sb.WriteRune(r)
+			i++
+		default:
+			i++
 		}
 	}
 	return sb.String()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // sampleText 对解出的纯文本做采样（首尾 + 结构锚点），控制送给 LLM 的长度

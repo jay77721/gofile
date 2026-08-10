@@ -30,6 +30,7 @@ type FileService struct {
 	cfg      *config.Config
 	cache    *cache.Client // 可选，Redis 不可用时为 nil
 	ai       *ai.Processor // 可选，AI 功能关闭时为 nil
+	indexer  ai.Indexer    // 可选，检索引擎（用于删除时清理索引）
 }
 
 // NewFileService 创建文件服务（cache 为 nil 时回退到原有逻辑）
@@ -47,10 +48,16 @@ func (s *FileService) WithAI(p *ai.Processor) *FileService {
 	return s
 }
 
+// WithIndexer 注入检索引擎（删除时清理索引用，可选）
+func (s *FileService) WithIndexer(idx ai.Indexer) *FileService {
+	s.indexer = idx
+	return s
+}
+
 // enqueue 触发 AI 异步分析（nil 安全，不阻断上传主链路）
 func (s *FileService) enqueue(ctx context.Context, filehash, filename, username string) {
 	if s.ai != nil {
-		s.ai.Enqueue(ctx, filehash, filename, username)
+		s.ai.Enqueue(context.WithoutCancel(ctx), filehash, filename, username)
 	}
 }
 
@@ -82,7 +89,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 			// Redis 说见过，再确认存储层（防止误判）
 			exists, _ := s.store.Exists(ctx, fileSha1)
 			if exists {
-				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
+				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive})
 				s.enqueue(ctx, fileSha1, filename, username)
 				slog.InfoContext(ctx, "fast upload (dedup, cache hit)", "filehash", fileSha1, "username", username)
 				return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
@@ -97,7 +104,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	} else if exists {
 		// 秒传成功，记入 Redis 缓存供后续快速判断
 		s.cacheMark(ctx, fileSha1)
-		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1})
+		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive})
 		s.enqueue(ctx, fileSha1, filename, username)
 		slog.InfoContext(ctx, "fast upload (dedup)", "filehash", fileSha1, "username", username)
 		return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
@@ -123,7 +130,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	}
 
 	// 建立用户拥有关系
-	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: 1}); err != nil {
+	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive}); err != nil {
 		slog.WarnContext(ctx, "save user file relation failed", "error", err, "filehash", fileSha1)
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}
@@ -156,14 +163,14 @@ func (s *FileService) PresignUpload(ctx context.Context, fileHash, username stri
 	if s.cache != nil {
 		if seen, _ := s.cache.HashExists(ctx, fileHash); seen {
 			if exists, _ := s.store.Exists(ctx, fileHash); exists {
-				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: 1})
+				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: model.UserFileStatusActive})
 				return "", fmt.Errorf("file already exists")
 			}
 		}
 	}
 	// 传统秒传检测
 	if exists, _ := s.store.Exists(ctx, fileHash); exists {
-		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: 1})
+		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: model.UserFileStatusActive})
 		s.cacheMark(ctx, fileHash)
 		return "", fmt.Errorf("file already exists")
 	}
@@ -193,7 +200,7 @@ func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, use
 	}
 
 	// 建立用户拥有关系
-	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: 1}); err != nil {
+	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); err != nil {
 		return fmt.Errorf("save user file relation failed: %w", err)
 	}
 
@@ -284,7 +291,7 @@ func (s *FileService) Rename(filehash, username, newName string) error {
 	return err
 }
 
-// Delete 软删除用户文件（含所有权验证）
+// Delete 软删除用户文件（含所有权验证 + 索引清理）
 func (s *FileService) Delete(filehash, username string) error {
 	// 验证文件所有权
 	_, err := s.fileRepo.GetByHash(filehash, username)
@@ -293,7 +300,20 @@ func (s *FileService) Delete(filehash, username string) error {
 	}
 
 	_, err = s.fileRepo.Delete(filehash, username)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 无活跃引用时清理 Typesense 索引
+	if s.indexer != nil {
+		refs, _ := s.fileRepo.CountRefs(filehash)
+		if refs == 0 {
+			if err := s.indexer.Delete(context.Background(), username, filehash); err != nil {
+				slog.Warn("delete: clean typesense index failed", "error", err, "filehash", filehash)
+			}
+		}
+	}
+	return nil
 }
 
 // ListByUser 获取用户的所有文件
@@ -398,7 +418,7 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 	}
 
 	// 建立用户拥有关系
-	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: 1}); err != nil {
+	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); err != nil {
 		slog.WarnContext(ctx, "save user file relation failed", "error", err, "filehash", fileHash)
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}

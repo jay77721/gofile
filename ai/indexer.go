@@ -13,6 +13,7 @@ type Doc struct {
 	Size       int64
 	CreatedAt  int64
 	ContentVec []float32
+	Score      float64
 }
 
 // Indexer 检索引擎抽象（Typesense 实现 + 内存 mock 实现）
@@ -30,4 +31,6 @@ type Indexer interface {
 	SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]Doc, error)
 	// Similar 相似文件推荐（向量 KNN，排除自身）
 	Similar(ctx context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]Doc, error)
+	// DeleteByFilehash 按 filehash 删除所有用户的文档（GC 用）
+	DeleteByFilehash(ctx context.Context, filehash string) error
 }

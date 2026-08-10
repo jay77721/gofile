@@ -97,14 +97,14 @@ func (p *Processor) Enqueue(ctx context.Context, filehash, filename, username st
 }
 
 // RequeueFailed 补偿：扫 status=failed && retry_count<maxRetry 的任务重新入队
-func (p *Processor) RequeueFailed(ctx context.Context) {
+func (p *Processor) RequeueFailed(ctx context.Context) int {
 	if p == nil || p.aiRepo == nil {
-		return
+		return 0
 	}
 	tasks, err := p.aiRepo.ListRequeueable(maxRetry)
 	if err != nil {
 		slog.WarnContext(ctx, "list requeueable ai tasks failed", "error", err)
-		return
+		return 0
 	}
 	for _, t := range tasks {
 		p.Enqueue(ctx, t.FileSha1, "", t.Username)
@@ -112,6 +112,7 @@ func (p *Processor) RequeueFailed(ctx context.Context) {
 	if len(tasks) > 0 {
 		slog.InfoContext(ctx, "requeued failed ai tasks", "count", len(tasks))
 	}
+	return len(tasks)
 }
 
 func (p *Processor) worker() {
@@ -127,67 +128,82 @@ func (p *Processor) process(item taskItem) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	filehash, username, filename := item.Filehash, item.Username, item.Filename
+	filehash, username := item.Filehash, item.Username
 
-	// 1. 幂等：已 done 直接跳过
+	if p.isAlreadyDone(ctx, filehash, username) {
+		return
+	}
+	p.registerTask(ctx, filehash, username)
+
+	summary, tags, filename, err := p.analyze(ctx, item)
+	if err != nil {
+		p.fail(ctx, filehash, username, err.Error())
+		return
+	}
+
+	if err := p.indexDocument(ctx, filehash, username, filename, summary, tags); err != nil {
+		p.fail(ctx, filehash, username, err.Error())
+		return
+	}
+
+	p.complete(ctx, filehash, username, summary)
+}
+
+// isAlreadyDone 检查任务是否已完成（幂等跳过）
+func (p *Processor) isAlreadyDone(ctx context.Context, filehash, username string) bool {
 	existing, err := p.aiRepo.GetTask(filehash, username)
 	if err == nil && existing != nil && existing.Status == 2 {
 		slog.DebugContext(ctx, "ai task already done, skip", "filehash", filehash, "username", username)
-		return
+		return true
 	}
+	return false
+}
 
-	// 2. 创建任务（幂等：已存在则忽略）
-	if createErr := p.aiRepo.CreateTask(&model.AITask{FileSha1: filehash, Username: username}); createErr != nil {
-		slog.WarnContext(ctx, "create ai task failed", "error", createErr, "filehash", filehash)
+// registerTask 创建并标记任务为处理中
+func (p *Processor) registerTask(ctx context.Context, filehash, username string) {
+	if err := p.aiRepo.CreateTask(&model.AITask{FileSha1: filehash, Username: username}); err != nil {
+		slog.WarnContext(ctx, "create ai task failed", "error", err, "filehash", filehash)
 	}
 	_ = p.aiRepo.MarkProcessing(filehash, username)
+}
 
-	// 3. 读全局 summary（秒传命中则跳过 LLM）
+// analyze 执行文本提取与 LLM 分析（秒传命中时跳过 LLM）
+func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string, tags []string, filename string, err error) {
+	filename = item.Filename
+	filehash, username := item.Filehash, item.Username
+
+	// 秒传检测：全局 summary 已存在则零成本复用
 	global, gErr := p.fileRepo.GetGlobalFile(filehash)
-	skipLLM := gErr == nil && global.Summary != ""
-
-	var summary, tagsStr string
-	var tags []string
-
-	if skipLLM {
-		// 秒传命中：复用全局 summary/tags，零成本
-		summary = global.Summary
-		tagsStr = global.Tags
-		tags = splitTags(tagsStr)
+	if gErr == nil && global.Summary != "" {
+		slog.InfoContext(ctx, "ai task: fast-dedup, skip LLM", "filehash", filehash, "username", username)
 		if filename == "" {
 			filename = global.FileSha1
 		}
-		slog.InfoContext(ctx, "ai task: fast-dedup, skip LLM", "filehash", filehash, "username", username)
-	} else {
-		// 4. 完整分析管线
-		text, extErr := p.extractText(ctx, filehash, filename)
-		if extErr != nil {
-			p.fail(ctx, filehash, username, fmt.Sprintf("extract failed: %v", extErr))
-			return
-		}
-		analysis, aErr := p.provider.Analyze(ctx, filename, text)
-		if aErr != nil {
-			p.fail(ctx, filehash, username, fmt.Sprintf("analyze failed: %v", aErr))
-			return
-		}
-		summary = analysis.Summary
-		tags = analysis.Tags
-		tagsStr = joinTags(tags)
-
-		// 写全局 summary/tags（多用户秒传共享）
-		if sErr := p.fileRepo.SaveAnalysis(filehash, summary, tagsStr); sErr != nil {
-			p.fail(ctx, filehash, username, fmt.Sprintf("save analysis failed: %v", sErr))
-			return
-		}
+		return global.Summary, splitTags(global.Tags), filename, nil
 	}
 
-	// 5. 构建向量 + 写 Typesense
-	vector, vErr := p.provider.Embed(ctx, filename+" "+summary+" "+tagsStr)
-	if vErr != nil {
-		p.fail(ctx, filehash, username, fmt.Sprintf("embed failed: %v", vErr))
-		return
+	// 完整分析管线：提取文本 → LLM 分析 → 写全局 summary
+	text, err := p.extractText(ctx, filehash, filename)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("extract failed: %w", err)
 	}
+	analysis, err := p.provider.Analyze(ctx, filename, text)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("analyze failed: %w", err)
+	}
+	tagsStr := joinTags(analysis.Tags)
+	if sErr := p.fileRepo.SaveAnalysis(filehash, analysis.Summary, tagsStr); sErr != nil {
+		return "", nil, "", fmt.Errorf("save analysis failed: %w", sErr)
+	}
+	return analysis.Summary, analysis.Tags, filename, nil
+}
 
+// indexDocument 构建向量并写入检索引擎
+func (p *Processor) indexDocument(ctx context.Context, filehash, username, filename, summary string, tags []string) error {
+	vector, err := p.provider.Embed(ctx, filename+" "+summary+" "+joinTags(tags))
+	if err != nil {
+		return fmt.Errorf("embed failed: %w", err)
+	}
 	doc := &Doc{
 		ID:         username + ":" + filehash,
 		Username:   username,
@@ -198,14 +214,16 @@ func (p *Processor) process(item taskItem) {
 		CreatedAt:  time.Now().UnixMilli(),
 		ContentVec: vector,
 	}
-	if uErr := p.indexer.Upsert(ctx, doc); uErr != nil {
-		p.fail(ctx, filehash, username, fmt.Sprintf("index upsert failed: %v", uErr))
-		return
+	if err := p.indexer.Upsert(ctx, doc); err != nil {
+		return fmt.Errorf("index upsert failed: %w", err)
 	}
+	return nil
+}
 
-	// 6. 置 done
-	if dErr := p.aiRepo.MarkDone(filehash, username); dErr != nil {
-		slog.WarnContext(ctx, "mark ai task done failed", "error", dErr, "filehash", filehash)
+// complete 标记任务完成并记录指标
+func (p *Processor) complete(ctx context.Context, filehash, username, summary string) {
+	if err := p.aiRepo.MarkDone(filehash, username); err != nil {
+		slog.WarnContext(ctx, "mark ai task done failed", "error", err, "filehash", filehash)
 	}
 	metrics.RecordAITask("done")
 	slog.InfoContext(ctx, "ai task done", "filehash", filehash, "username", username, "summaryLen", len(summary))

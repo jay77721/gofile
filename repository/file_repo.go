@@ -22,7 +22,7 @@ type FileRepository interface {
 	ListByUser(username string) ([]model.FileMeta, error)
 	// CountByUser 统计用户文件总数
 	CountByUser(username string) (int64, error)
-	// ListByUserPaged 分页查询用户文件
+	// ListByUserPaged 分页查询用户文件（批量查询避免 N+1）
 	ListByUserPaged(username string, page, size int) ([]model.FileMeta, error)
 	// Delete 软删除用户文件（status=2）
 	Delete(filehash, username string) (bool, error)
@@ -94,7 +94,7 @@ func (r *mysqlFileRepo) GetByHash(filehash, username string) (model.FileMeta, er
 // ListByUser 查询用户的所有文件
 func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 	var ufs []model.UserFile
-	if err := r.db.Where("user_name = ? AND status = 1", username).
+	if err := r.db.Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
 		Order("create_at DESC").
 		Find(&ufs).Error; err != nil {
 		return nil, fmt.Errorf("query user files failed: %w", err)
@@ -124,7 +124,7 @@ func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 func (r *mysqlFileRepo) CountByUser(username string) (int64, error) {
 	var count int64
 	err := r.db.Model(&model.UserFile{}).
-		Where("user_name = ? AND status = 1", username).
+		Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
 		Count(&count).Error
 	if err != nil {
 		return 0, fmt.Errorf("count user files failed: %w", err)
@@ -132,22 +132,38 @@ func (r *mysqlFileRepo) CountByUser(username string) (int64, error) {
 	return count, nil
 }
 
-// ListByUserPaged 分页查询用户文件
+// ListByUserPaged 分页查询用户文件（批量查询避免 N+1）
 func (r *mysqlFileRepo) ListByUserPaged(username string, page, size int) ([]model.FileMeta, error) {
 	var ufs []model.UserFile
 	offset := (page - 1) * size
-	if err := r.db.Where("user_name = ? AND status = 1", username).
+	if err := r.db.Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
 		Order("create_at DESC").
 		Offset(offset).
 		Limit(size).
 		Find(&ufs).Error; err != nil {
 		return nil, fmt.Errorf("paged query user files failed: %w", err)
 	}
+	if len(ufs) == 0 {
+		return []model.FileMeta{}, nil
+	}
+
+	hashes := make([]string, len(ufs))
+	for i, uf := range ufs {
+		hashes[i] = uf.FileSha1
+	}
+	var globalFiles []model.File
+	if err := r.db.Where("file_sha1 IN ?", hashes).Find(&globalFiles).Error; err != nil {
+		return nil, fmt.Errorf("query global files failed: %w", err)
+	}
+	fileMap := make(map[string]model.File, len(globalFiles))
+	for i := range globalFiles {
+		fileMap[globalFiles[i].FileSha1] = globalFiles[i]
+	}
 
 	files := make([]model.FileMeta, 0, len(ufs))
 	for _, uf := range ufs {
-		var f model.File
-		if err := r.db.Where("file_sha1 = ?", uf.FileSha1).First(&f).Error; err != nil {
+		f, ok := fileMap[uf.FileSha1]
+		if !ok {
 			slog.Warn("file record missing", "filehash", uf.FileSha1)
 			continue
 		}
@@ -164,11 +180,11 @@ func (r *mysqlFileRepo) ListByUserPaged(username string, page, size int) ([]mode
 	return files, nil
 }
 
-// Delete 软删除用户文件（status=2），仅删除该用户的所有权
+// Delete 软删除用户文件（status=UserFileStatusDeleted），仅删除该用户的所有权
 func (r *mysqlFileRepo) Delete(filehash, username string) (bool, error) {
 	res := r.db.Model(&model.UserFile{}).
-		Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
-		Update("status", 2)
+		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusActive).
+		Update("status", model.UserFileStatusDeleted)
 	if res.Error != nil {
 		return false, fmt.Errorf("delete user file failed: %w", res.Error)
 	}
@@ -178,7 +194,7 @@ func (r *mysqlFileRepo) Delete(filehash, username string) (bool, error) {
 // UpdateName 更新用户文件名
 func (r *mysqlFileRepo) UpdateName(filehash, username, newFilename string) (bool, error) {
 	res := r.db.Model(&model.UserFile{}).
-		Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
+		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusActive).
 		Update("file_name", newFilename)
 	if res.Error != nil {
 		return false, fmt.Errorf("update file name failed: %w", res.Error)
@@ -190,7 +206,7 @@ func (r *mysqlFileRepo) UpdateName(filehash, username, newFilename string) (bool
 func (r *mysqlFileRepo) CountRefs(filehash string) (int64, error) {
 	var count int64
 	err := r.db.Model(&model.UserFile{}).
-		Where("file_sha1 = ? AND status = 1", filehash).
+		Where("file_sha1 = ? AND status = ?", filehash, model.UserFileStatusActive).
 		Count(&count).Error
 	if err != nil {
 		return 0, fmt.Errorf("count refs failed: %w", err)
@@ -239,8 +255,8 @@ func (r *mysqlFileRepo) GetGlobalFile(filehash string) (model.File, error) {
 
 // mockFileRepo 内存 mock 文件仓库
 type mockFileRepo struct {
-	files    map[string]model.File         // key: filehash -> 全局文件
-	userFile map[string]map[string]string  // key: username -> filehash -> filename
+	files    map[string]model.File        // key: filehash -> 全局文件
+	userFile map[string]map[string]string // key: username -> filehash -> filename
 }
 
 // NewMockFileRepository 创建 mock 文件仓库

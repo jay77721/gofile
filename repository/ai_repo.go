@@ -3,6 +3,7 @@ package repository
 import (
 	"fmt"
 	"gofile/model"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -22,6 +23,8 @@ type AITaskRepository interface {
 	MarkFailed(filehash, username, errMsg string) error
 	// ListRequeueable 列出可重新入队的失败任务（retry_count < max）
 	ListRequeueable(maxRetry int) ([]model.AITask, error)
+	// CleanupExpired 删除过期的 done/failed 任务
+	CleanupExpired(before time.Time) error
 }
 
 // mysqlAITaskRepo GORM 实现的 AITaskRepository
@@ -36,6 +39,11 @@ func NewAITaskRepository(db *gorm.DB) AITaskRepository {
 
 func (r *mysqlAITaskRepo) CreateTask(task *model.AITask) error {
 	// 已存在则忽略（幂等）
+	// 显式设置过期时间：零值 time.Time 会被 GORM 显式 INSERT，绕过 schema 的 DEFAULT，
+	// 在 MySQL 严格模式下因超出 datetime 范围直接报错，导致任务不落库、幂等锚点失效
+	if task.ExpiredAt.IsZero() {
+		task.ExpiredAt = time.Now().Add(7 * 24 * time.Hour)
+	}
 	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(task).Error; err != nil {
 		return fmt.Errorf("create ai task failed: %w", err)
 	}
@@ -89,6 +97,14 @@ func (r *mysqlAITaskRepo) ListRequeueable(maxRetry int) ([]model.AITask, error) 
 		return nil, fmt.Errorf("list requeueable ai tasks failed: %w", err)
 	}
 	return tasks, nil
+}
+
+// CleanupExpired 删除过期任务（done/failed 且 expired_at < before）
+func (r *mysqlAITaskRepo) CleanupExpired(before time.Time) error {
+	if err := r.db.Where("status IN (2, 3) AND expired_at < ?", before).Delete(&model.AITask{}).Error; err != nil {
+		return fmt.Errorf("cleanup expired ai tasks failed: %w", err)
+	}
+	return nil
 }
 
 // 确保编译时检查接口实现

@@ -73,6 +73,7 @@ func (s *AIService) Search(ctx context.Context, username, q string, page, size i
 			Summary:  d.Summary,
 			Tags:     strings.Join(d.Tags, ","),
 			Size:     d.Size,
+			Score:    d.Score,
 		})
 	}
 	return out, nil
@@ -135,6 +136,7 @@ func (s *AIService) Similar(ctx context.Context, username, filehash string, limi
 			Summary:  d.Summary,
 			Tags:     strings.Join(d.Tags, ","),
 			Size:     d.Size,
+			Score:    d.Score,
 		})
 	}
 	return out, nil

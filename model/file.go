@@ -17,6 +17,16 @@ func (File) TableName() string { return "tbl_file" }
 
 // UserFile 用户拥有关系，每个用户一行
 // 对应 tbl_user_file 表
+//
+// Status 语义（注意与 tbl_file.status 不同）：
+//
+//	1 = UserFileStatusActive  用户拥有该文件（正常状态）
+//	2 = UserFileStatusDeleted 用户已软删除该文件
+const (
+	UserFileStatusActive  = 1
+	UserFileStatusDeleted = 2
+)
+
 type UserFile struct {
 	ID       uint      `gorm:"primaryKey;autoIncrement"`
 	Username string    `gorm:"column:user_name;size:64;not null;uniqueIndex:idx_user_file"`

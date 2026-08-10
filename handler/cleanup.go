@@ -78,24 +78,60 @@ func cleanupExpiredChunks(chunkDir string) {
 }
 
 // StartAICompensation 启动 AI 失败任务补偿（周期性重新入队 failed 任务）
+// StartAITaskCleanup 启动 AI 任务 TTL 清理（每天清理过期任务）
+func StartAITaskCleanup(aiRepo repository.AITaskRepository, retention time.Duration) {
+	if retention <= 0 {
+		retention = 7 * 24 * time.Hour
+	}
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		slog.InfoContext(context.Background(), "ai task cleanup started", "interval", "24h", "retention", retention)
+		for range ticker.C {
+			before := time.Now().Add(-retention)
+			if err := aiRepo.CleanupExpired(before); err != nil {
+				slog.ErrorContext(context.Background(), "cleanup expired ai tasks failed", "error", err)
+			} else {
+				slog.InfoContext(context.Background(), "cleaned up expired ai tasks", "before", before)
+			}
+		}
+	}()
+}
+
 func StartAICompensation(aiProcessor *ai.Processor) {
 	if aiProcessor == nil {
 		return
 	}
+	const maxBackoff = 30 * time.Minute
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-
-		slog.InfoContext(context.Background(), "ai compensation started", "interval", "1m")
+		backoff := time.Minute
+		consecutiveEmpty := 0
+		slog.InfoContext(context.Background(), "ai compensation started", "initial_interval", "1m", "max_backoff", maxBackoff)
 		ctx := context.Background()
-		for range ticker.C {
-			aiProcessor.RequeueFailed(ctx)
+		for {
+			n := aiProcessor.RequeueFailed(ctx)
+			if n > 0 {
+				// 有任务被补偿，重置退避
+				consecutiveEmpty = 0
+				backoff = time.Minute
+			} else {
+				consecutiveEmpty++
+				if consecutiveEmpty >= 3 {
+					// 连续 3 次无任务，指数退避
+					backoff = min(backoff*2, maxBackoff)
+					consecutiveEmpty = 0
+				}
+			}
+			slog.DebugContext(ctx, "ai compensation tick", "requeued", n, "next_interval", backoff)
+			time.Sleep(backoff)
 		}
 	}()
 }
+
 // 逻辑：统计 tbl_user_file 中每个 file_sha1 的活跃引用数，
 // 引用数为 0（即所有用户都已软删除该文件）时，从存储层删除文件内容。
-func StartSoftDeleteGC(fileRepo repository.FileRepository, store storage.Storage, orphanAge time.Duration) {
+func StartSoftDeleteGC(fileRepo repository.FileRepository, store storage.Storage, orphanAge time.Duration, indexer ai.Indexer) {
 	if orphanAge <= 0 {
 		orphanAge = SoftDeleteGCAge
 	}
@@ -105,15 +141,15 @@ func StartSoftDeleteGC(fileRepo repository.FileRepository, store storage.Storage
 
 		slog.InfoContext(context.Background(), "soft-delete GC started", "interval", SoftDeleteGCInterval, "orphanAge", orphanAge)
 		// 启动时先跑一次，避免等待首个周期
-		cleanupOrphanedFiles(fileRepo, store, orphanAge)
+		cleanupOrphanedFiles(fileRepo, store, orphanAge, indexer)
 		for range ticker.C {
-			cleanupOrphanedFiles(fileRepo, store, orphanAge)
+			cleanupOrphanedFiles(fileRepo, store, orphanAge, indexer)
 		}
 	}()
 }
 
 // cleanupOrphanedFiles 清理无活跃引用的全局文件
-func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Storage, orphanAge time.Duration) {
+func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Storage, orphanAge time.Duration, indexer ai.Indexer) {
 	// 获取创建时间超过 orphanAge 的全局文件（GC 候选）
 	before := time.Now().Add(-orphanAge)
 	files, err := fileRepo.ListOldest(before)
@@ -146,5 +182,13 @@ func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Stor
 		} else {
 			slog.InfoContext(context.Background(), "GC: removed orphan file", "filehash", f.FileSha1, "size", f.FileSize)
 		}
+
+		// 清理 Typesense 中该全局文件的所有用户文档
+		if indexer != nil {
+			if err := indexer.DeleteByFilehash(context.Background(), f.FileSha1); err != nil {
+				slog.WarnContext(context.Background(), "GC: clean typesense index failed", "error", err, "filehash", f.FileSha1)
+			}
+		}
+
 	}
 }
