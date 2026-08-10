@@ -260,8 +260,25 @@ All settings come from environment variables; a `.env` file is supported (see `.
 
 ## 📡 API Reference
 
-Unified response shape: `{"code": 0|1, "msg": "...", "data": ...}`, `code=0` means success.
+Unified response shape: `{"code": 0|error_code, "msg": "...", "data": ...}`, `code=0` means success; HTTP status and business error codes are decoupled.
 All `/file/*` routes and `/user/info` require the session cookie set by `/user/signin`.
+
+### Error Codes
+
+| Code | Meaning |
+|------|---------|
+| `1001` | Missing/invalid params or unsupported operation |
+| `1002` | Not logged in or invalid session |
+| `1003` | No permission for the resource |
+| `1004` | File/resource not found |
+| `1005` | Username already exists |
+| `1006` | Wrong username or password |
+| `1007` | Upload failed |
+| `1008` | Chunk merge failed |
+| `1009` | Storage error (e.g. presigned URLs require MinIO) |
+| `1010` | Too many requests (rate limited) |
+| `1011` | AI search failed |
+| `1099` | Internal server error (fallback) |
 
 ### File Operations (auth required)
 

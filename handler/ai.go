@@ -24,7 +24,7 @@ func NewAIHandler(aiSvc *service.AIService) *AIHandler {
 func (h *AIHandler) SearchHandler(c *gin.Context) {
 	q := c.Query("q")
 	if q == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 q 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 q 参数")
 		return
 	}
 	page, _ := strconv.Atoi(c.Query("page"))
@@ -40,13 +40,13 @@ func (h *AIHandler) SearchHandler(c *gin.Context) {
 	results, err := h.aiSvc.Search(c.Request.Context(), username, q, page, size)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "ai search failed", "error", err, "q", q)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "搜索失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeSearchFailed, "搜索失败")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
-		"list":  results,
-		"page":  page,
-		"size":  size,
+		"list": results,
+		"page": page,
+		"size": size,
 	}})
 }
 
@@ -55,7 +55,7 @@ func (h *AIHandler) SearchHandler(c *gin.Context) {
 func (h *AIHandler) SimilarHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 	limit, _ := strconv.Atoi(c.Query("limit"))
@@ -65,10 +65,10 @@ func (h *AIHandler) SimilarHandler(c *gin.Context) {
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "ai similar failed", "error", err, "filehash", filehash)
 		if err.Error() == "file not found or no permission" {
-			c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
+			respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "相似推荐失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeSearchFailed, "相似推荐失败")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": results})
@@ -79,7 +79,7 @@ func (h *AIHandler) SimilarHandler(c *gin.Context) {
 func (h *AIHandler) DuplicatesHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 	threshold, _ := strconv.ParseFloat(c.Query("threshold"), 64)
@@ -89,10 +89,10 @@ func (h *AIHandler) DuplicatesHandler(c *gin.Context) {
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "ai duplicates failed", "error", err, "filehash", filehash)
 		if err.Error() == "file not found or no permission" {
-			c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
+			respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "重复检测失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeSearchFailed, "重复检测失败")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": results})

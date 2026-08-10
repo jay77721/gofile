@@ -26,13 +26,13 @@ func (h *UserHandler) SignupHandler(c *gin.Context) {
 	password := c.PostForm("password")
 
 	if len(username) < 3 || len(password) < 5 {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "用户名至少3位，密码至少5位", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "用户名至少3位，密码至少5位")
 		return
 	}
 
 	if err := h.userSvc.Signup(c.Request.Context(), username, password); err != nil {
 		// 用户已存在
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名已存在", "data": nil})
+		respondError(c, http.StatusOK, CodeUserExists, "用户名已存在")
 		return
 	}
 
@@ -46,14 +46,14 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 	password := c.PostForm("password")
 
 	if username == "" || password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "用户名和密码不能为空", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "用户名和密码不能为空")
 		return
 	}
 
 	token, err := h.userSvc.Signin(c.Request.Context(), username, password)
 	if err != nil {
 		slog.WarnContext(c.Request.Context(), "login failed", "username", username, "reason", "invalid credentials")
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "用户名或密码错误", "data": nil})
+		respondError(c, http.StatusOK, CodeInvalidCreds, "用户名或密码错误")
 		return
 	}
 
@@ -84,14 +84,14 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 func (h *UserHandler) UserInfoHandler(c *gin.Context) {
 	username, _ := c.Cookie("username")
 	if username == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": 1, "msg": "缺少登录信息", "data": nil})
+		respondError(c, http.StatusUnauthorized, CodeUnauthorized, "缺少登录信息")
 		return
 	}
 
 	user, err := h.userSvc.GetUserInfo(username)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "get user info failed", "error", err, "username", username)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "获取用户信息失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "获取用户信息失败")
 		return
 	}
 

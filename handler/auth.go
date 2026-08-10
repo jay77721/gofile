@@ -26,7 +26,7 @@ func (m *AuthMiddleware) Middleware() gin.HandlerFunc {
 
 		if username == "" || token == "" || len(username) < 3 || !m.authSvc.ValidateToken(c.Request.Context(), username, token) {
 			slog.WarnContext(c.Request.Context(), "auth failed", "username", username, "path", c.Request.URL.Path)
-			c.JSON(http.StatusUnauthorized, gin.H{"code": 1, "msg": "请先登录", "data": nil})
+			respondError(c, http.StatusUnauthorized, CodeUnauthorized, "请先登录")
 			c.Abort()
 			return
 		}

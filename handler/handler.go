@@ -61,7 +61,7 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	// 解析上传的文件
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "文件获取失败", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "文件获取失败")
 		return
 	}
 	defer file.Close()
@@ -72,7 +72,7 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	fMeta, err := h.fileSvc.Upload(c.Request.Context(), file, filename, 0, c.GetString("username"))
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "upload failed", "error", err, "filename", filename)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件上传失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeUploadFailed, "文件上传失败")
 		return
 	}
 
@@ -83,13 +83,13 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 func (h *FileHandler) GetFileHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
 	fMeta, err := h.fileSvc.GetMeta(filehash, c.GetString("username"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 
@@ -108,7 +108,7 @@ func sanitizeFilename(name string) string {
 func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
@@ -117,7 +117,7 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	// 获取文件元信息（用于文件名和 Content-Type）
 	fMeta, err := h.fileSvc.GetMeta(filehash, username)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 		reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
 		if err != nil {
 			slog.ErrorContext(c.Request.Context(), "download failed", "error", err, "filehash", filehash)
-			c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+			respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 			return
 		}
 		defer reader.Close()
@@ -149,7 +149,7 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 		if size, err := h.fileSvc.FileSize(c.Request.Context(), filehash, username); err == nil {
 			c.Header("Content-Range", fmt.Sprintf("bytes */%d", size))
 		}
-		c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "无效的 Range 范围", "data": nil})
+		respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "无效的 Range 范围")
 		return
 	}
 
@@ -157,11 +157,11 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, service.ErrRangeOutOfBounds) {
 			c.Header("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-			c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "Range 越界", "data": nil})
+			respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "Range 越界")
 			return
 		}
 		slog.ErrorContext(c.Request.Context(), "download range failed", "error", err, "filehash", filehash)
-		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 	defer reader.Close()
@@ -235,7 +235,7 @@ func buildContentDisposition(name string) string {
 func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
@@ -244,7 +244,7 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	// 获取文件元信息（用于文件名和 Content-Type）
 	fMeta, err := h.fileSvc.GetMeta(filehash, username)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 
@@ -260,7 +260,7 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 			if size, err := h.fileSvc.FileSize(c.Request.Context(), filehash, username); err == nil {
 				c.Header("Content-Range", fmt.Sprintf("bytes */%d", size))
 			}
-			c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "无效的 Range 范围", "data": nil})
+			respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "无效的 Range 范围")
 			return
 		}
 
@@ -268,11 +268,11 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 		if err != nil {
 			if errors.Is(err, service.ErrRangeOutOfBounds) {
 				c.Header("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-				c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{"code": 1, "msg": "Range 越界", "data": nil})
+				respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "Range 越界")
 				return
 			}
 			slog.ErrorContext(c.Request.Context(), "preview range failed", "error", err, "filehash", filehash)
-			c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+			respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 			return
 		}
 		defer reader.Close()
@@ -293,7 +293,7 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "preview failed", "error", err, "filehash", filehash)
-		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 	defer reader.Close()
@@ -389,23 +389,23 @@ func (h *FileHandler) FileMetaUpdateHandler(c *gin.Context) {
 	username := c.GetString("username")
 
 	if opType != "0" {
-		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "不支持的操作", "data": nil})
+		respondError(c, http.StatusForbidden, CodeInvalidParams, "不支持的操作")
 		return
 	}
 	if fileSha1 == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少参数")
 		return
 	}
 
 	newFileName := c.PostForm("filename")
 	if newFileName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filename 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filename 参数")
 		return
 	}
 
 	if err := h.fileSvc.Rename(fileSha1, username, filepath.Base(newFileName)); err != nil {
 		slog.ErrorContext(c.Request.Context(), "rename failed", "error", err, "filehash", fileSha1)
-		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
+		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
 		return
 	}
 
@@ -416,12 +416,12 @@ func (h *FileHandler) FileMetaUpdateHandler(c *gin.Context) {
 func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
 	fileSha1 := c.PostForm("filehash")
 	if fileSha1 == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
 	if err := h.fileSvc.Delete(fileSha1, c.GetString("username")); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"code": 1, "msg": "无权操作该文件", "data": nil})
+		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
 		return
 	}
 
@@ -442,7 +442,7 @@ func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 		fileMetas, err := h.fileSvc.ListByUser(username)
 		if err != nil {
 			slog.ErrorContext(c.Request.Context(), "query all files failed", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fileMetas})
@@ -462,7 +462,7 @@ func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 	files, total, err := h.fileSvc.ListByUserPaged(username, page, size)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "paged query files failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "查询失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
 		return
 	}
 
@@ -483,25 +483,25 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	index := c.PostForm("index")
 
 	if fileHash == "" || index == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 index 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 或 index 参数")
 		return
 	}
 
 	// 校验 hash 格式，防止路径穿越
 	if !isValidHash(fileHash) {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
 	}
 
 	chunkIndex, err := parseInt(index)
 	if err != nil || chunkIndex < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 chunk index", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 chunk index")
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "分块文件获取失败", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "分块文件获取失败")
 		return
 	}
 	defer file.Close()
@@ -521,13 +521,13 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 func (h *FileHandler) UploadStatusHandler(c *gin.Context) {
 	fileHash := c.Query("filehash")
 	if fileHash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
 	// 校验 hash 格式，防止路径穿越
 	if !isValidHash(fileHash) {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
 	}
 
@@ -547,13 +547,13 @@ func (h *FileHandler) MergeChunkHandler(c *gin.Context) {
 	totalStr := c.PostForm("chunks")
 
 	if fileHash == "" || fileName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 filename 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 或 filename 参数")
 		return
 	}
 
 	// 校验 hash 格式，防止路径穿越
 	if !isValidHash(fileHash) {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
 	}
 
@@ -563,7 +563,7 @@ func (h *FileHandler) MergeChunkHandler(c *gin.Context) {
 	fMeta, err := h.fileSvc.MergeChunks(c.Request.Context(), fileHash, fileName, c.GetString("username"), totalStr)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "merge chunks failed", "error", err, "filehash", fileHash)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "文件合并失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeMergeFailed, "文件合并失败")
 		return
 	}
 
@@ -593,12 +593,12 @@ func (h *FileHandler) PresignUploadHandler(c *gin.Context) {
 	fileName := c.PostForm("filename")
 
 	if fileHash == "" || fileName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 filename 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 或 filename 参数")
 		return
 	}
 
 	if !isValidHash(fileHash) {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
 	}
 
@@ -609,11 +609,11 @@ func (h *FileHandler) PresignUploadHandler(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, storage.ErrPresignNotSupported) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "预签名上传仅支持 MinIO 存储，当前为本地存储", "data": nil})
+			respondError(c, http.StatusBadRequest, CodeStorageError, "预签名上传仅支持 MinIO 存储，当前为本地存储")
 			return
 		}
 		slog.ErrorContext(c.Request.Context(), "presign upload failed", "error", err, "filehash", fileHash)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "生成上传链接失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeStorageError, "生成上传链接失败")
 		return
 	}
 
@@ -629,18 +629,18 @@ func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
 	fileName := c.PostForm("filename")
 
 	if fileHash == "" || fileName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 或 filename 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 或 filename 参数")
 		return
 	}
 
 	if !isValidHash(fileHash) {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
 	}
 
 	if err := h.fileSvc.ConfirmUpload(c.Request.Context(), fileHash, fileName, c.GetString("username")); err != nil {
 		slog.ErrorContext(c.Request.Context(), "confirm upload failed", "error", err, "filehash", fileHash)
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "确认上传失败", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeUploadFailed, "确认上传失败")
 		return
 	}
 
@@ -651,23 +651,23 @@ func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
 func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
 	fileHash := c.Query("filehash")
 	if fileHash == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "缺少 filehash 参数", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
 	if !isValidHash(fileHash) {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 filehash 格式", "data": nil})
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
 	}
 
 	downloadURL, err := h.fileSvc.PresignDownload(c.Request.Context(), fileHash, c.GetString("username"))
 	if err != nil {
 		if errors.Is(err, storage.ErrPresignNotSupported) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "预签名下载仅支持 MinIO 存储，当前为本地存储", "data": nil})
+			respondError(c, http.StatusBadRequest, CodeStorageError, "预签名下载仅支持 MinIO 存储，当前为本地存储")
 			return
 		}
 		slog.ErrorContext(c.Request.Context(), "presign download failed", "error", err, "filehash", fileHash)
-		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "文件不存在", "data": nil})
+		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 

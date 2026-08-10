@@ -87,8 +87,8 @@ func TestGetFileHandler_NoFilehash(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"].(float64) != 1 {
-		t.Errorf("code = %v, want 1", resp["code"])
+	if resp["code"].(float64) != float64(CodeInvalidParams) {
+		t.Errorf("code = %v, want %d", resp["code"], CodeInvalidParams)
 	}
 }
 
@@ -211,8 +211,8 @@ func TestDownloadHandler_NoFilehash(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"].(float64) != 1 {
-		t.Errorf("code = %v, want 1", resp["code"])
+	if resp["code"].(float64) != float64(CodeInvalidParams) {
+		t.Errorf("code = %v, want %d", resp["code"], CodeInvalidParams)
 	}
 }
 

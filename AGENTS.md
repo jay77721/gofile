@@ -26,7 +26,7 @@ go run main.go
 
 ### 文件处理（handler/handler.go）
 - 所有 handler 使用全局变量 `globalStore`(storage.Storage) 和 `globalCfg`(*config.Config)
-- 响应格式统一: `gin.H{"code": 0|1, "msg": "...", "data": ...}`
+- 响应格式统一: `gin.H{"code": 0|错误码, "msg": "...", "data": ...}`,错误码定义见 `handler/errcode.go`(1001 参数/1002 未登录/1003 越权/1004 不存在/1005 用户已存在/1006 凭据错误/1007 上传/1008 合并/1009 存储/1010 限流/1011 检索/1099 兜底)
 - 所有 `/file/*` 路由都经过 `AuthMiddleware` 鉴权
 
 ### 用户认证（handler/user.go + auth.go）

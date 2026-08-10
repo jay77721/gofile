@@ -172,7 +172,7 @@ Tests cover:
 
 - **Language:** Code comments are bilingual (Chinese + English)
 - **Naming:** Standard Go conventions — exported PascalCase, unexported camelCase
-- **Error handling:** HTTP handlers return JSON via `gin.H{"code": 0|1, "msg": ..., "data": ...}`
+- **Error handling:** HTTP handlers return JSON via `gin.H{"code": 0|error_code, "msg": ..., "data": ...}` — business error codes defined in `handler/errcode.go` (1001 invalid params, 1002 unauthorized, 1003 forbidden, 1004 not found, 1005 user exists, 1006 bad credentials, 1007 upload, 1008 merge, 1009 storage, 1010 rate limit, 1011 search, 1099 fallback)
 - **Logging:** `slog.Info`/`slog.Warn`/`slog.Error` with structured key-value pairs
 - **Database:** `db` package wraps MySQL operations; `FileMeta` domain model in `db/file.go`
 - **Dependency injection:** `handler.InitStore(store, cfg)` injects storage + config at startup

@@ -109,7 +109,7 @@ func RateLimitMiddleware(rate, burst int, c ...*cache.Client) gin.HandlerFunc {
 	limiter := newIPLimiter(rate, burst)
 	return func(c *gin.Context) {
 		if !limiter.allow(c.ClientIP()) {
-			c.JSON(http.StatusTooManyRequests, gin.H{"code": 1, "msg": "请求过于频繁，请稍后再试", "data": nil})
+			respondError(c, http.StatusTooManyRequests, CodeTooManyRequests, "请求过于频繁，请稍后再试")
 			c.Abort()
 			return
 		}
@@ -127,7 +127,7 @@ func newRedisRateLimiter(rate, burst int, c *cache.Client) gin.HandlerFunc {
 		result, err := redisRateLimiterScript.Run(ginCtx.Request.Context(), c.Rdb(),
 			[]string{key}, nowMs, window.Milliseconds(), rate).Int()
 		if err != nil || result == 0 {
-			ginCtx.JSON(http.StatusTooManyRequests, gin.H{"code": 1, "msg": "请求过于频繁，请稍后再试", "data": nil})
+			respondError(ginCtx, http.StatusTooManyRequests, CodeTooManyRequests, "请求过于频繁，请稍后再试")
 			ginCtx.Abort()
 			return
 		}
