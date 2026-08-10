@@ -128,13 +128,16 @@ docker compose up -d
 ### 方式二:手动部署
 
 ```bash
-# 1. 安装依赖
+# 1. 构建前端(Vue 3 + Vite,产物输出 web/dist)
+cd web && npm install && npm run build && cd ..
+
+# 2. 安装后端依赖
 go mod tidy
 
-# 2. 配置环境变量
+# 3. 配置环境变量
 cp .env.example .env    # 按需编辑
 
-# 3. 启动(启动时 GORM AutoMigrate 自动建表)
+# 4. 启动(启动时 GORM AutoMigrate 自动建表)
 go run main.go
 
 # 或使用脚本
@@ -420,7 +423,7 @@ gofile/
 ├── storage/                存储抽象(MinIO ⇄ Local,预签名/Range)
 ├── cache/                   Redis 封装(秒传缓存/分布式锁)
 ├── metrics/                 Prometheus 指标 + request_id 中间件
-├── static/                  前端 Vue 3 SPA(暗色模式)
+├── web/                     前端工程(Vue 3 + Vite,亮色简洁 SPA,构建产物 web/dist)
 ├── deploy/                  Prometheus 抓取配置 + Grafana 大盘预置
 ├── docker-compose.yml       MySQL + MinIO + Redis + Typesense + Prometheus + Grafana
 └── start.sh / start.bat     启动脚本
@@ -442,7 +445,7 @@ gofile/
 | AI | OpenAI / Anthropic / Mock | 摘要、标签、Embedding |
 | 指标 | Prometheus client_golang | 业务 + HTTP + AI 指标 |
 | 监控 | Grafana | 预置大盘 |
-| 前端 | Vue 3(Vanilla + CDN) | 暗色模式 SPA |
+| 前端 | Vue 3 + Vite(SPA,组件化) | 亮色简洁,侧边栏布局 |
 | 部署 | Docker Compose | 一键编排 7 个服务 |
 
 ---

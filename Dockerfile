@@ -1,4 +1,12 @@
-# 构建阶段
+# 前端构建阶段
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --registry=https://registry.npmmirror.com
+COPY web/ .
+RUN npm run build
+
+# 后端构建阶段
 FROM golang:1.25-alpine AS builder
 
 ARG http_proxy
@@ -25,8 +33,8 @@ WORKDIR /app
 # 从构建阶段复制二进制
 COPY --from=builder /app/server .
 
-# 复制静态文件
-COPY static/ ./static/
+# 复制前端构建产物
+COPY --from=web /web/dist ./web/dist
 
 # 创建数据目录
 RUN mkdir -p uploads chunks

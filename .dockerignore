@@ -31,3 +31,7 @@ docker-compose.yml
 
 # Nezha monitoring
 .nezha/
+
+# Frontend
+web/node_modules
+web/dist

@@ -149,7 +149,8 @@ func main() {
 		c.Next()
 	})
 	// 静态文件
-	r.Static("/static", "./static")
+	// 前端静态资源(Vite 构建产物,见 web/ 目录)
+	r.Static("/static", "./web/dist")
 
 	// 根路径重定向到首页
 	r.GET("/", func(c *gin.Context) {
@@ -169,6 +170,7 @@ func main() {
 	rateLimit := handler.RateLimitMiddleware(5, 10, cacheClient)
 	r.POST("/user/signup", rateLimit, userHandler.SignupHandler)
 	r.POST("/user/signin", rateLimit, userHandler.SignInHandler)
+	r.POST("/user/logout", userHandler.LogoutHandler)
 	r.GET("/user/info", authMiddleware.Middleware(), userHandler.UserInfoHandler)
 
 	// 文件接口（全部需要鉴权）

@@ -642,3 +642,28 @@ func TestTrashHandlers(t *testing.T) {
 		t.Fatalf("unauthorized restore status = %d, want 404", w.Code)
 	}
 }
+
+func TestLogoutHandler(t *testing.T) {
+	_, uh, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.POST("/user/logout", uh.LogoutHandler)
+
+	req := httptest.NewRequest("POST", "/user/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "username", Value: "alice"})
+	req.AddCookie(&http.Cookie{Name: "token", Value: "deadbeef"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	cleared := map[string]bool{}
+	for _, c := range w.Result().Cookies() {
+		if c.MaxAge < 0 {
+			cleared[c.Name] = true
+		}
+	}
+	if !cleared["token"] || !cleared["username"] {
+		t.Errorf("cookies not cleared: %v", cleared)
+	}
+}

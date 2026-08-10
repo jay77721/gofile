@@ -44,7 +44,7 @@ gofile/
 │   ├── hash.go            SHA1、MD5、文件哈希、路径工具
 │   ├── hash_test.go       工具函数测试
 │   └── chunk.go           磁盘-based 分片追踪
-├── static/                前端 HTML 页面
+├── web/                   前端工程(Vue 3 + Vite SPA,构建产物 web/dist)
 ├── start.sh               Unix/macOS 启动脚本
 ├── start.bat              Windows 启动脚本
 ├── .env.example            环境变量模板

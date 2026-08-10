@@ -71,7 +71,16 @@ func (s *ShareService) Create(ctx context.Context, username, filehash string, da
 
 // List 列出当前用户的分享
 func (s *ShareService) List(username string) ([]model.Share, error) {
-	return s.shareRepo.ListShares(username)
+	shares, err := s.shareRepo.ListShares(username)
+	if err != nil {
+		return nil, err
+	}
+	// 补充序列化字段并清空哈希(PasswordHash 不下发;has_password 供前端展示)
+	for i := range shares {
+		shares[i].HasPassword = shares[i].PasswordHash != ""
+		shares[i].PasswordHash = "" // 纵深防御:即使序列化配置出错也不泄露
+	}
+	return shares, nil
 }
 
 // Revoke 撤销分享(校验归属)

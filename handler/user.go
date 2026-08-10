@@ -80,6 +80,23 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 	})
 }
 
+// LogoutHandler 退出登录:删除服务端 token + 清除 Cookie
+// POST /user/logout
+func (h *UserHandler) LogoutHandler(c *gin.Context) {
+	username, _ := c.Cookie("username")
+	if username != "" {
+		if err := h.userSvc.Logout(username); err != nil {
+			slog.WarnContext(c.Request.Context(), "logout: delete token failed", "error", err, "username", username)
+		}
+	}
+	// 无论服务端是否成功,都清除客户端 Cookie(幂等)
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("token", "", -1, "/", "", h.cfg.CookieSecure, true)
+	c.SetCookie("username", "", -1, "/", "", h.cfg.CookieSecure, true)
+	slog.InfoContext(c.Request.Context(), "user logged out", "username", username)
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已退出登录", "data": nil})
+}
+
 // UserInfoHandler 查询用户信息
 func (h *UserHandler) UserInfoHandler(c *gin.Context) {
 	username, _ := c.Cookie("username")

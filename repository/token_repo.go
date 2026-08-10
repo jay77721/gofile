@@ -14,6 +14,8 @@ type TokenRepository interface {
 	Upsert(username, token string, expiredAt time.Time) (bool, error)
 	// Get 获取用户 token
 	Get(username string) (model.Token, error)
+	// Delete 删除用户 token（登出）
+	Delete(username string) error
 }
 
 // mysqlTokenRepo GORM 实现的 TokenRepository
@@ -49,6 +51,13 @@ func (r *mysqlTokenRepo) Get(username string) (model.Token, error) {
 	return t, nil
 }
 
+func (r *mysqlTokenRepo) Delete(username string) error {
+	if err := r.db.Where("user_name = ?", username).Delete(&model.Token{}).Error; err != nil {
+		return fmt.Errorf("delete token failed: %w", err)
+	}
+	return nil
+}
+
 // ---- Mock 实现 ----
 
 // mockTokenRepo 内存 mock token 仓库
@@ -76,6 +85,11 @@ func (m *mockTokenRepo) Get(username string) (model.Token, error) {
 		return model.Token{}, fmt.Errorf("token not found")
 	}
 	return t, nil
+}
+
+func (m *mockTokenRepo) Delete(username string) error {
+	delete(m.tokens, username)
+	return nil
 }
 
 // 确保编译时检查接口实现

@@ -128,3 +128,36 @@ func TestShareService(t *testing.T) {
 
 	})
 }
+
+// TestShareListHasPassword 验证列表接口 has_password 字段(PasswordHash 不下发)
+func TestShareListHasPassword(t *testing.T) {
+	svc, _, hash := newTestShareSvc(t)
+	ctx := context.Background()
+
+	if _, err := svc.Create(ctx, "alice", hash, 7, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(ctx, "alice", hash, 7, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	shares, err := svc.List("alice")
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(shares) != 2 {
+		t.Fatalf("len = %d, want 2", len(shares))
+	}
+	withPwd := 0
+	for _, s := range shares {
+		if s.PasswordHash != "" {
+			t.Errorf("PasswordHash must not be exposed, got %q", s.PasswordHash)
+		}
+		if s.HasPassword {
+			withPwd++
+		}
+	}
+	if withPwd != 1 {
+		t.Errorf("has_password count = %d, want 1", withPwd)
+	}
+}

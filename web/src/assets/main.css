@@ -1,0 +1,133 @@
+/* ============================================================
+   GoFile 设计系统 — 亮色简洁
+   ============================================================ */
+:root {
+  /* 色彩 tokens */
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --surface-hover: #f0f3f8;
+  --border: #e4e7ec;
+  --border-strong: #d0d5dd;
+
+  --text: #1a1d21;
+  --text-dim: #667085;
+  --text-muted: #98a2b3;
+
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #eff4ff;
+  --primary-soft-hover: #e0eaff;
+
+  --green: #059669;
+  --green-soft: #ecfdf5;
+  --red: #dc2626;
+  --red-soft: #fef2f2;
+  --amber: #d97706;
+  --amber-soft: #fffbeb;
+  --blue: #2563eb;
+
+  /* 形状 tokens */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
+  --shadow: 0 1px 3px rgba(16, 24, 40, .08), 0 4px 14px rgba(16, 24, 40, .06);
+  --shadow-lg: 0 8px 32px rgba(16, 24, 40, .14);
+
+  /* 布局 tokens */
+  --sidebar-w: 232px;
+  --topbar-h: 56px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; }
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app { min-height: 100vh; }
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---------- 按钮 ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid transparent;
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s;
+  font-family: inherit; white-space: nowrap; line-height: 1.4;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; transform: none !important; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); box-shadow: var(--shadow-sm); }
+.btn-ghost { background: var(--surface); color: var(--text-dim); border-color: var(--border); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.btn-soft { background: var(--primary-soft); color: var(--primary); }
+.btn-soft:hover:not(:disabled) { background: var(--primary-soft-hover); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover:not(:disabled) { box-shadow: var(--shadow-sm); background: #b91c1c; }
+.btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 6px; }
+
+/* ---------- 表单 ---------- */
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 9px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); font-size: 14px; font-family: inherit;
+  transition: border-color .15s, box-shadow .15s; outline: none;
+}
+.field input:focus, .field select:focus, .field textarea:focus {
+  border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
+}
+.field .err-msg { font-size: 11px; color: var(--red); margin-top: 4px; min-height: 16px; }
+
+/* ---------- 弹窗 ---------- */
+.modal-mask {
+  display: none; position: fixed; inset: 0; z-index: 1000;
+  background: rgba(16, 24, 40, .45); align-items: center; justify-content: center;
+}
+.modal-mask.on { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 24px 26px;
+  width: 92%; max-width: 420px; box-shadow: var(--shadow-lg);
+  animation: modalIn .18s ease;
+}
+@keyframes modalIn { from { opacity: 0; transform: scale(.97) translateY(6px); } to { opacity: 1; transform: none; } }
+.modal h4 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.modal p { font-size: 13px; color: var(--text-dim); margin-bottom: 16px; }
+.modal .modal-ft { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+/* ---------- 空状态 ---------- */
+.empty-state { text-align: center; padding: 64px 20px; }
+.empty-state .empty-icon { font-size: 44px; margin-bottom: 12px; opacity: .55; }
+.empty-state .empty-text { font-size: 15px; font-weight: 500; color: var(--text-dim); }
+.empty-state .empty-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+/* ---------- Toast ---------- */
+.toast-ctr { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  padding: 10px 16px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+  min-width: 220px; box-shadow: var(--shadow-lg); display: flex; align-items: center; gap: 8px;
+  animation: toastIn .2s ease;
+}
+.toast.ok { background: var(--green-soft); color: var(--green); border: 1px solid #a7f3d0; }
+.toast.err { background: var(--red-soft); color: var(--red); border: 1px solid #fecaca; }
+.toast.warn { background: var(--amber-soft); color: var(--amber); border: 1px solid #fde68a; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+.toast.leaving { animation: toastOut .18s ease forwards; }
+@keyframes toastOut { to { opacity: 0; transform: translateX(16px); } }
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #98a2b3; }

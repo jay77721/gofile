@@ -79,6 +79,11 @@ func (s *UserService) GetUserInfo(username string) (model.User, error) {
 	return s.userRepo.GetInfo(username)
 }
 
+// Logout 登出:删除服务端 token(客户端 Cookie 由 handler 清除)
+func (s *UserService) Logout(username string) error {
+	return s.tokenRepo.Delete(username)
+}
+
 // generateToken 生成安全的随机 token（64 位十六进制）
 func generateToken() (string, error) {
 	b := make([]byte, 32)

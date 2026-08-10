@@ -51,6 +51,10 @@ minio.exe
 bin/
 dist/
 
+# Frontend
+web/node_modules/
+web/dist/
+
 # OS generated files
 .DS_Store?
 ._*

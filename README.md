@@ -127,13 +127,16 @@ docker compose up -d
 ### Option 2: Manual Setup
 
 ```bash
-# 1. Install dependencies
+# 1. Build the frontend (Vue 3 + Vite, output to web/dist)
+cd web && npm install && npm run build && cd ..
+
+# 2. Install backend dependencies
 go mod tidy
 
-# 2. Configure environment
+# 3. Configure environment
 cp .env.example .env    # edit as needed
 
-# 3. Run (GORM AutoMigrate creates tables on startup)
+# 4. Run (GORM AutoMigrate creates tables on startup)
 go run main.go
 
 # Or use the scripts
@@ -421,7 +424,7 @@ gofile/
 ├── storage/                storage abstraction (MinIO ⇄ Local, presign/Range)
 ├── cache/                  Redis wrapper (dedup cache / distributed lock)
 ├── metrics/                Prometheus metrics + request_id middleware
-├── static/                 frontend Vue 3 SPA (dark mode)
+├── web/                    frontend project (Vue 3 + Vite, light SPA, build output web/dist)
 ├── deploy/                 Prometheus scrape config + Grafana dashboard provisioning
 ├── docker-compose.yml      MySQL + MinIO + Redis + Typesense + Prometheus + Grafana
 └── start.sh / start.bat    startup scripts
@@ -443,7 +446,7 @@ gofile/
 | AI | OpenAI / Anthropic / Mock | Summaries, tags, embeddings |
 | Metrics | Prometheus client_golang | HTTP + business + AI metrics |
 | Monitoring | Grafana | Pre-provisioned dashboard |
-| Frontend | Vue 3 (vanilla + CDN) | Dark-mode SPA |
+| Frontend | Vue 3 + Vite (SPA, components) | Light clean UI, sidebar layout |
 | Deployment | Docker Compose | 7 services, one command |
 
 ---
