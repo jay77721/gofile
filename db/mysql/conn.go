@@ -17,8 +17,8 @@ var db *gorm.DB
 func Init(dsn string) error {
 	var err error
 	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
-		SkipDefaultTransaction: true,                 // 单表操作不自动包装事务
-		PrepareStmt:            true,                  // 缓存预编译，提升性能
+		SkipDefaultTransaction: true, // 单表操作不自动包装事务
+		PrepareStmt:            true, // 缓存预编译，提升性能
 		Logger:                 logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
