@@ -11,7 +11,8 @@ FROM golang:1.25-alpine AS builder
 
 ARG http_proxy
 ARG https_proxy
-ENV http_proxy=$http_proxy https_proxy=$https_proxy
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV http_proxy=$http_proxy https_proxy=$https_proxy GOPROXY=$GOPROXY
 
 WORKDIR /app
 
