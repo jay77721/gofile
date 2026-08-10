@@ -134,6 +134,16 @@
         .upload-zone .file-preview .fp-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .upload-zone .file-preview .fp-size{color:var(--text-dim);white-space:nowrap;font-family:"JetBrains Mono",monospace;font-size:11px}
         .upload-zone .file-preview .fp-remove{color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1}
+        /* AI Search */
+        .ai-search{display:flex;flex-direction:column;gap:12px;margin-top:18px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)}
+        .ai-search-bar{display:flex;gap:8px}
+        .ai-search-bar input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text);font-size:13px;outline:none}
+        .ai-search-bar input:focus{border-color:var(--primary)}
+        .search-msg{color:var(--text-dim);font-size:13px;padding:6px 2px}
+        .fc-summary{font-size:12px;color:var(--text-dim);margin:4px 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+        .fc-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+        .fc-tags .tag{background:var(--surface-hover);color:var(--text-dim);font-size:11px;padding:1px 8px;border-radius:10px}
+        .fc-score{color:var(--primary);font-family:"JetBrains Mono",monospace}
         .upload-row{display:flex;gap:10px;margin-top:16px;justify-content:center}
         .progress-wrap{display:none;margin-top:18px}
         .progress-wrap.active{display:block}
@@ -276,12 +286,38 @@
         <nav class="nav">
             <div class="nav-brand"><span>&#9632;</span> GoFile</div>
             <div class="nav-user">
+                <button class="btn btn-ghost btn-sm" @click="toggleSearch" style="margin-right:8px">AI 搜索</button>
                 <span>{{username}}</span>
                 <div class="avatar">{{username.charAt(0).toUpperCase()}}</div>
                 <button class="btn btn-ghost btn-sm" @click="logout">退出</button>
             </div>
         </nav>
         <div class="main-wrap">
+            <!-- AI Search -->
+            <div class="ai-search" v-if="searchActive">
+                <div class="ai-search-bar">
+                    <input v-model="searchQuery" @keydown.enter="doSearch" placeholder="用自然语言搜索,如「最近3天上传的PDF」「数据库优化」…">
+                    <button class="btn btn-primary btn-sm" @click="doSearch" :disabled="searching">{{searching?'搜索中…':'搜索'}}</button>
+                    <button class="btn btn-ghost btn-sm" @click="closeSearch">关闭</button>
+                </div>
+                <div v-if="searchMsg" class="search-msg">{{searchMsg}}</div>
+                <div class="file-grid" v-if="searchResults.length">
+                    <div class="file-card" v-for="f in searchResults" :key="f.filehash">
+                        <div class="fc-icon">&#128269;</div>
+                        <div class="fc-name" :title="f.filename">{{f.filename}}</div>
+                        <div class="fc-summary" v-if="f.summary">{{f.summary}}</div>
+                        <div class="fc-tags" v-if="f.tags"><span class="tag" v-for="t in f.tags.split(',')" :key="t">{{t}}</span></div>
+                        <div class="fc-meta">
+                            <span>{{fmtSize(f.size)}}</span>
+                            <span class="fc-score" v-if="f.score">相似度 {{Math.round(f.score*100)}}%</span>
+                        </div>
+                        <div class="fc-actions">
+                            <button class="act-pv" v-if="canPreview(f.filename)" @click="openPreview(f)">预览</button>
+                            <a class="act-dl" :href="'/file/download?filehash='+encodeURIComponent(f.filehash)">下载</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <!-- Upload -->
             <div class="upload-zone" :class="{drag:isDragOver}" @click="$refs.fileInput.click()"
                  @dragover.prevent="isDragOver=true" @dragleave="isDragOver=false" @drop.prevent="onDrop">
@@ -325,6 +361,7 @@
                     </div>
                     <div class="fc-actions">
                         <button class="act-pv" v-if="canPreview(f.filename)" @click="openPreview(f)">预览</button>
+                        <button class="act-pv" @click="findSimilar(f)">相似</button>
                         <a class="act-dl" :href="'/file/download?filehash='+encodeURIComponent(f.filehash)">下载</a>
                         <button class="act-rn" @click="openRename(f)">重命名</button>
                         <button class="act-del" @click="openDelete(f)">删除</button>
@@ -492,7 +529,9 @@ createApp({
             }catch(e){authMsg.value=e.message;authMsgType.value='error'}finally{authLoading.value=false}
         }
         function logout(){
-            username.value='';files.value=[];trash.value=[];mainTab.value='files';selectedFile.value=null;view.value='auth';
+            username.value='';files.value=[];trash.value=[];mainTab.value='files';selectedFile.value=null;
+            searchActive.value=false;searchResults.value=[];searchMsg.value='';
+            view.value='auth';
         }
         async function loadUser(){
             try{const u=await api('/user/info');username.value=u.Username||u.username||''}catch(e){}
@@ -586,6 +625,39 @@ createApp({
             if(!deleteTarget.value)return;
             const fd=new FormData();fd.append('filehash',deleteTarget.value.filehash);
             try{await apiPost('/file/delete',fd);toast('已删除','ok');loadFiles()}catch(e){toast(e.message,'err')}finally{deleteTarget.value=null}
+        }
+        // AI Search
+        const searchActive=ref(false),searchQuery=ref(''),searchResults=ref([]),searching=ref(false),searchMsg=ref('');
+        function toggleSearch(){
+            searchActive.value=!searchActive.value;
+            if(searchActive.value)nextTick(()=>{const el=document.querySelector('.ai-search-bar input');if(el)el.focus()});
+        }
+        function closeSearch(){searchActive.value=false;searchResults.value=[];searchMsg.value=''}
+        async function doSearch(){
+            const q=searchQuery.value.trim();if(!q)return;
+            searching.value=true;searchMsg.value='';
+            try{
+                const d=await api('/file/ai/search?q='+encodeURIComponent(q)+'&page=1&size=20');
+                searchResults.value=d&&d.list?d.list:[];
+                if(!searchResults.value.length)searchMsg.value='没有找到相关文件,换个说法试试';
+            }catch(e){
+                searchResults.value=[];
+                // 路由未注册(AI_ENABLED=false)时 fetch 返回 404 HTML,JSON 解析失败
+                searchMsg.value=/Unexpected|Failed to fetch|404/.test(e.message)?'AI 搜索未启用,请在服务端设置 AI_ENABLED=true 后重试':e.message;
+            }finally{searching.value=false}
+        }
+        async function findSimilar(f){
+            searchActive.value=true;mainTab.value='files';
+            searchQuery.value='与「'+f.filename+'」相似的文件';
+            searching.value=true;searchMsg.value='';
+            try{
+                const list=await api('/file/ai/similar?filehash='+encodeURIComponent(f.filehash)+'&limit=5');
+                searchResults.value=list||[];
+                if(!searchResults.value.length)searchMsg.value='没有找到相似文件';
+            }catch(e){
+                searchResults.value=[];
+                searchMsg.value=/Unexpected|Failed to fetch|404/.test(e.message)?'AI 功能未启用,请设置 AI_ENABLED=true':e.message;
+            }finally{searching.value=false}
         }
         // Trash
         const mainTab=ref('files'),trash=ref([]),purgeTarget=ref(null);
