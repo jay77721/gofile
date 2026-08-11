@@ -20,7 +20,18 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/swaggo/swag"
 )
+
+// @title gofile API
+// @version 1.0
+// @description 轻量级网盘服务 API — 文件上传/下载、分片上传断点续传、用户认证、秒传去重、AI 语义检索
+// @BasePath /
+
+// @securityDefinitions.apikey ApiKeyAuth
+// @in cookie
+// @name token
+// @description Cookie 鉴权（username + token），登录后由 Set-Cookie 自动设置
 
 func main() {
 	// 初始化结构化日志：ContextHandler 从 context 提取 request_id 自动附加到每条日志

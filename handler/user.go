@@ -58,6 +58,16 @@ func passwordStrength(password string) (bool, string) {
 }
 
 // SignupHandler 处理用户注册请求
+// @Summary 用户注册
+// @Description 注册新用户，密码需至少 8 位且包含大写/小写/数字/特殊字符中的至少三类
+// @Tags 用户
+// @Accept application/x-www-form-urlencoded
+// @Produce json
+// @Param username formData string true "用户名（至少 3 位）"
+// @Param password formData string true "密码（至少 8 位，含大写/小写/数字/特殊字符至少三类）"
+// @Success 200 {object} map[string]any{code=int,msg=string,data=nil} "注册成功"
+// @Failure 400 {object} map[string]any{code=int,msg=string,data=nil} "参数错误"
+// @Router /user/signup [post]
 func (h *UserHandler) SignupHandler(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
@@ -83,6 +93,16 @@ func (h *UserHandler) SignupHandler(c *gin.Context) {
 }
 
 // SignInHandler 登录接口
+// @Summary 用户登录
+// @Description 验证用户名密码，成功后通过 Set-Cookie 设置 token（HttpOnly）
+// @Tags 用户
+// @Accept application/x-www-form-urlencoded
+// @Produce json
+// @Param username formData string true "用户名"
+// @Param password formData string true "密码"
+// @Success 200 {object} map[string]any{code=int,msg=string,data=object{Location=string,Username=string}} "登录成功"
+// @Failure 400 {object} map[string]any{code=int,msg=string,data=nil} "参数错误"
+// @Router /user/signin [post]
 func (h *UserHandler) SignInHandler(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
@@ -122,8 +142,13 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 	})
 }
 
-// LogoutHandler 退出登录:删除服务端 token + 清除 Cookie
-// POST /user/logout
+// LogoutHandler 退出登录
+// @Summary 退出登录
+// @Description 删除服务端 token 并清除客户端 Cookie
+// @Tags 用户
+// @Produce json
+// @Success 200 {object} map[string]any{code=int,msg=string,data=nil} "已退出登录"
+// @Router /user/logout [post]
 func (h *UserHandler) LogoutHandler(c *gin.Context) {
 	username, _ := c.Cookie("username")
 	if username != "" {
@@ -140,6 +165,12 @@ func (h *UserHandler) LogoutHandler(c *gin.Context) {
 }
 
 // UserInfoHandler 查询用户信息
+// @Summary 获取用户信息
+// @Tags 用户
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} map[string]any{code=int,msg=string,data=object} "用户信息"
+// @Router /user/info [get]
 func (h *UserHandler) UserInfoHandler(c *gin.Context) {
 	username, _ := c.Cookie("username")
 	if username == "" {

@@ -1,11 +1,14 @@
 package mysql
 
 import (
+	"database/sql"
 	"fmt"
-	"gofile/model"
 	"log/slog"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4"
+	migrateMysql "github.com/golang-migrate/migrate/v4/database/mysql"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -13,7 +16,7 @@ import (
 
 var db *gorm.DB
 
-// Init 初始化 GORM 连接池 + AutoMigrate
+// Init 初始化 GORM 连接池 + 运行版本化迁移
 func Init(dsn string) error {
 	var err error
 	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
@@ -25,32 +28,49 @@ func Init(dsn string) error {
 		return fmt.Errorf("open DB failed: %w", err)
 	}
 
-	sqlDB, err := db.DB()
+	gormDB, err := db.DB()
 	if err != nil {
 		return fmt.Errorf("get sql.DB failed: %w", err)
 	}
 
-	if err = sqlDB.Ping(); err != nil {
+	if err = gormDB.Ping(); err != nil {
 		return fmt.Errorf("ping DB failed: %w", err)
 	}
 
-	sqlDB.SetMaxOpenConns(25)
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	gormDB.SetMaxOpenConns(25)
+	gormDB.SetMaxIdleConns(10)
+	gormDB.SetConnMaxLifetime(5 * time.Minute)
 
-	// AutoMigrate: 自动建表/加列，不删除已有数据
-	if err := db.AutoMigrate(
-		&model.File{},
-		&model.UserFile{},
-		&model.User{},
-		&model.Token{},
-		&model.AITask{},
-		&model.Share{},
-	); err != nil {
-		return fmt.Errorf("auto migrate failed: %w", err)
+	// 版本化迁移：使用 golang-migrate 按顺序执行 migrations/*.up.sql
+	if err := runMigrations(gormDB); err != nil {
+		return fmt.Errorf("migration failed: %w", err)
 	}
 
 	slog.Info("MySQL connected and migrated")
+	return nil
+}
+
+// runMigrations 执行 migrations/ 目录下的 SQL 迁移文件
+func runMigrations(db *sql.DB) error {
+	driver, err := migrateMysql.WithInstance(db, &migrateMysql.Config{})
+	if err != nil {
+		return fmt.Errorf("create migrate driver failed: %w", err)
+	}
+
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://migrations",
+		"mysql",
+		driver,
+	)
+	if err != nil {
+		return fmt.Errorf("create migrate instance failed: %w", err)
+	}
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("migration up failed: %w", err)
+	}
+
+	slog.Info("database migrations applied")
 	return nil
 }
 

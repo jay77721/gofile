@@ -74,6 +74,17 @@ func NewFileHandler(fileSvc *service.FileService, cfg *config.Config) *FileHandl
 }
 
 // UploadHandler 处理文件上传
+// @Summary 上传文件
+// @Description 支持秒传去重（通过 filehash 参数），危险文件类型（.html/.js/.exe 等）会被拒绝
+// @Tags 文件
+// @Accept multipart/form-data
+// @Produce json
+// @Security ApiKeyAuth
+// @Param file formData file true "文件"
+// @Param filehash formData string false "文件 SHA1（秒传检测）"
+// @Success 200 {object} map[string]any{code=int,msg=string,data=object{filehash=string}} "上传成功"
+// @Failure 400 {object} map[string]any{code=int,msg=string,data=nil} "参数错误或文件类型不允许"
+// @Router /file/upload [post]
 func (h *FileHandler) UploadHandler(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxUploadSize)
 
@@ -142,6 +153,17 @@ func sanitizeFilename(name string) string {
 }
 
 // DownloadHandler 下载文件（支持 HTTP Range 断点续传）
+// @Summary 下载文件
+// @Description 支持 Range 请求头实现断点续传和拖动播放
+// @Tags 文件
+// @Produce application/octet-stream
+// @Security ApiKeyAuth
+// @Param filehash query string true "文件 SHA1"
+// @Param range header string false "Range 请求头（如 bytes=0-1023）"
+// @Success 200 "完整文件内容"
+// @Success 206 "区间响应"
+// @Failure 404 "文件不存在"
+// @Router /file/download [get]
 func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
@@ -524,6 +546,15 @@ func (h *FileHandler) PurgeHandler(c *gin.Context) {
 }
 
 // FileQueryHandler 返回用户文件列表（支持分页）
+// @Summary 查询文件列表
+// @Description 支持分页，无分页参数时返回全部文件
+// @Tags 文件
+// @Produce json
+// @Security ApiKeyAuth
+// @Param page query int false "页码（从 1 开始）"
+// @Param size query int false "每页数量（1-100，默认 20）"
+// @Success 200 {object} map[string]any{code=int,msg=string,data=object{list=array,total=int,page=int,size=int}} "文件列表"
+// @Router /file/query [get]
 func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 	username := c.GetString("username")
 

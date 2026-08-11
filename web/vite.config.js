@@ -17,4 +17,8 @@ export default defineConfig({
       '/healthz': 'http://localhost:8080',
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+  },
 })
