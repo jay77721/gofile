@@ -14,6 +14,7 @@ import PreviewModal from './components/PreviewModal.vue'
 import RenameModal from './components/RenameModal.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import ShareModal from './components/ShareModal.vue'
+import AISettingsModal from './components/AISettingsModal.vue'
 import ToastHost from './components/Toast.vue'
 
 // ---- 视图状态机:files | trash | search | shares ----
@@ -30,6 +31,7 @@ const previewTarget = ref(null)
 const renameTarget = ref(null)
 const deleteTarget = ref(null)
 const shareTarget = ref(null)
+const aiSettingsOpen = ref(false)
 
 // ---- 搜索 ----
 const searchQuery = ref('')
@@ -73,7 +75,7 @@ onMounted(async () => {
   <AuthView v-if="!authed" @authed="authed = true; loadFiles()" />
 
   <div v-else class="layout">
-    <Sidebar :view="view" @navigate="switchView" @logout="authed = false; view = 'files'" />
+    <Sidebar :view="view" @navigate="switchView" @settings="aiSettingsOpen = true" @logout="authed = false; view = 'files'" />
 
     <div class="main">
       <TopBar @search="doSearch" />
@@ -105,6 +107,7 @@ onMounted(async () => {
       @done="deleteTarget = null; onFilesChanged()"
     />
     <ShareModal v-if="shareTarget" :file="shareTarget" @close="shareTarget = null" />
+    <AISettingsModal v-if="aiSettingsOpen" @close="aiSettingsOpen = false" />
     <ToastHost />
   </div>
 </template>

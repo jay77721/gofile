@@ -44,6 +44,9 @@ type Processor struct {
 	store    storage.Storage
 	cfg      *config.Config
 
+	// resolve 按用户名解析生效 Provider(用户自定义配置优先),nil 时使用默认 provider
+	resolve func(ctx context.Context, username string) Provider
+
 	queue chan taskItem
 	wg    sync.WaitGroup
 }
@@ -63,6 +66,22 @@ func NewProcessor(provider Provider, indexer Indexer, fileRepo repository.FileRe
 		cfg:      cfg,
 		queue:    make(chan taskItem, queueCapacity),
 	}
+}
+
+// WithResolver 注入按用户解析 Provider 的函数(用户级 AI 配置)
+func (p *Processor) WithResolver(fn func(ctx context.Context, username string) Provider) *Processor {
+	p.resolve = fn
+	return p
+}
+
+// providerFor 解析任务所属用户生效的 Provider,解析不到时回退默认
+func (p *Processor) providerFor(ctx context.Context, username string) Provider {
+	if p.resolve != nil {
+		if prov := p.resolve(ctx, username); prov != nil {
+			return prov
+		}
+	}
+	return p.provider
 }
 
 // Start 启动 worker pool
@@ -187,7 +206,7 @@ func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string,
 	if err != nil {
 		return "", nil, "", fmt.Errorf("extract failed: %w", err)
 	}
-	analysis, err := p.provider.Analyze(ctx, filename, text)
+	analysis, err := p.providerFor(ctx, username).Analyze(ctx, filename, text)
 	if err != nil {
 		return "", nil, "", fmt.Errorf("analyze failed: %w", err)
 	}
@@ -200,7 +219,7 @@ func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string,
 
 // indexDocument 构建向量并写入检索引擎
 func (p *Processor) indexDocument(ctx context.Context, filehash, username, filename, summary string, tags []string) error {
-	vector, err := p.provider.Embed(ctx, filename+" "+summary+" "+joinTags(tags))
+	vector, err := p.providerFor(ctx, username).Embed(ctx, filename+" "+summary+" "+joinTags(tags))
 	if err != nil {
 		return fmt.Errorf("embed failed: %w", err)
 	}

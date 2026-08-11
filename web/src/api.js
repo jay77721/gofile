@@ -33,6 +33,15 @@ export async function apiPost(path, body) {
   return parse(res)
 }
 
+// 通用 JSON 请求(POST/PUT/DELETE 用,AI 配置等结构化接口)
+export async function apiJSON(path, method = 'POST', body) {
+  const opts = { method, credentials: 'include', headers: { 'Content-Type': 'application/json' } }
+  if (body !== undefined) opts.body = JSON.stringify(body)
+  const res = await fetch(path, opts)
+  if (res.status === 401) { session.username = ''; throw new Error('登录已过期，请重新登录') }
+  return parse(res)
+}
+
 // 上传走 XMLHttpRequest(需要上传进度)
 export function apiUpload(path, fd, onProgress) {
   return new Promise((resolve, reject) => {

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { api } from '../api'
 import { fmtSize, fmtDate, canPreview } from '../utils'
 
@@ -10,6 +10,14 @@ const q = ref(props.query)
 const results = ref([])
 const loading = ref(false)
 const msg = ref('')
+const aiMode = ref('') // '' 未知 | openai 真实 Provider | mock 演示模式
+
+onMounted(async () => {
+  try {
+    const d = await api('/ai/config')
+    aiMode.value = d?.mode === 'openai' ? 'openai' : 'mock'
+  } catch { /* AI 未启用时保持未知 */ }
+})
 
 async function search(text) {
   const query = (text ?? q.value).trim()
@@ -40,6 +48,8 @@ if (props.query) search(props.query)
     <div class="search-head">
       <h3>AI 语义搜索</h3>
       <span class="hint">支持自然语言：时间 + 类型 + 语义组合，如「最近3天上传的PDF」</span>
+      <span v-if="aiMode === 'openai'" class="mode-badge real">真实 Provider</span>
+      <span v-else-if="aiMode === 'mock'" class="mode-badge">演示模式</span>
     </div>
 
     <div class="search-bar">
@@ -71,9 +81,14 @@ if (props.query) search(props.query)
 </template>
 
 <style scoped>
-.search-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+.search-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .search-head h3 { font-size: 15px; font-weight: 600; }
 .search-head .hint { font-size: 12px; color: var(--text-muted); }
+.mode-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: var(--surface-hover); color: var(--text-dim);
+}
+.mode-badge.real { background: var(--primary-soft); color: var(--primary); }
 .search-bar { display: flex; gap: 8px; margin-bottom: 16px; }
 .search-bar input {
   flex: 1; padding: 10px 14px; border-radius: var(--radius-sm);

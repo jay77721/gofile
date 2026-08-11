@@ -212,6 +212,34 @@ curl -b cookies.txt "http://localhost:8080/file/ai/duplicates?filehash=HASH&thre
 > Zero-cost local try-out: set `AI_PROVIDER=mock` — no API key needed to exercise the whole
 > pipeline (deterministic summaries/tags/vectors for development and testing).
 
+### Per-user AI provider (custom baseURL + API key)
+
+Each logged-in user can configure their own OpenAI-compatible endpoint from the web UI
+(**AI Settings** in the sidebar) — no server restart needed:
+
+- **Base URL**: any OpenAI-protocol endpoint (`https://api.openai.com/v1`, DeepSeek,
+  vLLM, OneAPI, local Ollama…); empty = official default
+- **API key**: stored AES-GCM encrypted (`AI_CONFIG_SECRET`), never returned in plaintext
+  (masked only, e.g. `sk-t****1234`)
+- **Test connection**: chat + embedding probe before saving; reports dimension mismatch
+  (semantic search falls back to keyword matching when the embedder doesn't match the index)
+- **Priority**: user config → env (`AI_PROVIDER`/`AI_API_KEY`) → `mock`
+
+Private/internal network URLs are rejected by default (SSRF protection); set
+`ALLOW_PRIVATE_AI_URL=true` to allow local endpoints such as Ollama.
+
+```bash
+# API (all require auth)
+curl -b cookies.txt "http://localhost:8080/ai/config"                          # GET  view (masked)
+curl -b cookies.txt -X POST "http://localhost:8080/ai/config" \
+  -H 'Content-Type: application/json' \
+  -d '{"base_url":"https://api.deepseek.com/v1","api_key":"sk-xxx","model":"deepseek-chat","embed_model":"text-embedding-3-small"}'
+curl -b cookies.txt -X POST "http://localhost:8080/ai/config/test" \
+  -H 'Content-Type: application/json' \
+  -d '{"base_url":"https://api.deepseek.com/v1","api_key":"sk-xxx","model":"deepseek-chat"}'  # probe, not saved
+curl -b cookies.txt -X DELETE "http://localhost:8080/ai/config"               # reset to env/mock
+```
+
 ---
 
 ## ⚙️ Configuration
@@ -258,6 +286,8 @@ All settings come from environment variables; a `.env` file is supported (see `.
 | `AI_WORKERS` | `4` | Async analysis workers |
 | `TYPESENSE_URL` | `http://localhost:8108` | Search engine URL |
 | `TYPESENSE_API_KEY` | `xyz` | Typesense API key |
+| `AI_CONFIG_SECRET` | derived from DSN | AES key for per-user API keys (set a random value) |
+| `ALLOW_PRIVATE_AI_URL` | `false` | Allow custom baseURL to point at private networks (local Ollama); SSRF guard |
 
 ---
 

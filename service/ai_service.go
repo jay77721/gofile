@@ -25,11 +25,30 @@ type AIService struct {
 	indexer  ai.Indexer
 	provider ai.Provider
 	fileRepo repository.FileRepository
+
+	// resolve 按用户名解析生效 Provider(用户自定义配置优先),nil 时使用默认 provider
+	resolve func(ctx context.Context, username string) ai.Provider
 }
 
 // NewAIService 创建 AI 检索服务
 func NewAIService(indexer ai.Indexer, provider ai.Provider, fileRepo repository.FileRepository) *AIService {
 	return &AIService{indexer: indexer, provider: provider, fileRepo: fileRepo}
+}
+
+// WithResolver 注入按用户解析 Provider 的函数(用户级 AI 配置)
+func (s *AIService) WithResolver(fn func(ctx context.Context, username string) ai.Provider) *AIService {
+	s.resolve = fn
+	return s
+}
+
+// providerFor 解析当前用户生效的 Provider,解析不到时回退默认
+func (s *AIService) providerFor(ctx context.Context, username string) ai.Provider {
+	if s.resolve != nil {
+		if prov := s.resolve(ctx, username); prov != nil {
+			return prov
+		}
+	}
+	return s.provider
 }
 
 // Search 对话式语义检索（自然语言 → 结构化过滤 + 全文+向量混合检索）
@@ -49,7 +68,7 @@ func (s *AIService) Search(ctx context.Context, username, q string, page, size i
 	filter := ai.ParseQuery(q)
 
 	// 2. 构建向量（用过滤后的语义词）
-	vector, err := s.provider.Embed(ctx, filter.SemanticQuery)
+	vector, err := s.providerFor(ctx, username).Embed(ctx, filter.SemanticQuery)
 	if err != nil {
 		slog.WarnContext(ctx, "ai search: embed failed, fallback LIKE", "error", err)
 		return s.fallbackLike(ctx, username, q, page, size), nil
@@ -120,7 +139,7 @@ func (s *AIService) Similar(ctx context.Context, username, filehash string, limi
 	if err != nil {
 		return nil, fmt.Errorf("file not found or no permission")
 	}
-	vector, err := s.provider.Embed(ctx, fMeta.FileName+" "+fMeta.Summary)
+	vector, err := s.providerFor(ctx, username).Embed(ctx, fMeta.FileName+" "+fMeta.Summary)
 	if err != nil {
 		return nil, fmt.Errorf("embed failed: %w", err)
 	}

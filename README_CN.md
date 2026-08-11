@@ -213,6 +213,31 @@ curl -b cookies.txt "http://localhost:8080/file/ai/duplicates?filehash=HASH&thre
 > 本地零成本体验:设置 `AI_PROVIDER=mock`,无需任何 API Key 即可跑通全链路
 > (mock provider 生成确定性摘要/标签/向量,便于开发和测试)。
 
+### 每用户 AI Provider(自定义 baseURL + API key)
+
+登录用户在网页侧边栏「**AI 设置**」中可配置自己的 OpenAI 兼容端点,保存即生效,无需重启服务:
+
+- **Base URL**:任意 OpenAI 协议端点(`https://api.openai.com/v1`、DeepSeek、vLLM、
+  OneAPI、本地 Ollama…);留空 = 官方默认
+- **API key**:AES-GCM 加密落库(`AI_CONFIG_SECRET`),任何接口只回传掩码(如 `sk-t****1234`),不下发明文
+- **测试连接**:保存前先探测对话 + embedding 接口;embedding 维度与检索引擎不一致时给出警告
+  (语义搜索降级为关键词匹配,摘要功能不受影响)
+- **生效优先级**:用户配置 → env(`AI_PROVIDER`/`AI_API_KEY`)→ `mock` 演示模式
+
+默认拒绝内网/本机地址(防 SSRF);本地 Ollama 场景设置 `ALLOW_PRIVATE_AI_URL=true` 放行。
+
+```bash
+# API(均需登录)
+curl -b cookies.txt "http://localhost:8080/ai/config"                          # 查看(掩码)
+curl -b cookies.txt -X POST "http://localhost:8080/ai/config" \
+  -H 'Content-Type: application/json' \
+  -d '{"base_url":"https://api.deepseek.com/v1","api_key":"sk-xxx","model":"deepseek-chat","embed_model":"text-embedding-3-small"}'
+curl -b cookies.txt -X POST "http://localhost:8080/ai/config/test" \
+  -H 'Content-Type: application/json' \
+  -d '{"base_url":"https://api.deepseek.com/v1","api_key":"sk-xxx","model":"deepseek-chat"}'  # 只测试,不保存
+curl -b cookies.txt -X DELETE "http://localhost:8080/ai/config"               # 清除,回退 env/mock
+```
+
 ---
 
 ## ⚙️ 配置
@@ -259,6 +284,8 @@ curl -b cookies.txt "http://localhost:8080/file/ai/duplicates?filehash=HASH&thre
 | `AI_WORKERS` | `4` | 异步分析 worker 数 |
 | `TYPESENSE_URL` | `http://localhost:8108` | 检索引擎地址 |
 | `TYPESENSE_API_KEY` | `xyz` | Typesense API Key |
+| `AI_CONFIG_SECRET` | 由 DSN 派生 | 每用户 API key 的 AES 加密密钥(建议设置随机值) |
+| `ALLOW_PRIVATE_AI_URL` | `false` | 允许自定义 baseURL 指向内网(本地 Ollama);SSRF 防护 |
 
 ---
 

@@ -76,3 +76,13 @@ CREATE TABLE IF NOT EXISTS tbl_share (
   INDEX idx_share_file (file_sha1),
   INDEX idx_share_expire (expire_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件分享表';
+
+-- 用户级 AI Provider 配置(前端自定义 OpenAI 协议 baseURL/API key)
+CREATE TABLE IF NOT EXISTS tbl_ai_config (
+  user_name varchar(64) NOT NULL PRIMARY KEY COMMENT '用户名',
+  base_url varchar(512) NOT NULL DEFAULT '' COMMENT 'OpenAI 协议端点,空为系统默认',
+  api_key_enc varchar(512) NOT NULL DEFAULT '' COMMENT 'API Key AES-GCM 密文(base64),不下发明文',
+  model varchar(128) NOT NULL DEFAULT '' COMMENT '对话模型名',
+  embed_model varchar(128) NOT NULL DEFAULT '' COMMENT 'embedding 模型名',
+  update_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户 AI Provider 配置表';

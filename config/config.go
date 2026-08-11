@@ -27,14 +27,16 @@ type Config struct {
 	RedisDB       int    // Redis 数据库编号，默认 0
 
 	// AI 功能配置
-	AIEnabled       bool   // AI 功能总开关，默认 false
-	AIProvider      string // LLM 供应商：mock | anthropic | openai，默认 mock
-	AIAPIKey        string // LLM API Key（mock 下忽略）
-	AIModel         string // LLM 模型名（空则用各 provider 默认值）
-	AIEmbedDim      int    // 向量维度，默认 128
-	AIWorkers       int    // 异步 worker 数量，默认 4
-	TypesenseURL    string // Typesense 地址，默认 http://localhost:8108
-	TypesenseAPIKey string // Typesense API Key，默认 xyz
+	AIEnabled         bool   // AI 功能总开关，默认 false
+	AIProvider        string // LLM 供应商：mock | anthropic | openai，默认 mock
+	AIAPIKey          string // LLM API Key（mock 下忽略）
+	AIModel           string // LLM 模型名（空则用各 provider 默认值）
+	AIEmbedDim        int    // 向量维度，默认 128
+	AIWorkers         int    // 异步 worker 数量，默认 4
+	TypesenseURL      string // Typesense 地址，默认 http://localhost:8108
+	TypesenseAPIKey   string // Typesense API Key，默认 xyz
+	AIConfigSecret    string // 用户自定义 API key 的 AES 加密密钥，缺失时从 DSN 派生
+	AllowPrivateAIURL bool   // 是否允许自定义 baseURL 指向内网（默认 false，本地 Ollama 场景开启）
 }
 
 // Load 从环境变量加载配置，提供合理默认值
@@ -59,14 +61,16 @@ func Load() *Config {
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvInt("REDIS_DB", 0),
 
-		AIEnabled:       getEnvBool("AI_ENABLED", false),
-		AIProvider:      getEnv("AI_PROVIDER", "mock"),
-		AIAPIKey:        getEnv("AI_API_KEY", ""),
-		AIModel:         getEnv("AI_MODEL", ""),
-		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 128),
-		AIWorkers:       getEnvInt("AI_WORKERS", 4),
-		TypesenseURL:    getEnv("TYPESENSE_URL", "http://localhost:8108"),
-		TypesenseAPIKey: getEnv("TYPESENSE_API_KEY", "xyz"),
+		AIEnabled:         getEnvBool("AI_ENABLED", false),
+		AIProvider:        getEnv("AI_PROVIDER", "mock"),
+		AIAPIKey:          getEnv("AI_API_KEY", ""),
+		AIModel:           getEnv("AI_MODEL", ""),
+		AIEmbedDim:        getEnvInt("AI_EMBED_DIM", 128),
+		AIWorkers:         getEnvInt("AI_WORKERS", 4),
+		TypesenseURL:      getEnv("TYPESENSE_URL", "http://localhost:8108"),
+		TypesenseAPIKey:   getEnv("TYPESENSE_API_KEY", "xyz"),
+		AIConfigSecret:    getEnv("AI_CONFIG_SECRET", ""),
+		AllowPrivateAIURL: getEnvBool("ALLOW_PRIVATE_AI_URL", false),
 	}
 
 	// MySQL DSN 未设置时使用默认值（本地开发）
@@ -75,6 +79,15 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+// AIConfigSecretKey 返回 API key 加密密钥:
+// 优先 AI_CONFIG_SECRET;未配置时从 MySQL DSN 派生(保证重启后仍可解密已有密文)
+func (c *Config) AIConfigSecretKey() string {
+	if c.AIConfigSecret != "" {
+		return c.AIConfigSecret
+	}
+	return "gofile-secret:" + c.MySQLDSN
 }
 
 // loadDotEnv 加载 .env 文件中的变量（不覆盖已存在的环境变量）

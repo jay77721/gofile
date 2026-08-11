@@ -89,6 +89,7 @@ func main() {
 	// 初始化 AI 功能（可选，AI_ENABLED=false 时跳过，不影响主链路）
 	var aiProcessor *ai.Processor
 	var aiHandler *handler.AIHandler
+	var aiCfgHandler *handler.AIConfigHandler
 	if cfg.AIEnabled {
 		aiRepo := repository.NewAITaskRepository(db)
 		provider := ai.NewProvider(cfg)
@@ -108,6 +109,13 @@ func main() {
 
 		aiSvc := service.NewAIService(indexer, provider, fileRepo)
 		aiHandler = handler.NewAIHandler(aiSvc)
+
+		// 用户级 AI Provider 配置:自定义 OpenAI 协议 baseURL/API key
+		// 解析器注入 Processor(异步分析)与 AIService(语义搜索),按任务用户名生效
+		aiCfgSvc := service.NewAIConfigService(repository.NewAIConfigRepository(db), cfg, provider)
+		aiProcessor.WithResolver(aiCfgSvc.ResolveProvider)
+		aiSvc.WithResolver(aiCfgSvc.ResolveProvider)
+		aiCfgHandler = handler.NewAIConfigHandler(aiCfgSvc)
 
 		slog.Info("AI features enabled", "provider", cfg.AIProvider, "embedDim", cfg.AIEmbedDim, "workers", cfg.AIWorkers)
 	}
@@ -203,6 +211,17 @@ func main() {
 			file.GET("/ai/search", aiHandler.SearchHandler)
 			file.GET("/ai/similar", aiHandler.SimilarHandler)
 			file.GET("/ai/duplicates", aiHandler.DuplicatesHandler)
+		}
+	}
+
+	// AI Provider 配置（自定义 OpenAI 协议 baseURL/API key,需鉴权）
+	if aiCfgHandler != nil {
+		aiCfg := r.Group("/ai/config", authMiddleware.Middleware())
+		{
+			aiCfg.GET("", aiCfgHandler.GetConfigHandler)
+			aiCfg.POST("", aiCfgHandler.SaveConfigHandler)
+			aiCfg.DELETE("", aiCfgHandler.DeleteConfigHandler)
+			aiCfg.POST("/test", aiCfgHandler.TestConfigHandler)
 		}
 	}
 
