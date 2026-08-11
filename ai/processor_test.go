@@ -30,7 +30,7 @@ func taskKey(filehash, username string) string {
 	return filehash + ":" + username
 }
 
-func (m *mockAITaskRepo) CreateTask(task *model.AITask) error {
+func (m *mockAITaskRepo) CreateTask(ctx context.Context, task *model.AITask) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := taskKey(task.FileSha1, task.Username)
@@ -42,7 +42,7 @@ func (m *mockAITaskRepo) CreateTask(task *model.AITask) error {
 	return nil
 }
 
-func (m *mockAITaskRepo) GetTask(filehash, username string) (*model.AITask, error) {
+func (m *mockAITaskRepo) GetTask(ctx context.Context, filehash, username string) (*model.AITask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := taskKey(filehash, username)
@@ -53,7 +53,7 @@ func (m *mockAITaskRepo) GetTask(filehash, username string) (*model.AITask, erro
 	return nil, errors.New("not found")
 }
 
-func (m *mockAITaskRepo) MarkProcessing(filehash, username string) error {
+func (m *mockAITaskRepo) MarkProcessing(ctx context.Context, filehash, username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if t, ok := m.tasks[taskKey(filehash, username)]; ok {
@@ -62,7 +62,7 @@ func (m *mockAITaskRepo) MarkProcessing(filehash, username string) error {
 	return nil
 }
 
-func (m *mockAITaskRepo) MarkDone(filehash, username string) error {
+func (m *mockAITaskRepo) MarkDone(ctx context.Context, filehash, username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if t, ok := m.tasks[taskKey(filehash, username)]; ok {
@@ -71,7 +71,7 @@ func (m *mockAITaskRepo) MarkDone(filehash, username string) error {
 	return nil
 }
 
-func (m *mockAITaskRepo) MarkFailed(filehash, username, errMsg string) error {
+func (m *mockAITaskRepo) MarkFailed(ctx context.Context, filehash, username, errMsg string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if t, ok := m.tasks[taskKey(filehash, username)]; ok {
@@ -82,7 +82,7 @@ func (m *mockAITaskRepo) MarkFailed(filehash, username, errMsg string) error {
 	return nil
 }
 
-func (m *mockAITaskRepo) ListRequeueable(maxRetry int) ([]model.AITask, error) {
+func (m *mockAITaskRepo) ListRequeueable(ctx context.Context, maxRetry int) ([]model.AITask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []model.AITask
@@ -94,7 +94,7 @@ func (m *mockAITaskRepo) ListRequeueable(maxRetry int) ([]model.AITask, error) {
 	return out, nil
 }
 
-func (m *mockAITaskRepo) CleanupExpired(before time.Time) error {
+func (m *mockAITaskRepo) CleanupExpired(ctx context.Context, before time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for k, t := range m.tasks {
@@ -116,7 +116,7 @@ func newMockFileRepoForProc() *mockFileRepoForProc {
 	return &mockFileRepoForProc{files: make(map[string]model.File)}
 }
 
-func (m *mockFileRepoForProc) SaveAnalysis(filehash, summary, tags string) error {
+func (m *mockFileRepoForProc) SaveAnalysis(ctx context.Context, filehash, summary, tags string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	f := m.files[filehash]
@@ -126,7 +126,7 @@ func (m *mockFileRepoForProc) SaveAnalysis(filehash, summary, tags string) error
 	return nil
 }
 
-func (m *mockFileRepoForProc) GetGlobalFile(filehash string) (model.File, error) {
+func (m *mockFileRepoForProc) GetGlobalFile(ctx context.Context, filehash string) (model.File, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if f, ok := m.files[filehash]; ok {
@@ -136,34 +136,34 @@ func (m *mockFileRepoForProc) GetGlobalFile(filehash string) (model.File, error)
 }
 
 // 以下方法仅为满足 repository.FileRepository 接口，processor 不调用
-func (m *mockFileRepoForProc) Create(f model.File) error              { return nil }
-func (m *mockFileRepoForProc) CreateUserFile(uf model.UserFile) error { return nil }
-func (m *mockFileRepoForProc) GetByHash(filehash, username string) (model.FileMeta, error) {
+func (m *mockFileRepoForProc) Create(ctx context.Context, f model.File) error              { return nil }
+func (m *mockFileRepoForProc) CreateUserFile(ctx context.Context, uf model.UserFile) error { return nil }
+func (m *mockFileRepoForProc) GetByHash(ctx context.Context, filehash, username string) (model.FileMeta, error) {
 	return model.FileMeta{}, nil
 }
-func (m *mockFileRepoForProc) ListByUser(username string) ([]model.FileMeta, error) {
+func (m *mockFileRepoForProc) ListByUser(ctx context.Context, username string) ([]model.FileMeta, error) {
 	return nil, nil
 }
-func (m *mockFileRepoForProc) CountByUser(username string) (int64, error) { return 0, nil }
-func (m *mockFileRepoForProc) ListByUserPaged(username string, page, size int) ([]model.FileMeta, error) {
+func (m *mockFileRepoForProc) CountByUser(ctx context.Context, username string) (int64, error) { return 0, nil }
+func (m *mockFileRepoForProc) ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, error) {
 	return nil, nil
 }
-func (m *mockFileRepoForProc) Delete(filehash, username string) (bool, error) { return false, nil }
-func (m *mockFileRepoForProc) UpdateName(filehash, username, newFilename string) (bool, error) {
+func (m *mockFileRepoForProc) Delete(ctx context.Context, filehash, username string) (bool, error) { return false, nil }
+func (m *mockFileRepoForProc) UpdateName(ctx context.Context, filehash, username, newFilename string) (bool, error) {
 	return false, nil
 }
-func (m *mockFileRepoForProc) CountRefs(filehash string) (int64, error) { return 0, nil }
-func (m *mockFileRepoForProc) ListTrash(username string, page, size int) ([]model.FileMeta, int64, error) {
+func (m *mockFileRepoForProc) CountRefs(ctx context.Context, filehash string) (int64, error) { return 0, nil }
+func (m *mockFileRepoForProc) ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockFileRepoForProc) Restore(filehash, username string) (bool, error) { return false, nil }
-func (m *mockFileRepoForProc) PurgeUserFile(filehash, username string) (bool, error) {
+func (m *mockFileRepoForProc) Restore(ctx context.Context, filehash, username string) (bool, error) { return false, nil }
+func (m *mockFileRepoForProc) PurgeUserFile(ctx context.Context, filehash, username string) (bool, error) {
 	return false, nil
 }
-func (m *mockFileRepoForProc) ListOldest(before time.Time) ([]model.File, error) {
+func (m *mockFileRepoForProc) ListOldest(ctx context.Context, before time.Time) ([]model.File, error) {
 	return nil, nil
 }
-func (m *mockFileRepoForProc) RemoveOrphan(filehash string) error { return nil }
+func (m *mockFileRepoForProc) RemoveOrphan(ctx context.Context, filehash string) error { return nil }
 
 // storage mock（最小实现，满足 storage.Storage 接口）
 type mockStorage struct {
@@ -224,7 +224,7 @@ func TestProcessor_Idempotent(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// 任务应为 done
-	task, err := aiRepo.GetTask("hash1", "alice")
+	task, err := aiRepo.GetTask(context.Background(), "hash1", "alice")
 	if err != nil {
 		t.Fatalf("task not found: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestProcessor_FailAndRequeue(t *testing.T) {
 	p.Enqueue(context.Background(), "hash2", "bad.txt", "bob")
 	time.Sleep(500 * time.Millisecond)
 
-	task, _ := aiRepo.GetTask("hash2", "bob")
+	task, _ := aiRepo.GetTask(context.Background(), "hash2", "bob")
 	if task.Status != 3 {
 		t.Errorf("task should be failed(3), got %d", task.Status)
 	}
@@ -274,7 +274,7 @@ func TestProcessor_FailAndRequeue(t *testing.T) {
 	// RequeueFailed 应重新入队
 	p.RequeueFailed(context.Background())
 	time.Sleep(500 * time.Millisecond)
-	task2, _ := aiRepo.GetTask("hash2", "bob")
+	task2, _ := aiRepo.GetTask(context.Background(), "hash2", "bob")
 	if task2.RetryCount < 2 {
 		t.Errorf("after requeue retry_count should increase, got %d", task2.RetryCount)
 	}
@@ -300,7 +300,7 @@ func TestProcessor_FastDedupSkipsLLM(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("should skip LLM on fast-dedup, but Analyze called %d times", callCount)
 	}
-	task, _ := aiRepo.GetTask("hash3", "carol")
+	task, _ := aiRepo.GetTask(context.Background(), "hash3", "carol")
 	if task.Status != 2 {
 		t.Errorf("task should be done, got %d", task.Status)
 	}

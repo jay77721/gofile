@@ -487,10 +487,10 @@ func setupRangeTestHandler(t *testing.T) (*FileHandler, string) {
 
 	const hash = "abcdef0123456789abcdef0123456789abcdef01"
 	content := []byte("0123456789")
-	if err := fileRepo.Create(model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
+	if err := fileRepo.Create(context.Background(), model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fileRepo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+	if err := fileRepo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put(context.Background(), hash, bytes.NewReader(content), int64(len(content))); err != nil {
@@ -557,16 +557,16 @@ func setupTrashTestHandler(t *testing.T) (*FileHandler, string) {
 
 	const hash = "abcdef0123456789abcdef0123456789abcdef01"
 	content := []byte("0123456789")
-	if err := fileRepo.Create(model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
+	if err := fileRepo.Create(context.Background(), model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fileRepo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+	if err := fileRepo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put(context.Background(), hash, bytes.NewReader(content), int64(len(content))); err != nil {
 		t.Fatal(err)
 	}
-	if err := fileSvc.Delete(hash, "alice"); err != nil {
+	if err := fileSvc.Delete(context.Background(), hash, "alice"); err != nil {
 		t.Fatal(err)
 	}
 	return fh, hash

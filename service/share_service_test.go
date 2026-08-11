@@ -19,10 +19,10 @@ func newTestShareSvc(t *testing.T) (*ShareService, *storage.LocalStorage, string
 	dir := t.TempDir()
 	store := storage.NewLocal(dir)
 	fileRepo := repository.NewMockFileRepository()
-	if err := fileRepo.Create(model.File{FileSha1: hash, FileSize: 10}); err != nil {
+	if err := fileRepo.Create(context.Background(), model.File{FileSha1: hash, FileSize: 10}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fileRepo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+	if err := fileRepo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put(context.Background(), hash, strings.NewReader("0123456789"), 10); err != nil {
@@ -118,7 +118,7 @@ func TestShareService(t *testing.T) {
 			share, _ := svc.Create(ctx, "alice", hash, 7, "")
 			// 用新的 FileService 删除文件(共享同一 mock repo)
 			fileSvc := NewFileService(svc.fileRepo, storage.NewLocal(t.TempDir()), nil)
-			if err := fileSvc.Delete(hash, "alice"); err != nil {
+			if err := fileSvc.Delete(context.Background(), hash, "alice"); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := svc.Resolve(ctx, share.ShareToken, ""); !errors.Is(err, ErrShareFileGone) {
@@ -141,7 +141,7 @@ func TestShareListHasPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	shares, err := svc.List("alice")
+	shares, err := svc.List(context.Background(), "alice")
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}

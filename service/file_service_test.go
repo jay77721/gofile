@@ -15,10 +15,10 @@ import (
 func newTestFileService(t *testing.T, hash, content string) *FileService {
 	t.Helper()
 	repo := repository.NewMockFileRepository()
-	if err := repo.Create(model.File{FileSha1: hash, FileName: "a.txt", FileSize: int64(len(content))}); err != nil {
+	if err := repo.Create(context.Background(), model.File{FileSha1: hash, FileName: "a.txt", FileSize: int64(len(content))}); err != nil {
 		t.Fatalf("repo.Create failed: %v", err)
 	}
-	if err := repo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+	if err := repo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
 		t.Fatalf("repo.CreateUserFile failed: %v", err)
 	}
 
@@ -115,15 +115,15 @@ func TestTrashLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// 软删除
-	if err := svc.Delete(hash, "alice"); err != nil {
+	if err := svc.Delete(context.Background(), hash, "alice"); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 	// 删除后正常列表不可见
-	if files, _, err := svc.ListByUserPaged("alice", 1, 10); err != nil || len(files) != 0 {
+	if files, _, err := svc.ListByUserPaged(context.Background(), "alice", 1, 10); err != nil || len(files) != 0 {
 		t.Errorf("active list after delete = %d files (err=%v), want 0", len(files), err)
 	}
 	// 回收站可见
-	trash, total, err := svc.ListTrash("alice", 1, 10)
+	trash, total, err := svc.ListTrash(context.Background(), "alice", 1, 10)
 	if err != nil || total != 1 || len(trash) != 1 {
 		t.Fatalf("ListTrash = %d/%d (err=%v), want 1/1", len(trash), total, err)
 	}
@@ -135,25 +135,25 @@ func TestTrashLifecycle(t *testing.T) {
 	if err := svc.Restore(ctx, hash, "alice"); err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
-	if files, _, _ := svc.ListByUserPaged("alice", 1, 10); len(files) != 1 {
+	if files, _, _ := svc.ListByUserPaged(context.Background(), "alice", 1, 10); len(files) != 1 {
 		t.Errorf("active list after restore = %d, want 1", len(files))
 	}
-	if _, total, _ := svc.ListTrash("alice", 1, 10); total != 0 {
+	if _, total, _ := svc.ListTrash(context.Background(), "alice", 1, 10); total != 0 {
 		t.Errorf("trash after restore = %d, want 0", total)
 	}
 
 	// 恢复后再次删除 → 彻底删除
-	if err := svc.Delete(hash, "alice"); err != nil {
+	if err := svc.Delete(context.Background(), hash, "alice"); err != nil {
 		t.Fatalf("second Delete failed: %v", err)
 	}
 	if err := svc.Purge(ctx, hash, "alice"); err != nil {
 		t.Fatalf("Purge failed: %v", err)
 	}
 	// 彻底删除后列表与回收站都为空
-	if files, _, _ := svc.ListByUserPaged("alice", 1, 10); len(files) != 0 {
+	if files, _, _ := svc.ListByUserPaged(context.Background(), "alice", 1, 10); len(files) != 0 {
 		t.Errorf("active list after purge = %d, want 0", len(files))
 	}
-	if _, total, _ := svc.ListTrash("alice", 1, 10); total != 0 {
+	if _, total, _ := svc.ListTrash(context.Background(), "alice", 1, 10); total != 0 {
 		t.Errorf("trash after purge = %d, want 0", total)
 	}
 	// 存储层已清理
@@ -183,7 +183,7 @@ func TestFastUploadOwnership(t *testing.T) {
 	}
 
 	// bob 现在拥有该文件:可查询、可下载
-	meta, err := svc.GetMeta(hash, "bob")
+	meta, err := svc.GetMeta(context.Background(), hash, "bob")
 	if err != nil {
 		t.Fatalf("bob should own file after fast upload: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestFastUploadMiss(t *testing.T) {
 	if exists {
 		t.Fatal("expected exists=false for missing file")
 	}
-	if _, err := svc.GetMeta(hash, "bob"); err == nil {
+	if _, err := svc.GetMeta(context.Background(), hash, "bob"); err == nil {
 		t.Fatal("bob should not own a file that was never uploaded")
 	}
 }

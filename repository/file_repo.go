@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"gofile/model"
 	"log/slog"
@@ -13,37 +14,37 @@ import (
 // FileRepository 文件数据访问接口
 type FileRepository interface {
 	// Create 注册全局文件（按 SHA1 去重，已存在则忽略）
-	Create(f model.File) error
+	Create(ctx context.Context, f model.File) error
 	// CreateUserFile 建立用户文件拥有关系（幂等）
-	CreateUserFile(uf model.UserFile) error
+	CreateUserFile(ctx context.Context, uf model.UserFile) error
 	// GetByHash 按 hash 和用户名获取文件元信息
-	GetByHash(filehash, username string) (model.FileMeta, error)
+	GetByHash(ctx context.Context, filehash, username string) (model.FileMeta, error)
 	// ListByUser 获取用户的所有文件
-	ListByUser(username string) ([]model.FileMeta, error)
+	ListByUser(ctx context.Context, username string) ([]model.FileMeta, error)
 	// CountByUser 统计用户文件总数
-	CountByUser(username string) (int64, error)
+	CountByUser(ctx context.Context, username string) (int64, error)
 	// ListTrash 分页查询用户回收站文件（status=2）
-	ListTrash(username string, page, size int) ([]model.FileMeta, int64, error)
+	ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error)
 	// Restore 恢复软删除文件（status 2→1）
-	Restore(filehash, username string) (bool, error)
+	Restore(ctx context.Context, filehash, username string) (bool, error)
 	// PurgeUserFile 彻底删除用户文件关联行
-	PurgeUserFile(filehash, username string) (bool, error)
+	PurgeUserFile(ctx context.Context, filehash, username string) (bool, error)
 	// ListByUserPaged 分页查询用户文件（批量查询避免 N+1）
-	ListByUserPaged(username string, page, size int) ([]model.FileMeta, error)
+	ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, error)
 	// Delete 软删除用户文件（status=2）
-	Delete(filehash, username string) (bool, error)
+	Delete(ctx context.Context, filehash, username string) (bool, error)
 	// UpdateName 更新用户文件名
-	UpdateName(filehash, username, newFilename string) (bool, error)
+	UpdateName(ctx context.Context, filehash, username, newFilename string) (bool, error)
 	// CountRefs 统计某文件在 tbl_user_file 中的活跃引用数
-	CountRefs(filehash string) (int64, error)
+	CountRefs(ctx context.Context, filehash string) (int64, error)
 	// ListOldest 列出创建时间早于 before 的全局文件（GC 候选）
-	ListOldest(before time.Time) ([]model.File, error)
+	ListOldest(ctx context.Context, before time.Time) ([]model.File, error)
 	// RemoveOrphan 从 tbl_file 删除无引用的全局文件记录
-	RemoveOrphan(filehash string) error
+	RemoveOrphan(ctx context.Context, filehash string) error
 	// SaveAnalysis 写入 AI 生成的摘要与标签（全局文件维度，幂等）
-	SaveAnalysis(filehash, summary, tags string) error
+	SaveAnalysis(ctx context.Context, filehash, summary, tags string) error
 	// GetGlobalFile 按 hash 读取全局文件（含摘要/标签），不带用户维度
-	GetGlobalFile(filehash string) (model.File, error)
+	GetGlobalFile(ctx context.Context, filehash string) (model.File, error)
 }
 
 // mysqlFileRepo GORM 实现的 FileRepository
@@ -57,32 +58,32 @@ func NewFileRepository(db *gorm.DB) FileRepository {
 }
 
 // Create 注册全局文件，已存在则忽略（幂等）
-func (r *mysqlFileRepo) Create(f model.File) error {
+func (r *mysqlFileRepo) Create(ctx context.Context, f model.File) error {
 	// OnConflict DoNothing 等价于 INSERT IGNORE
-	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&f).Error; err != nil {
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&f).Error; err != nil {
 		return fmt.Errorf("create file failed: %w", err)
 	}
 	return nil
 }
 
 // CreateUserFile 建立用户文件拥有关系，已存在则忽略（幂等）
-func (r *mysqlFileRepo) CreateUserFile(uf model.UserFile) error {
-	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&uf).Error; err != nil {
+func (r *mysqlFileRepo) CreateUserFile(ctx context.Context, uf model.UserFile) error {
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&uf).Error; err != nil {
 		return fmt.Errorf("create user file failed: %w", err)
 	}
 	return nil
 }
 
 // GetByHash 查询用户拥有的某个文件（JOIN tbl_file）
-func (r *mysqlFileRepo) GetByHash(filehash, username string) (model.FileMeta, error) {
+func (r *mysqlFileRepo) GetByHash(ctx context.Context, filehash, username string) (model.FileMeta, error) {
 	var uf model.UserFile
-	if err := r.db.Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
+	if err := r.db.WithContext(ctx).Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
 		First(&uf).Error; err != nil {
 		return model.FileMeta{}, fmt.Errorf("get user file failed: %w", err)
 	}
 
 	var f model.File
-	if err := r.db.Where("file_sha1 = ?", filehash).First(&f).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("file_sha1 = ?", filehash).First(&f).Error; err != nil {
 		return model.FileMeta{}, fmt.Errorf("get file failed: %w", err)
 	}
 
@@ -98,9 +99,9 @@ func (r *mysqlFileRepo) GetByHash(filehash, username string) (model.FileMeta, er
 }
 
 // ListByUser 查询用户的所有文件
-func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
+func (r *mysqlFileRepo) ListByUser(ctx context.Context, username string) ([]model.FileMeta, error) {
 	var ufs []model.UserFile
-	if err := r.db.Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
+	if err := r.db.WithContext(ctx).Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
 		Order("create_at DESC").
 		Find(&ufs).Error; err != nil {
 		return nil, fmt.Errorf("query user files failed: %w", err)
@@ -109,7 +110,7 @@ func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 	files := make([]model.FileMeta, 0, len(ufs))
 	for _, uf := range ufs {
 		var f model.File
-		if err := r.db.Where("file_sha1 = ?", uf.FileSha1).First(&f).Error; err != nil {
+		if err := r.db.WithContext(ctx).Where("file_sha1 = ?", uf.FileSha1).First(&f).Error; err != nil {
 			slog.Warn("file record missing", "filehash", uf.FileSha1)
 			continue
 		}
@@ -127,9 +128,9 @@ func (r *mysqlFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 }
 
 // CountByUser 统计用户文件总数
-func (r *mysqlFileRepo) CountByUser(username string) (int64, error) {
+func (r *mysqlFileRepo) CountByUser(ctx context.Context, username string) (int64, error) {
 	var count int64
-	err := r.db.Model(&model.UserFile{}).
+	err := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
 		Count(&count).Error
 	if err != nil {
@@ -139,10 +140,10 @@ func (r *mysqlFileRepo) CountByUser(username string) (int64, error) {
 }
 
 // ListByUserPaged 分页查询用户文件（批量查询避免 N+1）
-func (r *mysqlFileRepo) ListByUserPaged(username string, page, size int) ([]model.FileMeta, error) {
+func (r *mysqlFileRepo) ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, error) {
 	var ufs []model.UserFile
 	offset := (page - 1) * size
-	if err := r.db.Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
+	if err := r.db.WithContext(ctx).Where("user_name = ? AND status = ?", username, model.UserFileStatusActive).
 		Order("create_at DESC").
 		Offset(offset).
 		Limit(size).
@@ -158,7 +159,7 @@ func (r *mysqlFileRepo) ListByUserPaged(username string, page, size int) ([]mode
 		hashes[i] = uf.FileSha1
 	}
 	var globalFiles []model.File
-	if err := r.db.Where("file_sha1 IN ?", hashes).Find(&globalFiles).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("file_sha1 IN ?", hashes).Find(&globalFiles).Error; err != nil {
 		return nil, fmt.Errorf("query global files failed: %w", err)
 	}
 	fileMap := make(map[string]model.File, len(globalFiles))
@@ -187,8 +188,8 @@ func (r *mysqlFileRepo) ListByUserPaged(username string, page, size int) ([]mode
 }
 
 // Delete 软删除用户文件（status=UserFileStatusDeleted），仅删除该用户的所有权
-func (r *mysqlFileRepo) Delete(filehash, username string) (bool, error) {
-	res := r.db.Model(&model.UserFile{}).
+func (r *mysqlFileRepo) Delete(ctx context.Context, filehash, username string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusActive).
 		Update("status", model.UserFileStatusDeleted)
 	if res.Error != nil {
@@ -198,9 +199,9 @@ func (r *mysqlFileRepo) Delete(filehash, username string) (bool, error) {
 }
 
 // ListTrash 分页查询回收站文件（status=2），批量查询避免 N+1
-func (r *mysqlFileRepo) ListTrash(username string, page, size int) ([]model.FileMeta, int64, error) {
+func (r *mysqlFileRepo) ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
 	var total int64
-	if err := r.db.Model(&model.UserFile{}).
+	if err := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("user_name = ? AND status = ?", username, model.UserFileStatusDeleted).
 		Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("count trash failed: %w", err)
@@ -211,7 +212,7 @@ func (r *mysqlFileRepo) ListTrash(username string, page, size int) ([]model.File
 
 	var ufs []model.UserFile
 	offset := (page - 1) * size
-	if err := r.db.Where("user_name = ? AND status = ?", username, model.UserFileStatusDeleted).
+	if err := r.db.WithContext(ctx).Where("user_name = ? AND status = ?", username, model.UserFileStatusDeleted).
 		Order("create_at DESC").
 		Offset(offset).
 		Limit(size).
@@ -224,7 +225,7 @@ func (r *mysqlFileRepo) ListTrash(username string, page, size int) ([]model.File
 		hashes[i] = uf.FileSha1
 	}
 	var globalFiles []model.File
-	if err := r.db.Where("file_sha1 IN ?", hashes).Find(&globalFiles).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("file_sha1 IN ?", hashes).Find(&globalFiles).Error; err != nil {
 		return nil, 0, fmt.Errorf("query global files failed: %w", err)
 	}
 	fileMap := make(map[string]model.File, len(globalFiles))
@@ -253,8 +254,8 @@ func (r *mysqlFileRepo) ListTrash(username string, page, size int) ([]model.File
 }
 
 // Restore 恢复软删除文件（status 2→1）
-func (r *mysqlFileRepo) Restore(filehash, username string) (bool, error) {
-	res := r.db.Model(&model.UserFile{}).
+func (r *mysqlFileRepo) Restore(ctx context.Context, filehash, username string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusDeleted).
 		Update("status", model.UserFileStatusActive)
 	if res.Error != nil {
@@ -264,8 +265,8 @@ func (r *mysqlFileRepo) Restore(filehash, username string) (bool, error) {
 }
 
 // PurgeUserFile 彻底删除用户文件关联行（回收站场景，不触发 GC 兜底条件检查）
-func (r *mysqlFileRepo) PurgeUserFile(filehash, username string) (bool, error) {
-	res := r.db.Where("file_sha1 = ? AND user_name = ?", filehash, username).
+func (r *mysqlFileRepo) PurgeUserFile(ctx context.Context, filehash, username string) (bool, error) {
+	res := r.db.WithContext(ctx).Where("file_sha1 = ? AND user_name = ?", filehash, username).
 		Delete(&model.UserFile{})
 	if res.Error != nil {
 		return false, fmt.Errorf("purge user file failed: %w", res.Error)
@@ -274,8 +275,8 @@ func (r *mysqlFileRepo) PurgeUserFile(filehash, username string) (bool, error) {
 }
 
 // UpdateName 更新用户文件名
-func (r *mysqlFileRepo) UpdateName(filehash, username, newFilename string) (bool, error) {
-	res := r.db.Model(&model.UserFile{}).
+func (r *mysqlFileRepo) UpdateName(ctx context.Context, filehash, username, newFilename string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusActive).
 		Update("file_name", newFilename)
 	if res.Error != nil {
@@ -285,9 +286,9 @@ func (r *mysqlFileRepo) UpdateName(filehash, username, newFilename string) (bool
 }
 
 // CountRefs 统计某文件在 tbl_user_file 中的活跃引用数
-func (r *mysqlFileRepo) CountRefs(filehash string) (int64, error) {
+func (r *mysqlFileRepo) CountRefs(ctx context.Context, filehash string) (int64, error) {
 	var count int64
-	err := r.db.Model(&model.UserFile{}).
+	err := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("file_sha1 = ? AND status = ?", filehash, model.UserFileStatusActive).
 		Count(&count).Error
 	if err != nil {
@@ -297,25 +298,25 @@ func (r *mysqlFileRepo) CountRefs(filehash string) (int64, error) {
 }
 
 // ListOldest 列出创建时间早于 before 的全局文件
-func (r *mysqlFileRepo) ListOldest(before time.Time) ([]model.File, error) {
+func (r *mysqlFileRepo) ListOldest(ctx context.Context, before time.Time) ([]model.File, error) {
 	var files []model.File
-	if err := r.db.Where("create_at < ?", before).Find(&files).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("create_at < ?", before).Find(&files).Error; err != nil {
 		return nil, fmt.Errorf("list oldest files failed: %w", err)
 	}
 	return files, nil
 }
 
 // RemoveOrphan 从 tbl_file 删除无引用的全局文件记录
-func (r *mysqlFileRepo) RemoveOrphan(filehash string) error {
-	if err := r.db.Where("file_sha1 = ?", filehash).Delete(&model.File{}).Error; err != nil {
+func (r *mysqlFileRepo) RemoveOrphan(ctx context.Context, filehash string) error {
+	if err := r.db.WithContext(ctx).Where("file_sha1 = ?", filehash).Delete(&model.File{}).Error; err != nil {
 		return fmt.Errorf("remove orphan file failed: %w", err)
 	}
 	return nil
 }
 
 // SaveAnalysis 写入 AI 生成的摘要与标签（全局文件维度）
-func (r *mysqlFileRepo) SaveAnalysis(filehash, summary, tags string) error {
-	res := r.db.Model(&model.File{}).
+func (r *mysqlFileRepo) SaveAnalysis(ctx context.Context, filehash, summary, tags string) error {
+	res := r.db.WithContext(ctx).Model(&model.File{}).
 		Where("file_sha1 = ?", filehash).
 		Updates(map[string]any{"file_summary": summary, "tags": tags})
 	if res.Error != nil {
@@ -325,9 +326,9 @@ func (r *mysqlFileRepo) SaveAnalysis(filehash, summary, tags string) error {
 }
 
 // GetGlobalFile 按 hash 读取全局文件（含摘要/标签），不带用户维度
-func (r *mysqlFileRepo) GetGlobalFile(filehash string) (model.File, error) {
+func (r *mysqlFileRepo) GetGlobalFile(ctx context.Context, filehash string) (model.File, error) {
 	var f model.File
-	if err := r.db.Where("file_sha1 = ?", filehash).First(&f).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("file_sha1 = ?", filehash).First(&f).Error; err != nil {
 		return model.File{}, fmt.Errorf("get global file failed: %w", err)
 	}
 	return f, nil
@@ -351,12 +352,12 @@ func NewMockFileRepository() FileRepository {
 	}
 }
 
-func (m *mockFileRepo) Create(f model.File) error {
+func (m *mockFileRepo) Create(ctx context.Context, f model.File) error {
 	m.files[f.FileSha1] = f
 	return nil
 }
 
-func (m *mockFileRepo) CreateUserFile(uf model.UserFile) error {
+func (m *mockFileRepo) CreateUserFile(ctx context.Context, uf model.UserFile) error {
 	if _, ok := m.userFile[uf.Username]; !ok {
 		m.userFile[uf.Username] = make(map[string]string)
 	}
@@ -367,9 +368,9 @@ func (m *mockFileRepo) CreateUserFile(uf model.UserFile) error {
 	return nil
 }
 
-func (m *mockFileRepo) GetByHash(filehash, username string) (model.FileMeta, error) {
+func (m *mockFileRepo) GetByHash(ctx context.Context, filehash, username string) (model.FileMeta, error) {
 	name, ok := m.userFile[username][filehash]
-	if !ok || name == "" && !m.userHas(username, filehash) {
+	if !ok || name == "" && !m.userHas(ctx, username, filehash) {
 		return model.FileMeta{}, fmt.Errorf("file not found")
 	}
 	if m.deleted[username][filehash] {
@@ -387,12 +388,12 @@ func (m *mockFileRepo) GetByHash(filehash, username string) (model.FileMeta, err
 	}, nil
 }
 
-func (m *mockFileRepo) userHas(username, filehash string) bool {
+func (m *mockFileRepo) userHas(ctx context.Context, username, filehash string) bool {
 	_, ok := m.userFile[username][filehash]
 	return ok
 }
 
-func (m *mockFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
+func (m *mockFileRepo) ListByUser(ctx context.Context, username string) ([]model.FileMeta, error) {
 	var result []model.FileMeta
 	names := m.userFile[username]
 	for hash, name := range names {
@@ -413,7 +414,7 @@ func (m *mockFileRepo) ListByUser(username string) ([]model.FileMeta, error) {
 	return result, nil
 }
 
-func (m *mockFileRepo) CountByUser(username string) (int64, error) {
+func (m *mockFileRepo) CountByUser(ctx context.Context, username string) (int64, error) {
 	n := 0
 	for hash := range m.userFile[username] {
 		if !m.deleted[username][hash] {
@@ -423,8 +424,8 @@ func (m *mockFileRepo) CountByUser(username string) (int64, error) {
 	return int64(n), nil
 }
 
-func (m *mockFileRepo) ListByUserPaged(username string, page, size int) ([]model.FileMeta, error) {
-	all, _ := m.ListByUser(username)
+func (m *mockFileRepo) ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, error) {
+	all, _ := m.ListByUser(ctx, username)
 	start := (page - 1) * size
 	if start >= len(all) {
 		return []model.FileMeta{}, nil
@@ -436,8 +437,8 @@ func (m *mockFileRepo) ListByUserPaged(username string, page, size int) ([]model
 	return all[start:end], nil
 }
 
-func (m *mockFileRepo) Delete(filehash, username string) (bool, error) {
-	if !m.userHas(username, filehash) {
+func (m *mockFileRepo) Delete(ctx context.Context, filehash, username string) (bool, error) {
+	if !m.userHas(ctx, username, filehash) {
 		return false, nil
 	}
 	if m.deleted[username] == nil {
@@ -447,7 +448,7 @@ func (m *mockFileRepo) Delete(filehash, username string) (bool, error) {
 	return true, nil
 }
 
-func (m *mockFileRepo) ListTrash(username string, page, size int) ([]model.FileMeta, int64, error) {
+func (m *mockFileRepo) ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
 	var trash []model.FileMeta
 	for hash := range m.deleted[username] {
 		f, ok := m.files[hash]
@@ -473,7 +474,7 @@ func (m *mockFileRepo) ListTrash(username string, page, size int) ([]model.FileM
 	return trash[start:end], total, nil
 }
 
-func (m *mockFileRepo) Restore(filehash, username string) (bool, error) {
+func (m *mockFileRepo) Restore(ctx context.Context, filehash, username string) (bool, error) {
 	if !m.deleted[username][filehash] {
 		return false, nil
 	}
@@ -481,8 +482,8 @@ func (m *mockFileRepo) Restore(filehash, username string) (bool, error) {
 	return true, nil
 }
 
-func (m *mockFileRepo) PurgeUserFile(filehash, username string) (bool, error) {
-	if !m.userHas(username, filehash) {
+func (m *mockFileRepo) PurgeUserFile(ctx context.Context, filehash, username string) (bool, error) {
+	if !m.userHas(ctx, username, filehash) {
 		return false, nil
 	}
 	delete(m.userFile[username], filehash)
@@ -492,15 +493,15 @@ func (m *mockFileRepo) PurgeUserFile(filehash, username string) (bool, error) {
 	return true, nil
 }
 
-func (m *mockFileRepo) UpdateName(filehash, username, newFilename string) (bool, error) {
-	if !m.userHas(username, filehash) {
+func (m *mockFileRepo) UpdateName(ctx context.Context, filehash, username, newFilename string) (bool, error) {
+	if !m.userHas(ctx, username, filehash) {
 		return false, nil
 	}
 	m.userFile[username][filehash] = newFilename
 	return true, nil
 }
 
-func (m *mockFileRepo) CountRefs(filehash string) (int64, error) {
+func (m *mockFileRepo) CountRefs(ctx context.Context, filehash string) (int64, error) {
 	var count int64
 	for _, names := range m.userFile {
 		if _, ok := names[filehash]; ok {
@@ -510,7 +511,7 @@ func (m *mockFileRepo) CountRefs(filehash string) (int64, error) {
 	return count, nil
 }
 
-func (m *mockFileRepo) ListOldest(before time.Time) ([]model.File, error) {
+func (m *mockFileRepo) ListOldest(ctx context.Context, before time.Time) ([]model.File, error) {
 	var result []model.File
 	for _, f := range m.files {
 		if f.CreateAt.Before(before) {
@@ -520,12 +521,12 @@ func (m *mockFileRepo) ListOldest(before time.Time) ([]model.File, error) {
 	return result, nil
 }
 
-func (m *mockFileRepo) RemoveOrphan(filehash string) error {
+func (m *mockFileRepo) RemoveOrphan(ctx context.Context, filehash string) error {
 	delete(m.files, filehash)
 	return nil
 }
 
-func (m *mockFileRepo) SaveAnalysis(filehash, summary, tags string) error {
+func (m *mockFileRepo) SaveAnalysis(ctx context.Context, filehash, summary, tags string) error {
 	f := m.files[filehash]
 	f.Summary = summary
 	f.Tags = tags
@@ -533,7 +534,7 @@ func (m *mockFileRepo) SaveAnalysis(filehash, summary, tags string) error {
 	return nil
 }
 
-func (m *mockFileRepo) GetGlobalFile(filehash string) (model.File, error) {
+func (m *mockFileRepo) GetGlobalFile(ctx context.Context, filehash string) (model.File, error) {
 	f, ok := m.files[filehash]
 	if !ok {
 		return model.File{}, fmt.Errorf("file not found")

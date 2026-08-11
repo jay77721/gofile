@@ -100,7 +100,7 @@ func (s *AIService) Search(ctx context.Context, username, q string, page, size i
 
 // fallbackLike 降级：MySQL LIKE filename 模糊搜索
 func (s *AIService) fallbackLike(ctx context.Context, username, q string, page, size int) []SearchResult {
-	files, err := s.fileRepo.ListByUser(username)
+	files, err := s.fileRepo.ListByUser(ctx, username)
 	if err != nil {
 		return []SearchResult{}
 	}
@@ -135,7 +135,7 @@ func (s *AIService) Similar(ctx context.Context, username, filehash string, limi
 		limit = 5
 	}
 	// 验证所有权
-	fMeta, err := s.fileRepo.GetByHash(filehash, username)
+	fMeta, err := s.fileRepo.GetByHash(ctx, filehash, username)
 	if err != nil {
 		return nil, fmt.Errorf("file not found or no permission")
 	}

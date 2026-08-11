@@ -93,7 +93,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 			// Redis 说见过，再确认存储层（防止误判）
 			exists, _ := s.store.Exists(ctx, fileSha1)
 			if exists {
-				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive})
+				s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive})
 				s.enqueue(ctx, fileSha1, filename, username)
 				slog.InfoContext(ctx, "fast upload (dedup, cache hit)", "filehash", fileSha1, "username", username)
 				return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
@@ -108,7 +108,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	} else if exists {
 		// 秒传成功，记入 Redis 缓存供后续快速判断
 		s.cacheMark(ctx, fileSha1)
-		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive})
+		s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive})
 		s.enqueue(ctx, fileSha1, filename, username)
 		slog.InfoContext(ctx, "fast upload (dedup)", "filehash", fileSha1, "username", username)
 		return model.FileMeta{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, Username: username}, nil
@@ -127,14 +127,14 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	}
 
 	// 注册全局文件（INSERT IGNORE 幂等）
-	if err := s.fileRepo.Create(model.File{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, FileAddr: fileSha1}); err != nil {
+	if err := s.fileRepo.Create(ctx, model.File{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, FileAddr: fileSha1}); err != nil {
 		slog.WarnContext(ctx, "save global file meta failed, rolling back storage", "filehash", fileSha1)
 		s.store.Delete(ctx, fileSha1)
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
 	}
 
 	// 建立用户拥有关系
-	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive}); err != nil {
+	if err := s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileSha1, FileName: filename, Status: model.UserFileStatusActive}); err != nil {
 		slog.WarnContext(ctx, "save user file relation failed", "error", err, "filehash", fileSha1)
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}
@@ -167,14 +167,14 @@ func (s *FileService) PresignUpload(ctx context.Context, fileHash, username stri
 	if s.cache != nil {
 		if seen, _ := s.cache.HashExists(ctx, fileHash); seen {
 			if exists, _ := s.store.Exists(ctx, fileHash); exists {
-				s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: model.UserFileStatusActive})
+				s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: model.UserFileStatusActive})
 				return "", fmt.Errorf("file already exists")
 			}
 		}
 	}
 	// 传统秒传检测
 	if exists, _ := s.store.Exists(ctx, fileHash); exists {
-		s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: model.UserFileStatusActive})
+		s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileHash, FileName: "", Status: model.UserFileStatusActive})
 		s.cacheMark(ctx, fileHash)
 		return "", fmt.Errorf("file already exists")
 	}
@@ -199,12 +199,12 @@ func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, use
 	}
 
 	// 注册全局文件（幂等）
-	if err := s.fileRepo.Create(model.File{FileSha1: fileHash, FileSize: 0, FileAddr: fileHash}); err != nil {
+	if err := s.fileRepo.Create(ctx, model.File{FileSha1: fileHash, FileSize: 0, FileAddr: fileHash}); err != nil {
 		slog.WarnContext(ctx, "presigned confirm: save global file meta failed", "filehash", fileHash)
 	}
 
 	// 建立用户拥有关系
-	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); err != nil {
+	if err := s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); err != nil {
 		return fmt.Errorf("save user file relation failed: %w", err)
 	}
 
@@ -222,7 +222,7 @@ func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, use
 // 验证用户所有权后签发 5 分钟有效的下载 URL
 func (s *FileService) PresignDownload(ctx context.Context, fileHash, username string) (string, error) {
 	// 验证文件所有权
-	_, err := s.fileRepo.GetByHash(fileHash, username)
+	_, err := s.fileRepo.GetByHash(ctx, fileHash, username)
 	if err != nil {
 		return "", fmt.Errorf("file not found or no permission")
 	}
@@ -246,10 +246,10 @@ func (s *FileService) FastUpload(ctx context.Context, fileHash, username string)
 	}
 	// 建立用户拥有关系(幂等 INSERT IGNORE);文件名取全局记录,取不到则留空
 	fileName := ""
-	if global, gErr := s.fileRepo.GetGlobalFile(fileHash); gErr == nil {
+	if global, gErr := s.fileRepo.GetGlobalFile(ctx, fileHash); gErr == nil {
 		fileName = global.FileName
 	}
-	if ufErr := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); ufErr != nil {
+	if ufErr := s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); ufErr != nil {
 		slog.WarnContext(ctx, "fast upload: create user file relation failed", "error", ufErr, "filehash", fileHash, "username", username)
 	}
 	s.cacheMark(ctx, fileHash)
@@ -258,13 +258,13 @@ func (s *FileService) FastUpload(ctx context.Context, fileHash, username string)
 }
 
 // GetMeta 获取文件元信息
-func (s *FileService) GetMeta(filehash, username string) (model.FileMeta, error) {
-	return s.fileRepo.GetByHash(filehash, username)
+func (s *FileService) GetMeta(ctx context.Context, filehash, username string) (model.FileMeta, error) {
+	return s.fileRepo.GetByHash(ctx, filehash, username)
 }
 
 // FileSize 获取文件大小（含所有权校验），供 416 响应等场景使用
 func (s *FileService) FileSize(ctx context.Context, filehash, username string) (int64, error) {
-	if _, err := s.fileRepo.GetByHash(filehash, username); err != nil {
+	if _, err := s.fileRepo.GetByHash(ctx, filehash, username); err != nil {
 		return 0, fmt.Errorf("file not found: %w", err)
 	}
 	size, err := s.store.FileSize(ctx, filehash)
@@ -276,7 +276,7 @@ func (s *FileService) FileSize(ctx context.Context, filehash, username string) (
 
 // Download 获取文件读取流
 func (s *FileService) Download(ctx context.Context, filehash, username string) (io.ReadCloser, model.FileMeta, error) {
-	fMeta, err := s.fileRepo.GetByHash(filehash, username)
+	fMeta, err := s.fileRepo.GetByHash(ctx, filehash, username)
 	if err != nil {
 		return nil, model.FileMeta{}, fmt.Errorf("file not found: %w", err)
 	}
@@ -292,7 +292,7 @@ func (s *FileService) Download(ctx context.Context, filehash, username string) (
 // DownloadRange 按字节区间下载文件（支持 HTTP Range）
 // 返回裁剪后的实际 length（开放区间/越界请求按文件大小收敛），供 handler 构造响应头
 func (s *FileService) DownloadRange(ctx context.Context, filehash, username string, offset, length int64) (io.ReadCloser, model.FileMeta, int64, int64, error) {
-	fMeta, err := s.fileRepo.GetByHash(filehash, username)
+	fMeta, err := s.fileRepo.GetByHash(ctx, filehash, username)
 	if err != nil {
 		return nil, model.FileMeta{}, 0, 0, fmt.Errorf("file not found: %w", err)
 	}
@@ -320,33 +320,33 @@ func (s *FileService) DownloadRange(ctx context.Context, filehash, username stri
 }
 
 // Rename 重命名文件（含所有权验证）
-func (s *FileService) Rename(filehash, username, newName string) error {
+func (s *FileService) Rename(ctx context.Context, filehash, username, newName string) error {
 	// 验证文件所有权
-	_, err := s.fileRepo.GetByHash(filehash, username)
+	_, err := s.fileRepo.GetByHash(ctx, filehash, username)
 	if err != nil {
 		return fmt.Errorf("file not found or no permission")
 	}
 
-	_, err = s.fileRepo.UpdateName(filehash, username, newName)
+	_, err = s.fileRepo.UpdateName(ctx, filehash, username, newName)
 	return err
 }
 
 // Delete 软删除用户文件（含所有权验证 + 索引清理）
-func (s *FileService) Delete(filehash, username string) error {
+func (s *FileService) Delete(ctx context.Context, filehash, username string) error {
 	// 验证文件所有权
-	_, err := s.fileRepo.GetByHash(filehash, username)
+	_, err := s.fileRepo.GetByHash(ctx, filehash, username)
 	if err != nil {
 		return fmt.Errorf("file not found or no permission")
 	}
 
-	_, err = s.fileRepo.Delete(filehash, username)
+	_, err = s.fileRepo.Delete(ctx, filehash, username)
 	if err != nil {
 		return err
 	}
 
 	// 无活跃引用时清理 Typesense 索引
 	if s.indexer != nil {
-		refs, _ := s.fileRepo.CountRefs(filehash)
+		refs, _ := s.fileRepo.CountRefs(ctx, filehash)
 		if refs == 0 {
 			if err := s.indexer.Delete(context.Background(), username, filehash); err != nil {
 				slog.Warn("delete: clean typesense index failed", "error", err, "filehash", filehash)
@@ -357,18 +357,18 @@ func (s *FileService) Delete(filehash, username string) error {
 }
 
 // ListByUser 获取用户的所有文件
-func (s *FileService) ListByUser(username string) ([]model.FileMeta, error) {
-	return s.fileRepo.ListByUser(username)
+func (s *FileService) ListByUser(ctx context.Context, username string) ([]model.FileMeta, error) {
+	return s.fileRepo.ListByUser(ctx, username)
 }
 
 // ListTrash 分页查询用户回收站文件
-func (s *FileService) ListTrash(username string, page, size int) ([]model.FileMeta, int64, error) {
-	return s.fileRepo.ListTrash(username, page, size)
+func (s *FileService) ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
+	return s.fileRepo.ListTrash(ctx, username, page, size)
 }
 
 // Restore 恢复回收站中的文件（status 2→1），并重新入队 AI 分析重建检索引擎文档
 func (s *FileService) Restore(ctx context.Context, filehash, username string) error {
-	ok, err := s.fileRepo.Restore(filehash, username)
+	ok, err := s.fileRepo.Restore(ctx, filehash, username)
 	if err != nil {
 		return err
 	}
@@ -382,7 +382,7 @@ func (s *FileService) Restore(ctx context.Context, filehash, username string) er
 // Purge 彻底删除（回收站）：删除用户关联行；无其他活跃引用时同步清理
 // 存储层内容、tbl_file 全局记录与检索引擎文档
 func (s *FileService) Purge(ctx context.Context, filehash, username string) error {
-	ok, err := s.fileRepo.PurgeUserFile(filehash, username)
+	ok, err := s.fileRepo.PurgeUserFile(ctx, filehash, username)
 	if err != nil {
 		return err
 	}
@@ -390,7 +390,7 @@ func (s *FileService) Purge(ctx context.Context, filehash, username string) erro
 		return fmt.Errorf("file not found or no permission")
 	}
 
-	refs, err := s.fileRepo.CountRefs(filehash)
+	refs, err := s.fileRepo.CountRefs(ctx, filehash)
 	if err != nil {
 		return err
 	}
@@ -402,7 +402,7 @@ func (s *FileService) Purge(ctx context.Context, filehash, username string) erro
 	if err := s.store.Delete(ctx, filehash); err != nil {
 		slog.WarnContext(ctx, "purge: delete storage failed", "error", err, "filehash", filehash)
 	}
-	if err := s.fileRepo.RemoveOrphan(filehash); err != nil {
+	if err := s.fileRepo.RemoveOrphan(ctx, filehash); err != nil {
 		slog.WarnContext(ctx, "purge: remove orphan failed", "error", err, "filehash", filehash)
 	}
 	if s.indexer != nil {
@@ -414,12 +414,12 @@ func (s *FileService) Purge(ctx context.Context, filehash, username string) erro
 }
 
 // ListByUserPaged 分页查询用户文件
-func (s *FileService) ListByUserPaged(username string, page, size int) ([]model.FileMeta, int64, error) {
-	total, err := s.fileRepo.CountByUser(username)
+func (s *FileService) ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
+	total, err := s.fileRepo.CountByUser(ctx, username)
 	if err != nil {
 		return nil, 0, err
 	}
-	files, err := s.fileRepo.ListByUserPaged(username, page, size)
+	files, err := s.fileRepo.ListByUserPaged(ctx, username, page, size)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -502,7 +502,7 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 	}
 
 	// 注册全局文件（幂等）
-	if err := s.fileRepo.Create(model.File{FileSha1: fileHash, FileSize: totalSize, FileAddr: fileHash}); err != nil {
+	if err := s.fileRepo.Create(ctx, model.File{FileSha1: fileHash, FileSize: totalSize, FileAddr: fileHash}); err != nil {
 		slog.WarnContext(ctx, "save global file meta failed, rolling back", "filehash", fileHash)
 		s.store.Delete(ctx, fileHash)
 		os.RemoveAll(chunkDir)
@@ -510,7 +510,7 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 	}
 
 	// 建立用户拥有关系
-	if err := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); err != nil {
+	if err := s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); err != nil {
 		slog.WarnContext(ctx, "save user file relation failed", "error", err, "filehash", fileHash)
 		return model.FileMeta{}, fmt.Errorf("save user file relation failed: %w", err)
 	}

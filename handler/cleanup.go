@@ -84,7 +84,7 @@ func StartShareCleanup(shareRepo repository.ShareRepository) {
 		defer ticker.Stop()
 		for range ticker.C {
 			before := time.Now()
-			if err := shareRepo.DeleteExpired(before); err != nil {
+			if err := shareRepo.DeleteExpired(context.Background(), before); err != nil {
 				slog.ErrorContext(context.Background(), "cleanup expired shares failed", "error", err)
 			} else {
 				slog.InfoContext(context.Background(), "cleaned up expired shares", "before", before)
@@ -106,7 +106,7 @@ func StartAITaskCleanup(aiRepo repository.AITaskRepository, retention time.Durat
 		slog.InfoContext(context.Background(), "ai task cleanup started", "interval", "24h", "retention", retention)
 		for range ticker.C {
 			before := time.Now().Add(-retention)
-			if err := aiRepo.CleanupExpired(before); err != nil {
+			if err := aiRepo.CleanupExpired(context.Background(), before); err != nil {
 				slog.ErrorContext(context.Background(), "cleanup expired ai tasks failed", "error", err)
 			} else {
 				slog.InfoContext(context.Background(), "cleaned up expired ai tasks", "before", before)
@@ -168,7 +168,7 @@ func StartSoftDeleteGC(fileRepo repository.FileRepository, store storage.Storage
 func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Storage, orphanAge time.Duration, indexer ai.Indexer) {
 	// 获取创建时间超过 orphanAge 的全局文件（GC 候选）
 	before := time.Now().Add(-orphanAge)
-	files, err := fileRepo.ListOldest(before)
+	files, err := fileRepo.ListOldest(context.Background(), before)
 	if err != nil {
 		slog.ErrorContext(context.Background(), "GC: list oldest files failed", "error", err)
 		return
@@ -176,7 +176,7 @@ func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Stor
 
 	for _, f := range files {
 		// 二次确认：检查 tbl_user_file 中活跃引用数
-		refs, err := fileRepo.CountRefs(f.FileSha1)
+		refs, err := fileRepo.CountRefs(context.Background(), f.FileSha1)
 		if err != nil {
 			slog.WarnContext(context.Background(), "GC: count refs failed", "filehash", f.FileSha1, "error", err)
 			continue
@@ -193,7 +193,7 @@ func cleanupOrphanedFiles(fileRepo repository.FileRepository, store storage.Stor
 		}
 
 		// 从 tbl_file 删除记录
-		if err := fileRepo.RemoveOrphan(f.FileSha1); err != nil {
+		if err := fileRepo.RemoveOrphan(context.Background(), f.FileSha1); err != nil {
 			slog.ErrorContext(context.Background(), "GC: remove orphan file record failed", "error", err, "filehash", f.FileSha1)
 		} else {
 			slog.InfoContext(context.Background(), "GC: removed orphan file", "filehash", f.FileSha1, "size", f.FileSize)

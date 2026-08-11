@@ -35,7 +35,7 @@ func NewShareService(shareRepo repository.ShareRepository, fileRepo repository.F
 // Create 创建分享:校验所有权,生成 64 位 hex 令牌,可选提取码
 // days 取值范围 1-30,默认 7
 func (s *ShareService) Create(ctx context.Context, username, filehash string, days int, password string) (*model.Share, error) {
-	if _, err := s.fileRepo.GetByHash(filehash, username); err != nil {
+	if _, err := s.fileRepo.GetByHash(ctx, filehash, username); err != nil {
 		return nil, fmt.Errorf("file not found or no permission")
 	}
 	if days < 1 || days > 30 {
@@ -61,7 +61,7 @@ func (s *ShareService) Create(ctx context.Context, username, filehash string, da
 		share.PasswordHash = string(hash)
 	}
 
-	if err := s.shareRepo.CreateShare(share); err != nil {
+	if err := s.shareRepo.CreateShare(ctx, share); err != nil {
 		return nil, err
 	}
 
@@ -70,8 +70,8 @@ func (s *ShareService) Create(ctx context.Context, username, filehash string, da
 }
 
 // List 列出当前用户的分享
-func (s *ShareService) List(username string) ([]model.Share, error) {
-	shares, err := s.shareRepo.ListShares(username)
+func (s *ShareService) List(ctx context.Context, username string) ([]model.Share, error) {
+	shares, err := s.shareRepo.ListShares(ctx, username)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (s *ShareService) List(username string) ([]model.Share, error) {
 
 // Revoke 撤销分享(校验归属)
 func (s *ShareService) Revoke(ctx context.Context, token, username string) error {
-	ok, err := s.shareRepo.DeleteShare(token, username)
+	ok, err := s.shareRepo.DeleteShare(ctx, token, username)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (s *ShareService) Revoke(ctx context.Context, token, username string) error
 // Resolve 解析分享令牌,校验过期与提取码,返回文件元信息(用于免登录下载)
 // 文件被软删除或已彻底删除时同样返回 ErrShareFileGone
 func (s *ShareService) Resolve(ctx context.Context, token, password string) (model.FileMeta, error) {
-	share, err := s.shareRepo.GetShareByToken(token)
+	share, err := s.shareRepo.GetShareByToken(ctx, token)
 	if err != nil {
 		return model.FileMeta{}, ErrShareNotFound
 	}
@@ -113,7 +113,7 @@ func (s *ShareService) Resolve(ctx context.Context, token, password string) (mod
 	}
 
 	// 以分享者的身份校验所有权:软删除/彻底删除后 GetByHash 失败
-	fMeta, err := s.fileRepo.GetByHash(share.FileSha1, share.UserName)
+	fMeta, err := s.fileRepo.GetByHash(ctx, share.FileSha1, share.UserName)
 	if err != nil {
 		return model.FileMeta{}, ErrShareFileGone
 	}

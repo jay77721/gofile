@@ -53,7 +53,7 @@ func (h *ShareHandler) CreateShareHandler(c *gin.Context) {
 // ShareListHandler 我的分享列表
 // GET /file/share/list
 func (h *ShareHandler) ShareListHandler(c *gin.Context) {
-	shares, err := h.shareSvc.List(c.GetString("username"))
+	shares, err := h.shareSvc.List(c.Request.Context(), c.GetString("username"))
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "list shares failed", "error", err)
 		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询分享列表失败")

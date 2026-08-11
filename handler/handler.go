@@ -23,6 +23,37 @@ const (
 	MaxUploadSize = 100 << 20 // 100MB
 )
 
+// 危险扩展名黑名单（存储型 XSS / 恶意文件分发 / 可执行文件）
+// 上传时直接拒绝，不进入存储层
+var dangerousExts = map[string]bool{
+	// HTML / 脚本（存储型 XSS 主要载体）
+	".html": true, ".htm": true, ".xhtml": true,
+	".js": true, ".mjs": true, ".cjs": true,
+	// Windows 可执行文件
+	".exe": true, ".com": true, ".bat": true, ".cmd": true, ".ps1": true, ".msi": true, ".scr": true, ".pif": true,
+	// Unix / Linux 可执行文件 / 脚本
+	".sh": true, ".bash": true, ".zsh": true, ".csh": true, ".ksh": true,
+	".bin": true, ".run": true, ".appimage": true,
+	// 服务端脚本（防止在支持的环境中执行）
+	".php": true, ".jsp": true, ".asp": true, ".aspx": true, ".cgi": true,
+	// 脚本语言
+	".py": true, ".pl": true, ".rb": true, ".lua": true,
+	// 其他危险类型
+	".svg": true, // 可内联 JavaScript，预览时需特殊处理
+	".jar": true, // Java 可执行
+	".war": true, ".ear": true,
+	".ps": true,  // PowerShell 脚本
+	".vbs": true, ".vbe": true, ".wsf": true, ".wsh": true,
+	".reg": true, // Windows 注册表文件
+	".inf": true,
+}
+
+// isDangerousExtension 检查文件扩展名是否在黑名单中
+func isDangerousExtension(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	return dangerousExts[ext]
+}
+
 // sha1HashPattern 40 位小写 hex（SHA1 文件名/目录安全校验）
 var sha1HashPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 
@@ -69,6 +100,12 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	// 路径穿越防护
 	filename := filepath.Base(header.Filename)
 
+	// 危险文件类型黑名单（防存储型 XSS / 恶意文件分发）
+	if isDangerousExtension(filename) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
+		return
+	}
+
 	fMeta, err := h.fileSvc.Upload(c.Request.Context(), file, filename, 0, c.GetString("username"))
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "upload failed", "error", err, "filename", filename)
@@ -87,7 +124,7 @@ func (h *FileHandler) GetFileHandler(c *gin.Context) {
 		return
 	}
 
-	fMeta, err := h.fileSvc.GetMeta(filehash, c.GetString("username"))
+	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, c.GetString("username"))
 	if err != nil {
 		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
@@ -115,7 +152,7 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	username := c.GetString("username")
 
 	// 获取文件元信息（用于文件名和 Content-Type）
-	fMeta, err := h.fileSvc.GetMeta(filehash, username)
+	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, username)
 	if err != nil {
 		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
@@ -242,7 +279,7 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	username := c.GetString("username")
 
 	// 获取文件元信息（用于文件名和 Content-Type）
-	fMeta, err := h.fileSvc.GetMeta(filehash, username)
+	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, username)
 	if err != nil {
 		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
@@ -403,7 +440,7 @@ func (h *FileHandler) FileMetaUpdateHandler(c *gin.Context) {
 		return
 	}
 
-	if err := h.fileSvc.Rename(fileSha1, username, filepath.Base(newFileName)); err != nil {
+	if err := h.fileSvc.Rename(c.Request.Context(), fileSha1, username, filepath.Base(newFileName)); err != nil {
 		slog.ErrorContext(c.Request.Context(), "rename failed", "error", err, "filehash", fileSha1)
 		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
 		return
@@ -420,7 +457,7 @@ func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
 		return
 	}
 
-	if err := h.fileSvc.Delete(fileSha1, c.GetString("username")); err != nil {
+	if err := h.fileSvc.Delete(c.Request.Context(), fileSha1, c.GetString("username")); err != nil {
 		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
 		return
 	}
@@ -441,7 +478,7 @@ func (h *FileHandler) TrashHandler(c *gin.Context) {
 		size = 20
 	}
 
-	files, total, err := h.fileSvc.ListTrash(username, page, size)
+	files, total, err := h.fileSvc.ListTrash(c.Request.Context(), username, page, size)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "list trash failed", "error", err, "username", username)
 		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询回收站失败")
@@ -496,7 +533,7 @@ func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 
 	if pageStr == "" && sizeStr == "" {
 		// 无分页参数：返回全部（兼容旧逻辑）
-		fileMetas, err := h.fileSvc.ListByUser(username)
+		fileMetas, err := h.fileSvc.ListByUser(c.Request.Context(), username)
 		if err != nil {
 			slog.ErrorContext(c.Request.Context(), "query all files failed", "error", err)
 			respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
@@ -516,7 +553,7 @@ func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 		size = 20
 	}
 
-	files, total, err := h.fileSvc.ListByUserPaged(username, page, size)
+	files, total, err := h.fileSvc.ListByUserPaged(c.Request.Context(), username, page, size)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "paged query files failed", "error", err)
 		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
@@ -617,6 +654,12 @@ func (h *FileHandler) MergeChunkHandler(c *gin.Context) {
 	// 路径穿越防护
 	fileName = filepath.Base(fileName)
 
+	// 危险文件类型黑名单（防存储型 XSS / 恶意文件分发）
+	if isDangerousExtension(fileName) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
+		return
+	}
+
 	fMeta, err := h.fileSvc.MergeChunks(c.Request.Context(), fileHash, fileName, c.GetString("username"), totalStr)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "merge chunks failed", "error", err, "filehash", fileHash)
@@ -692,6 +735,12 @@ func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
 
 	if !isValidHash(fileHash) {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
+		return
+	}
+
+	// 危险文件类型黑名单（防存储型 XSS / 恶意文件分发）
+	if isDangerousExtension(fileName) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
 		return
 	}
 

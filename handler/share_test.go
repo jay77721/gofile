@@ -24,10 +24,10 @@ func setupShareTestHandler(t *testing.T) (*ShareHandler, *service.ShareService, 
 	dir := t.TempDir()
 	store := storage.NewLocal(dir)
 	fileRepo := repository.NewMockFileRepository()
-	if err := fileRepo.Create(model.File{FileSha1: hash, FileSize: 10}); err != nil {
+	if err := fileRepo.Create(context.Background(), model.File{FileSha1: hash, FileSize: 10}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fileRepo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+	if err := fileRepo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put(context.Background(), hash, strings.NewReader("0123456789"), 10); err != nil {

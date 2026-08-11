@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"gofile/model"
 	"log/slog"
@@ -12,11 +13,11 @@ import (
 // UserRepository 用户数据访问接口
 type UserRepository interface {
 	// Create 创建用户
-	Create(username, hashedPassword string) (bool, error)
+	Create(ctx context.Context, username, hashedPassword string) (bool, error)
 	// GetPasswordHash 获取用户密码哈希
-	GetPasswordHash(username string) (string, error)
+	GetPasswordHash(ctx context.Context, username string) (string, error)
 	// GetInfo 获取用户信息
-	GetInfo(username string) (model.User, error)
+	GetInfo(ctx context.Context, username string) (model.User, error)
 }
 
 // mysqlUserRepo GORM 实现的 UserRepository
@@ -29,12 +30,12 @@ func NewUserRepository(db *gorm.DB) UserRepository {
 	return &mysqlUserRepo{db: db}
 }
 
-func (r *mysqlUserRepo) Create(username, hashedPassword string) (bool, error) {
+func (r *mysqlUserRepo) Create(ctx context.Context, username, hashedPassword string) (bool, error) {
 	user := model.User{
 		Username: username,
 		Password: hashedPassword,
 	}
-	res := r.db.Create(&user)
+	res := r.db.WithContext(ctx).Create(&user)
 	if res.Error != nil {
 		// 主键冲突（用户已存在）
 		return false, nil
@@ -46,9 +47,9 @@ func (r *mysqlUserRepo) Create(username, hashedPassword string) (bool, error) {
 	return true, nil
 }
 
-func (r *mysqlUserRepo) GetPasswordHash(username string) (string, error) {
+func (r *mysqlUserRepo) GetPasswordHash(ctx context.Context, username string) (string, error) {
 	var user model.User
-	err := r.db.Select("user_pwd").
+	err := r.db.WithContext(ctx).Select("user_pwd").
 		Where("user_name = ?", username).
 		First(&user).Error
 	if err != nil {
@@ -57,9 +58,9 @@ func (r *mysqlUserRepo) GetPasswordHash(username string) (string, error) {
 	return user.Password, nil
 }
 
-func (r *mysqlUserRepo) GetInfo(username string) (model.User, error) {
+func (r *mysqlUserRepo) GetInfo(ctx context.Context, username string) (model.User, error) {
 	var user model.User
-	err := r.db.Where("user_name = ?", username).First(&user).Error
+	err := r.db.WithContext(ctx).Where("user_name = ?", username).First(&user).Error
 	if err != nil {
 		return model.User{}, fmt.Errorf("get user info failed: %w", err)
 	}
@@ -82,7 +83,7 @@ func NewMockUserRepository() UserRepository {
 	}
 }
 
-func (m *mockUserRepo) Create(username, hashedPassword string) (bool, error) {
+func (m *mockUserRepo) Create(ctx context.Context, username, hashedPassword string) (bool, error) {
 	if _, exists := m.users[username]; exists {
 		return false, nil
 	}
@@ -91,7 +92,7 @@ func (m *mockUserRepo) Create(username, hashedPassword string) (bool, error) {
 	return true, nil
 }
 
-func (m *mockUserRepo) GetPasswordHash(username string) (string, error) {
+func (m *mockUserRepo) GetPasswordHash(ctx context.Context, username string) (string, error) {
 	pwd, ok := m.users[username]
 	if !ok {
 		return "", fmt.Errorf("user not found")
@@ -99,7 +100,7 @@ func (m *mockUserRepo) GetPasswordHash(username string) (string, error) {
 	return pwd, nil
 }
 
-func (m *mockUserRepo) GetInfo(username string) (model.User, error) {
+func (m *mockUserRepo) GetInfo(ctx context.Context, username string) (model.User, error) {
 	user, ok := m.userInfo[username]
 	if !ok {
 		return model.User{}, fmt.Errorf("user not found")

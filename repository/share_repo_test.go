@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -19,12 +20,12 @@ func TestShareRepoLifecycle(t *testing.T) {
 		PasswordHash: "hash",
 		ExpireAt:     time.Now().Add(24 * time.Hour),
 	}
-	if err := repo.CreateShare(s); err != nil {
+	if err := repo.CreateShare(context.Background(), s); err != nil {
 		t.Fatalf("CreateShare failed: %v", err)
 	}
 
 	// 按令牌查询
-	got, err := repo.GetShareByToken("tok123456")
+	got, err := repo.GetShareByToken(context.Background(), "tok123456")
 	if err != nil {
 		t.Fatalf("GetShareByToken failed: %v", err)
 	}
@@ -33,20 +34,20 @@ func TestShareRepoLifecycle(t *testing.T) {
 	}
 
 	// 列表只含自己的
-	_ = repo.CreateShare(&model.Share{ShareToken: "tokbob1", FileSha1: testHash, UserName: "bob", ExpireAt: time.Now().Add(time.Hour)})
-	list, err := repo.ListShares("alice")
+	_ = repo.CreateShare(context.Background(), &model.Share{ShareToken: "tokbob1", FileSha1: testHash, UserName: "bob", ExpireAt: time.Now().Add(time.Hour)})
+	list, err := repo.ListShares(context.Background(), "alice")
 	if err != nil || len(list) != 1 {
 		t.Fatalf("alice should have 1 share, got %d err=%v", len(list), err)
 	}
 
 	// 撤销:非归属者失败
-	if ok, _ := repo.DeleteShare("tok123456", "bob"); ok {
+	if ok, _ := repo.DeleteShare(context.Background(), "tok123456", "bob"); ok {
 		t.Fatal("bob should not revoke alice's share")
 	}
-	if ok, err := repo.DeleteShare("tok123456", "alice"); err != nil || !ok {
+	if ok, err := repo.DeleteShare(context.Background(), "tok123456", "alice"); err != nil || !ok {
 		t.Fatalf("alice revoke failed: ok=%v err=%v", ok, err)
 	}
-	if _, err := repo.GetShareByToken("tok123456"); err == nil {
+	if _, err := repo.GetShareByToken(context.Background(), "tok123456"); err == nil {
 		t.Fatal("revoked share should be gone")
 	}
 }
@@ -55,16 +56,16 @@ func TestShareRepoDeleteExpired(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewShareRepository(db)
 
-	_ = repo.CreateShare(&model.Share{ShareToken: "expired1", FileSha1: testHash, UserName: "alice", ExpireAt: time.Now().Add(-time.Hour)})
-	_ = repo.CreateShare(&model.Share{ShareToken: "active1", FileSha1: testHash, UserName: "alice", ExpireAt: time.Now().Add(time.Hour)})
+	_ = repo.CreateShare(context.Background(), &model.Share{ShareToken: "expired1", FileSha1: testHash, UserName: "alice", ExpireAt: time.Now().Add(-time.Hour)})
+	_ = repo.CreateShare(context.Background(), &model.Share{ShareToken: "active1", FileSha1: testHash, UserName: "alice", ExpireAt: time.Now().Add(time.Hour)})
 
-	if err := repo.DeleteExpired(time.Now()); err != nil {
+	if err := repo.DeleteExpired(context.Background(), time.Now()); err != nil {
 		t.Fatalf("DeleteExpired failed: %v", err)
 	}
-	if _, err := repo.GetShareByToken("expired1"); err == nil {
+	if _, err := repo.GetShareByToken(context.Background(), "expired1"); err == nil {
 		t.Fatal("expired share should be cleaned")
 	}
-	if _, err := repo.GetShareByToken("active1"); err != nil {
+	if _, err := repo.GetShareByToken(context.Background(), "active1"); err != nil {
 		t.Fatal("active share should survive")
 	}
 }

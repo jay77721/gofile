@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"gofile/model"
 	"sync"
@@ -12,15 +13,15 @@ import (
 // ShareRepository 文件分享数据访问接口
 type ShareRepository interface {
 	// CreateShare 创建分享
-	CreateShare(s *model.Share) error
+	CreateShare(ctx context.Context, s *model.Share) error
 	// GetShareByToken 按令牌查询分享
-	GetShareByToken(token string) (*model.Share, error)
+	GetShareByToken(ctx context.Context, token string) (*model.Share, error)
 	// ListShares 列出用户的分享
-	ListShares(username string) ([]model.Share, error)
+	ListShares(ctx context.Context, username string) ([]model.Share, error)
 	// DeleteShare 撤销分享（校验归属）
-	DeleteShare(token, username string) (bool, error)
+	DeleteShare(ctx context.Context, token, username string) (bool, error)
 	// DeleteExpired 清理过期分享
-	DeleteExpired(before time.Time) error
+	DeleteExpired(ctx context.Context, before time.Time) error
 }
 
 // mysqlShareRepo GORM 实现的 ShareRepository
@@ -33,39 +34,39 @@ func NewShareRepository(db *gorm.DB) ShareRepository {
 	return &mysqlShareRepo{db: db}
 }
 
-func (r *mysqlShareRepo) CreateShare(s *model.Share) error {
-	if err := r.db.Create(s).Error; err != nil {
+func (r *mysqlShareRepo) CreateShare(ctx context.Context, s *model.Share) error {
+	if err := r.db.WithContext(ctx).Create(s).Error; err != nil {
 		return fmt.Errorf("create share failed: %w", err)
 	}
 	return nil
 }
 
-func (r *mysqlShareRepo) GetShareByToken(token string) (*model.Share, error) {
+func (r *mysqlShareRepo) GetShareByToken(ctx context.Context, token string) (*model.Share, error) {
 	var s model.Share
-	if err := r.db.Where("share_token = ?", token).First(&s).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("share_token = ?", token).First(&s).Error; err != nil {
 		return nil, fmt.Errorf("share not found: %w", err)
 	}
 	return &s, nil
 }
 
-func (r *mysqlShareRepo) ListShares(username string) ([]model.Share, error) {
+func (r *mysqlShareRepo) ListShares(ctx context.Context, username string) ([]model.Share, error) {
 	var shares []model.Share
-	if err := r.db.Where("user_name = ?", username).Order("create_at DESC").Find(&shares).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("user_name = ?", username).Order("create_at DESC").Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("list shares failed: %w", err)
 	}
 	return shares, nil
 }
 
-func (r *mysqlShareRepo) DeleteShare(token, username string) (bool, error) {
-	res := r.db.Where("share_token = ? AND user_name = ?", token, username).Delete(&model.Share{})
+func (r *mysqlShareRepo) DeleteShare(ctx context.Context, token, username string) (bool, error) {
+	res := r.db.WithContext(ctx).Where("share_token = ? AND user_name = ?", token, username).Delete(&model.Share{})
 	if res.Error != nil {
 		return false, fmt.Errorf("delete share failed: %w", res.Error)
 	}
 	return res.RowsAffected > 0, nil
 }
 
-func (r *mysqlShareRepo) DeleteExpired(before time.Time) error {
-	if err := r.db.Where("expire_at < ?", before).Delete(&model.Share{}).Error; err != nil {
+func (r *mysqlShareRepo) DeleteExpired(ctx context.Context, before time.Time) error {
+	if err := r.db.WithContext(ctx).Where("expire_at < ?", before).Delete(&model.Share{}).Error; err != nil {
 		return fmt.Errorf("delete expired shares failed: %w", err)
 	}
 	return nil
@@ -84,7 +85,7 @@ func NewMockShareRepository() ShareRepository {
 	return &mockShareRepo{shares: make(map[string]*model.Share)}
 }
 
-func (m *mockShareRepo) CreateShare(s *model.Share) error {
+func (m *mockShareRepo) CreateShare(ctx context.Context, s *model.Share) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := *s
@@ -92,7 +93,7 @@ func (m *mockShareRepo) CreateShare(s *model.Share) error {
 	return nil
 }
 
-func (m *mockShareRepo) GetShareByToken(token string) (*model.Share, error) {
+func (m *mockShareRepo) GetShareByToken(ctx context.Context, token string) (*model.Share, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.shares[token]
@@ -103,7 +104,7 @@ func (m *mockShareRepo) GetShareByToken(token string) (*model.Share, error) {
 	return &cp, nil
 }
 
-func (m *mockShareRepo) ListShares(username string) ([]model.Share, error) {
+func (m *mockShareRepo) ListShares(ctx context.Context, username string) ([]model.Share, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []model.Share
@@ -115,7 +116,7 @@ func (m *mockShareRepo) ListShares(username string) ([]model.Share, error) {
 	return out, nil
 }
 
-func (m *mockShareRepo) DeleteShare(token, username string) (bool, error) {
+func (m *mockShareRepo) DeleteShare(ctx context.Context, token, username string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.shares[token]
@@ -126,7 +127,7 @@ func (m *mockShareRepo) DeleteShare(token, username string) (bool, error) {
 	return true, nil
 }
 
-func (m *mockShareRepo) DeleteExpired(before time.Time) error {
+func (m *mockShareRepo) DeleteExpired(ctx context.Context, before time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for k, s := range m.shares {

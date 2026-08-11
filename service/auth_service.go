@@ -19,7 +19,7 @@ func NewAuthService(tokenRepo repository.TokenRepository) *AuthService {
 
 // ValidateToken 验证 token 是否有效
 func (s *AuthService) ValidateToken(ctx context.Context, username, token string) bool {
-	t, err := s.tokenRepo.Get(username)
+	t, err := s.tokenRepo.Get(ctx, username)
 	if err != nil {
 		slog.WarnContext(ctx, "token validation failed: not found", "username", username)
 		return false

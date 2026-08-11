@@ -120,7 +120,7 @@ func (p *Processor) RequeueFailed(ctx context.Context) int {
 	if p == nil || p.aiRepo == nil {
 		return 0
 	}
-	tasks, err := p.aiRepo.ListRequeueable(maxRetry)
+	tasks, err := p.aiRepo.ListRequeueable(ctx, maxRetry)
 	if err != nil {
 		slog.WarnContext(ctx, "list requeueable ai tasks failed", "error", err)
 		return 0
@@ -170,7 +170,7 @@ func (p *Processor) process(item taskItem) {
 
 // isAlreadyDone 检查任务是否已完成（幂等跳过）
 func (p *Processor) isAlreadyDone(ctx context.Context, filehash, username string) bool {
-	existing, err := p.aiRepo.GetTask(filehash, username)
+	existing, err := p.aiRepo.GetTask(ctx, filehash, username)
 	if err == nil && existing != nil && existing.Status == 2 {
 		slog.DebugContext(ctx, "ai task already done, skip", "filehash", filehash, "username", username)
 		return true
@@ -180,10 +180,10 @@ func (p *Processor) isAlreadyDone(ctx context.Context, filehash, username string
 
 // registerTask 创建并标记任务为处理中
 func (p *Processor) registerTask(ctx context.Context, filehash, username string) {
-	if err := p.aiRepo.CreateTask(&model.AITask{FileSha1: filehash, Username: username}); err != nil {
+	if err := p.aiRepo.CreateTask(ctx, &model.AITask{FileSha1: filehash, Username: username}); err != nil {
 		slog.WarnContext(ctx, "create ai task failed", "error", err, "filehash", filehash)
 	}
-	_ = p.aiRepo.MarkProcessing(filehash, username)
+	_ = p.aiRepo.MarkProcessing(ctx, filehash, username)
 }
 
 // analyze 执行文本提取与 LLM 分析（秒传命中时跳过 LLM）
@@ -192,7 +192,7 @@ func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string,
 	filehash, username := item.Filehash, item.Username
 
 	// 秒传检测：全局 summary 已存在则零成本复用
-	global, gErr := p.fileRepo.GetGlobalFile(filehash)
+	global, gErr := p.fileRepo.GetGlobalFile(ctx, filehash)
 	if gErr == nil && global.Summary != "" {
 		slog.InfoContext(ctx, "ai task: fast-dedup, skip LLM", "filehash", filehash, "username", username)
 		if filename == "" {
@@ -211,7 +211,7 @@ func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string,
 		return "", nil, "", fmt.Errorf("analyze failed: %w", err)
 	}
 	tagsStr := joinTags(analysis.Tags)
-	if sErr := p.fileRepo.SaveAnalysis(filehash, analysis.Summary, tagsStr); sErr != nil {
+	if sErr := p.fileRepo.SaveAnalysis(ctx, filehash, analysis.Summary, tagsStr); sErr != nil {
 		return "", nil, "", fmt.Errorf("save analysis failed: %w", sErr)
 	}
 	return analysis.Summary, analysis.Tags, filename, nil
@@ -241,7 +241,7 @@ func (p *Processor) indexDocument(ctx context.Context, filehash, username, filen
 
 // complete 标记任务完成并记录指标
 func (p *Processor) complete(ctx context.Context, filehash, username, summary string) {
-	if err := p.aiRepo.MarkDone(filehash, username); err != nil {
+	if err := p.aiRepo.MarkDone(ctx, filehash, username); err != nil {
 		slog.WarnContext(ctx, "mark ai task done failed", "error", err, "filehash", filehash)
 	}
 	metrics.RecordAITask("done")
@@ -264,7 +264,7 @@ func (p *Processor) extractText(ctx context.Context, filehash, filename string) 
 func (p *Processor) fail(ctx context.Context, filehash, username, errMsg string) {
 	slog.ErrorContext(ctx, "ai task failed", "filehash", filehash, "username", username, "error", errMsg)
 	metrics.RecordAITask("failed")
-	if err := p.aiRepo.MarkFailed(filehash, username, errMsg); err != nil {
+	if err := p.aiRepo.MarkFailed(ctx, filehash, username, errMsg); err != nil {
 		slog.WarnContext(ctx, "mark ai task failed failed", "error", err, "filehash", filehash)
 	}
 }

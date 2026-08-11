@@ -20,13 +20,55 @@ func NewUserHandler(userSvc *service.UserService, cfg *config.Config) *UserHandl
 	return &UserHandler{userSvc: userSvc, cfg: cfg}
 }
 
+// passwordStrength 校验密码强度：至少 8 位，包含大写字母、小写字母、数字中的至少三类
+func passwordStrength(password string) (bool, string) {
+	if len(password) < 8 {
+		return false, "密码至少 8 位"
+	}
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
+	for _, c := range password {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			hasUpper = true
+		case c >= 'a' && c <= 'z':
+			hasLower = true
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		default:
+			hasSpecial = true
+		}
+	}
+	category := 0
+	if hasUpper {
+		category++
+	}
+	if hasLower {
+		category++
+	}
+	if hasDigit {
+		category++
+	}
+	if hasSpecial {
+		category++
+	}
+	if category < 3 {
+		return false, "密码需包含大写字母、小写字母、数字、特殊字符中的至少三类"
+	}
+	return true, ""
+}
+
 // SignupHandler 处理用户注册请求
 func (h *UserHandler) SignupHandler(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
 
-	if len(username) < 3 || len(password) < 5 {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "用户名至少3位，密码至少5位")
+	if len(username) < 3 {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "用户名至少3位")
+		return
+	}
+
+	if ok, msg := passwordStrength(password); !ok {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, msg)
 		return
 	}
 
@@ -85,7 +127,7 @@ func (h *UserHandler) SignInHandler(c *gin.Context) {
 func (h *UserHandler) LogoutHandler(c *gin.Context) {
 	username, _ := c.Cookie("username")
 	if username != "" {
-		if err := h.userSvc.Logout(username); err != nil {
+		if err := h.userSvc.Logout(c.Request.Context(), username); err != nil {
 			slog.WarnContext(c.Request.Context(), "logout: delete token failed", "error", err, "username", username)
 		}
 	}
@@ -105,7 +147,7 @@ func (h *UserHandler) UserInfoHandler(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userSvc.GetUserInfo(username)
+	user, err := h.userSvc.GetUserInfo(c.Request.Context(), username)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "get user info failed", "error", err, "username", username)
 		respondError(c, http.StatusInternalServerError, CodeInternalError, "获取用户信息失败")

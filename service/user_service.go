@@ -31,7 +31,7 @@ func (s *UserService) Signup(ctx context.Context, username, password string) err
 		return fmt.Errorf("bcrypt hash failed: %w", err)
 	}
 
-	ok, err := s.userRepo.Create(username, string(hashedPwd))
+	ok, err := s.userRepo.Create(ctx, username, string(hashedPwd))
 	if err != nil {
 		return fmt.Errorf("create user failed: %w", err)
 	}
@@ -46,7 +46,7 @@ func (s *UserService) Signup(ctx context.Context, username, password string) err
 // Signin 用户登录，返回 token
 func (s *UserService) Signin(ctx context.Context, username, password string) (string, error) {
 	// 获取密码哈希
-	storedHash, err := s.userRepo.GetPasswordHash(username)
+	storedHash, err := s.userRepo.GetPasswordHash(ctx, username)
 	if err != nil {
 		slog.WarnContext(ctx, "login failed: user not found", "username", username)
 		return "", fmt.Errorf("invalid credentials")
@@ -66,7 +66,7 @@ func (s *UserService) Signin(ctx context.Context, username, password string) (st
 
 	// 存储 token（24h 过期）
 	expiredAt := time.Now().Add(24 * time.Hour)
-	if _, err := s.tokenRepo.Upsert(username, token, expiredAt); err != nil {
+	if _, err := s.tokenRepo.Upsert(ctx, username, token, expiredAt); err != nil {
 		return "", fmt.Errorf("save token failed: %w", err)
 	}
 
@@ -75,13 +75,13 @@ func (s *UserService) Signin(ctx context.Context, username, password string) (st
 }
 
 // GetUserInfo 获取用户信息
-func (s *UserService) GetUserInfo(username string) (model.User, error) {
-	return s.userRepo.GetInfo(username)
+func (s *UserService) GetUserInfo(ctx context.Context, username string) (model.User, error) {
+	return s.userRepo.GetInfo(ctx, username)
 }
 
 // Logout 登出:删除服务端 token(客户端 Cookie 由 handler 清除)
-func (s *UserService) Logout(username string) error {
-	return s.tokenRepo.Delete(username)
+func (s *UserService) Logout(ctx context.Context, username string) error {
+	return s.tokenRepo.Delete(ctx, username)
 }
 
 // generateToken 生成安全的随机 token（64 位十六进制）
