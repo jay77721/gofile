@@ -3,6 +3,8 @@ package storage
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,5 +69,42 @@ func TestLocalPutKeySanitized(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "..", "escape.txt")); err == nil {
 		t.Errorf("file escaped the upload dir")
+	}
+}
+
+// ---- 基准:本地存储 Put/Get(上传/下载主路径) ----
+
+func BenchmarkLocalPut_1MB(b *testing.B) {
+	s := NewLocal(b.TempDir())
+	data := bytes.Repeat([]byte("x"), 1<<20)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		key := fmt.Sprintf("bench-%d", i)
+		if err := s.Put(context.Background(), key, bytes.NewReader(data), int64(len(data))); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLocalGet_1MB(b *testing.B) {
+	s := NewLocal(b.TempDir())
+	data := bytes.Repeat([]byte("x"), 1<<20)
+	ctx := context.Background()
+	if err := s.Put(ctx, "bench", bytes.NewReader(data), int64(len(data))); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rc, err := s.Get(ctx, "bench")
+		if err != nil {
+			b.Fatal(err)
+		}
+		n, _ := io.Copy(io.Discard, rc)
+		rc.Close()
+		if n != int64(len(data)) {
+			b.Fatalf("read %d bytes", n)
+		}
 	}
 }

@@ -1,5 +1,6 @@
 -- gofile 数据库初始化 Schema
--- 使用方法: mysql -u root -p gofile < migrations/000001_init_schema.up.sql
+-- 唯一真相源:新部署执行本文件即可;表结构变更请同步修改本文件与 db/mysql AutoMigrate 模型
+-- 使用方法: mysql -u root -p gofile < schema.sql
 
 CREATE TABLE IF NOT EXISTS tbl_user_file (
   id BIGINT NOT NULL AUTO_INCREMENT,

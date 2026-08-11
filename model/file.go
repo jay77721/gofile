@@ -6,6 +6,7 @@ import "time"
 // 对应 tbl_file 表
 type File struct {
 	FileSha1 string    `gorm:"column:file_sha1;primaryKey;size:40"`
+	FileName string    `gorm:"column:file_name;size:256;default:''"` // 首次上传时的文件名(秒传所有权关联复用)
 	FileSize int64     `gorm:"column:file_size;default:0"`
 	FileAddr string    `gorm:"column:file_addr;size:512;default:''"`
 	Summary  string    `gorm:"column:file_summary;type:text"`   // AI 生成的内容摘要

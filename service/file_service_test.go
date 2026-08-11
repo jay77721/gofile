@@ -15,7 +15,7 @@ import (
 func newTestFileService(t *testing.T, hash, content string) *FileService {
 	t.Helper()
 	repo := repository.NewMockFileRepository()
-	if err := repo.Create(model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
+	if err := repo.Create(model.File{FileSha1: hash, FileName: "a.txt", FileSize: int64(len(content))}); err != nil {
 		t.Fatalf("repo.Create failed: %v", err)
 	}
 	if err := repo.CreateUserFile(model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
@@ -163,5 +163,57 @@ func TestTrashLifecycle(t *testing.T) {
 	// 重复彻底删除应报错(已不存在)
 	if err := svc.Purge(ctx, hash, "alice"); err == nil {
 		t.Errorf("second Purge should fail, got nil")
+	}
+}
+
+// TestFastUploadOwnership 秒传路径必须为当前用户建立所有权关联(跨用户场景)
+func TestFastUploadOwnership(t *testing.T) {
+	const hash = "fedcba9876543210fedcba9876543210fedcba98"
+	content := "shared file content"
+	svc := newTestFileService(t, hash, content)
+	ctx := context.Background()
+
+	// 用户 bob 秒传 alice 已上传的文件(存储层已存在,bob 无关联)
+	exists, err := svc.FastUpload(ctx, hash, "bob")
+	if err != nil {
+		t.Fatalf("FastUpload failed: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected exists=true")
+	}
+
+	// bob 现在拥有该文件:可查询、可下载
+	meta, err := svc.GetMeta(hash, "bob")
+	if err != nil {
+		t.Fatalf("bob should own file after fast upload: %v", err)
+	}
+	if meta.FileName != "a.txt" {
+		t.Fatalf("expected filename inherited from global record, got %q", meta.FileName)
+	}
+	rc, _, err := svc.Download(ctx, hash, "bob")
+	if err != nil {
+		t.Fatalf("bob download failed: %v", err)
+	}
+	rc.Close()
+
+	// 幂等:重复秒传不报错
+	if _, err := svc.FastUpload(ctx, hash, "bob"); err != nil {
+		t.Fatalf("second fast upload should be idempotent: %v", err)
+	}
+}
+
+// TestFastUploadMiss 存储层不存在时返回 false,不建关联
+func TestFastUploadMiss(t *testing.T) {
+	const hash = "0000000000000000000000000000000000000000"
+	svc := newTestFileService(t, "abcdef0123456789abcdef0123456789abcdef01", "x")
+	exists, err := svc.FastUpload(context.Background(), hash, "bob")
+	if err != nil {
+		t.Fatalf("FastUpload should not error on miss, got %v", err)
+	}
+	if exists {
+		t.Fatal("expected exists=false for missing file")
+	}
+	if _, err := svc.GetMeta(hash, "bob"); err == nil {
+		t.Fatal("bob should not own a file that was never uploaded")
 	}
 }

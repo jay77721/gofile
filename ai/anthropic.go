@@ -85,8 +85,9 @@ func (p *AnthropicProvider) Analyze(ctx context.Context, fileName, content strin
 }
 
 func (p *AnthropicProvider) Embed(ctx context.Context, text string) ([]float32, error) {
-	// Anthropic 不直接提供 embedding API，回退到 hash 向量
-	// 建议搭配 Voyage AI 或 OpenAI embedding
+	// Anthropic 官方不提供 embedding API,这里降级为确定性 hash 向量(关键词近似,非语义向量)。
+	// 需要真实语义搜索时,请在网页「AI 设置」中配置 OpenAI 协议端点(自带 /embeddings),
+	// 或使用 Voyage AI 等第三方 embedding 服务。
 	return deterministicVector(text, p.dim), nil
 }
 

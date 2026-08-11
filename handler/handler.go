@@ -47,9 +47,9 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxUploadSize)
 
 	fileHash := c.PostForm("filehash")
-	// 秒传检测
+	// 秒传检测(命中时同时建立当前用户的所有权关联)
 	if fileHash != "" {
-		exists, err := h.fileSvc.FastUpload(c.Request.Context(), fileHash)
+		exists, err := h.fileSvc.FastUpload(c.Request.Context(), fileHash, c.GetString("username"))
 		if err != nil {
 			slog.WarnContext(c.Request.Context(), "upload: fast upload check failed", "error", err, "filehash", fileHash)
 		} else if exists {

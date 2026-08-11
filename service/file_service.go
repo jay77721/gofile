@@ -127,7 +127,7 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	}
 
 	// 注册全局文件（INSERT IGNORE 幂等）
-	if err := s.fileRepo.Create(model.File{FileSha1: fileSha1, FileSize: totalSize, FileAddr: fileSha1}); err != nil {
+	if err := s.fileRepo.Create(model.File{FileSha1: fileSha1, FileName: filename, FileSize: totalSize, FileAddr: fileSha1}); err != nil {
 		slog.WarnContext(ctx, "save global file meta failed, rolling back storage", "filehash", fileSha1)
 		s.store.Delete(ctx, fileSha1)
 		return model.FileMeta{}, fmt.Errorf("save file meta failed: %w", err)
@@ -237,9 +237,24 @@ func (s *FileService) PresignDownload(ctx context.Context, fileHash, username st
 	return url, nil
 }
 
-// FastUpload 秒传检测
-func (s *FileService) FastUpload(ctx context.Context, fileHash string) (bool, error) {
-	return s.store.Exists(ctx, fileHash)
+// FastUpload 秒传检测:全局存储命中时建立当前用户的所有权关联(幂等)
+// 返回 exists=true 表示秒传成功;失败时返回 false(调用方继续走完整上传)
+func (s *FileService) FastUpload(ctx context.Context, fileHash, username string) (bool, error) {
+	exists, err := s.store.Exists(ctx, fileHash)
+	if err != nil || !exists {
+		return false, err
+	}
+	// 建立用户拥有关系(幂等 INSERT IGNORE);文件名取全局记录,取不到则留空
+	fileName := ""
+	if global, gErr := s.fileRepo.GetGlobalFile(fileHash); gErr == nil {
+		fileName = global.FileName
+	}
+	if ufErr := s.fileRepo.CreateUserFile(model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); ufErr != nil {
+		slog.WarnContext(ctx, "fast upload: create user file relation failed", "error", ufErr, "filehash", fileHash, "username", username)
+	}
+	s.cacheMark(ctx, fileHash)
+	slog.InfoContext(ctx, "fast upload (dedup)", "filehash", fileHash, "username", username)
+	return true, nil
 }
 
 // GetMeta 获取文件元信息

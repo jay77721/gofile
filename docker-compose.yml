@@ -35,6 +35,8 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # Typesense:向量检索引擎(实验性/可选)
+  # 单机 demo 或向量量较小时可去掉本服务——AI 搜索自动降级为 MySQL LIKE 关键词匹配
   typesense:
     image: typesense/typesense:27.1
     ports:
