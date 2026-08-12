@@ -42,7 +42,7 @@ var dangerousExts = map[string]bool{
 	".svg": true, // 可内联 JavaScript，预览时需特殊处理
 	".jar": true, // Java 可执行
 	".war": true, ".ear": true,
-	".ps": true,  // PowerShell 脚本
+	".ps":  true, // PowerShell 脚本
 	".vbs": true, ".vbe": true, ".wsf": true, ".wsh": true,
 	".reg": true, // Windows 注册表文件
 	".inf": true,

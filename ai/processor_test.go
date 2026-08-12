@@ -136,27 +136,37 @@ func (m *mockFileRepoForProc) GetGlobalFile(ctx context.Context, filehash string
 }
 
 // 以下方法仅为满足 repository.FileRepository 接口，processor 不调用
-func (m *mockFileRepoForProc) Create(ctx context.Context, f model.File) error              { return nil }
-func (m *mockFileRepoForProc) CreateUserFile(ctx context.Context, uf model.UserFile) error { return nil }
+func (m *mockFileRepoForProc) Create(ctx context.Context, f model.File) error { return nil }
+func (m *mockFileRepoForProc) CreateUserFile(ctx context.Context, uf model.UserFile) error {
+	return nil
+}
 func (m *mockFileRepoForProc) GetByHash(ctx context.Context, filehash, username string) (model.FileMeta, error) {
 	return model.FileMeta{}, nil
 }
 func (m *mockFileRepoForProc) ListByUser(ctx context.Context, username string) ([]model.FileMeta, error) {
 	return nil, nil
 }
-func (m *mockFileRepoForProc) CountByUser(ctx context.Context, username string) (int64, error) { return 0, nil }
+func (m *mockFileRepoForProc) CountByUser(ctx context.Context, username string) (int64, error) {
+	return 0, nil
+}
 func (m *mockFileRepoForProc) ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, error) {
 	return nil, nil
 }
-func (m *mockFileRepoForProc) Delete(ctx context.Context, filehash, username string) (bool, error) { return false, nil }
+func (m *mockFileRepoForProc) Delete(ctx context.Context, filehash, username string) (bool, error) {
+	return false, nil
+}
 func (m *mockFileRepoForProc) UpdateName(ctx context.Context, filehash, username, newFilename string) (bool, error) {
 	return false, nil
 }
-func (m *mockFileRepoForProc) CountRefs(ctx context.Context, filehash string) (int64, error) { return 0, nil }
+func (m *mockFileRepoForProc) CountRefs(ctx context.Context, filehash string) (int64, error) {
+	return 0, nil
+}
 func (m *mockFileRepoForProc) ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockFileRepoForProc) Restore(ctx context.Context, filehash, username string) (bool, error) { return false, nil }
+func (m *mockFileRepoForProc) Restore(ctx context.Context, filehash, username string) (bool, error) {
+	return false, nil
+}
 func (m *mockFileRepoForProc) PurgeUserFile(ctx context.Context, filehash, username string) (bool, error) {
 	return false, nil
 }
