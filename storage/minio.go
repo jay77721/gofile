@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -14,6 +15,7 @@ import (
 // MinIOStorage MinIO 对象存储实现（S3 兼容）
 type MinIOStorage struct {
 	client *minio.Client
+	core   *minio.Core
 	bucket string
 }
 
@@ -40,8 +42,9 @@ func NewMinIO(endpoint, accessKey, secretKey, bucket string, useSSL bool) (*MinI
 		slog.Info("minio bucket created", "bucket", bucket)
 	}
 
+	core := &minio.Core{Client: client}
 	slog.Info("minio connected", "endpoint", endpoint, "bucket", bucket)
-	return &MinIOStorage{client: client, bucket: bucket}, nil
+	return &MinIOStorage{client: client, core: core, bucket: bucket}, nil
 }
 
 // Put 将文件上传到 MinIO
@@ -122,4 +125,52 @@ func (s *MinIOStorage) PresignGet(ctx context.Context, key string, expiry time.D
 		return "", fmt.Errorf("presign get failed: %w", err)
 	}
 	return url.String(), nil
+}
+
+// InitMultipart 初始化 S3 分片直传，返回 UploadID
+func (s *MinIOStorage) InitMultipart(ctx context.Context, key string) (string, error) {
+	uploadID, err := s.core.NewMultipartUpload(ctx, s.bucket, key, minio.PutObjectOptions{
+		ContentType: "application/octet-stream",
+	})
+	if err != nil {
+		return "", fmt.Errorf("minio new multipart failed: %w", err)
+	}
+	return uploadID, nil
+}
+
+// PresignPartPut 签发指定分片的预签名直传 URL
+func (s *MinIOStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
+	reqParams := make(url.Values)
+	reqParams.Set("uploadId", uploadID)
+	reqParams.Set("partNumber", fmt.Sprintf("%d", partNumber))
+
+	u, err := s.client.Presign(ctx, "PUT", s.bucket, key, expiry, reqParams)
+	if err != nil {
+		return "", fmt.Errorf("minio presign part put failed: %w", err)
+	}
+	return u.String(), nil
+}
+
+// CompleteMultipart 在存储层合并分片
+func (s *MinIOStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletePart) error {
+	var minioParts []minio.CompletePart
+	for _, p := range parts {
+		minioParts = append(minioParts, minio.CompletePart{
+			PartNumber: p.PartNumber,
+			ETag:       p.ETag,
+		})
+	}
+	_, err := s.core.CompleteMultipartUpload(ctx, s.bucket, key, uploadID, minioParts, minio.PutObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("minio complete multipart failed: %w", err)
+	}
+	return nil
+}
+
+// AbortMultipart 取消分片上传并清理存储层临时分片
+func (s *MinIOStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	if err := s.core.AbortMultipartUpload(ctx, s.bucket, key, uploadID); err != nil {
+		return fmt.Errorf("minio abort multipart failed: %w", err)
+	}
+	return nil
 }

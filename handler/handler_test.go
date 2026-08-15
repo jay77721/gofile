@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -666,4 +667,168 @@ func TestLogoutHandler(t *testing.T) {
 	if !cleared["token"] || !cleared["username"] {
 		t.Errorf("cookies not cleared: %v", cleared)
 	}
+}
+
+type mockHandlerMultipartStorage struct {
+	*storage.LocalStorage
+	inited   bool
+	complete bool
+}
+
+func (m *mockHandlerMultipartStorage) InitMultipart(ctx context.Context, key string) (string, error) {
+	m.inited = true
+	return "upload-handler-id", nil
+}
+
+func (m *mockHandlerMultipartStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
+	return "http://mock-minio/part?partNumber=1", nil
+}
+
+func (m *mockHandlerMultipartStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
+	m.complete = true
+	return nil
+}
+
+func (m *mockHandlerMultipartStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	return nil
+}
+
+func TestVFSFolderHandlers(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
+	r := setupRouter()
+
+	r.Use(func(c *gin.Context) {
+		c.Set("username", "alice")
+		c.Next()
+	})
+
+	r.POST("/file/folder/create", fh.CreateFolderHandler)
+	r.POST("/file/folder/rename", fh.RenameFolderHandler)
+	r.POST("/file/folder/move", fh.MoveFolderHandler)
+	r.GET("/file/query", fh.FileQueryHandler)
+
+	// 1. 创建文件夹 A
+	body, _ := json.Marshal(model.FolderCreateReq{Name: "资料", ParentID: 0})
+	req := httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create folder status = %d, want 200", w.Code)
+	}
+
+	var resp struct {
+		Code int            `json:"code"`
+		Data model.UserFile `json:"data"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	folderAID := resp.Data.ID
+	if folderAID == 0 {
+		t.Fatalf("expected created folder ID > 0")
+	}
+
+	// 2. 创建子文件夹 B
+	body, _ = json.Marshal(model.FolderCreateReq{Name: "子资料", ParentID: uint64(folderAID)})
+	req = httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create subfolder status = %d, want 200", w.Code)
+	}
+
+	// 3. 重命名文件夹
+	body, _ = json.Marshal(model.FolderRenameReq{FileID: folderAID, NewName: "新资料"})
+	req = httptest.NewRequest("POST", "/file/folder/rename", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("rename folder status = %d, want 200", w.Code)
+	}
+
+	// 4. 查询目录及面包屑
+	req = httptest.NewRequest("GET", "/file/query?parent_id=0", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("query directory status = %d, want 200", w.Code)
+	}
+}
+
+func TestMultipartHandlers(t *testing.T) {
+	dir, err := os.MkdirTemp("", "gofile-mp-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	fileRepo := repository.NewMockFileRepository()
+	multipartRepo := repository.NewMockMultipartRepository()
+	localStorage := storage.NewLocal(dir)
+	mockStore := &mockHandlerMultipartStorage{LocalStorage: localStorage}
+
+	cfg := &config.Config{UploadDir: dir, ChunkDir: dir}
+	fileSvc := service.NewFileService(fileRepo, mockStore, cfg).WithMultipart(multipartRepo)
+	fh := NewFileHandler(fileSvc, cfg)
+
+	r := setupRouter()
+	r.Use(func(c *gin.Context) {
+		c.Set("username", "alice")
+		c.Next()
+	})
+
+	r.POST("/file/upload/multipart/init", fh.InitMultipartHandler)
+	r.POST("/file/upload/multipart/complete", fh.CompleteMultipartHandler)
+	r.POST("/file/upload/multipart/abort", fh.AbortMultipartHandler)
+
+	const hash = "1111222233334444555566667777888899990000"
+
+	// 1. Init
+	initBody, _ := json.Marshal(model.MultipartInitReq{
+		FileSha1:  hash,
+		FileName:  "archive.tar.gz",
+		FileSize:  20 * 1024 * 1024,
+		ChunkSize: 10 * 1024 * 1024,
+	})
+	req := httptest.NewRequest("POST", "/file/upload/multipart/init", bytes.NewReader(initBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("init multipart status = %d, want 200", w.Code)
+	}
+
+	var initResp struct {
+		Code int                     `json:"code"`
+		Data model.MultipartInitResp `json:"data"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &initResp)
+	if initResp.Data.UploadID != "upload-handler-id" {
+		t.Fatalf("expected upload_id upload-handler-id, got %q", initResp.Data.UploadID)
+	}
+
+	// 2. Complete
+	compBody, _ := json.Marshal(model.MultipartCompleteReq{
+		UploadID: initResp.Data.UploadID,
+		Parts: []storage.CompletePart{
+			{PartNumber: 1, ETag: "etag1"},
+			{PartNumber: 2, ETag: "etag2"},
+		},
+	})
+	req = httptest.NewRequest("POST", "/file/upload/multipart/complete", bytes.NewReader(compBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("complete multipart status = %d, want 200", w.Code)
+	}
+
+	// 3. Abort
+	abortBody, _ := json.Marshal(model.MultipartAbortReq{UploadID: "some-id"})
+	req = httptest.NewRequest("POST", "/file/upload/multipart/abort", bytes.NewReader(abortBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	// should not crash
 }

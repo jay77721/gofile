@@ -133,3 +133,23 @@ func (s *LocalStorage) PresignPut(ctx context.Context, key string, expiry time.D
 func (s *LocalStorage) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	return "", ErrPresignNotSupported
 }
+
+// InitMultipart 本地存储不支持 S3 预签名分片直传
+func (s *LocalStorage) InitMultipart(ctx context.Context, key string) (string, error) {
+	return "", ErrPresignNotSupported
+}
+
+// PresignPartPut 本地存储不支持 S3 预签名分片直传
+func (s *LocalStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
+	return "", ErrPresignNotSupported
+}
+
+// CompleteMultipart 本地存储不支持 S3 分片合并
+func (s *LocalStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletePart) error {
+	return ErrPresignNotSupported
+}
+
+// AbortMultipart 本地存储不支持 S3 分片取消
+func (s *LocalStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	return ErrPresignNotSupported
+}

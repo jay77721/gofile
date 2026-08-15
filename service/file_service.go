@@ -29,12 +29,13 @@ var ErrRangeOutOfBounds = errors.New("range out of bounds")
 
 // FileService 文件业务逻辑
 type FileService struct {
-	fileRepo repository.FileRepository
-	store    storage.Storage
-	cfg      *config.Config
-	cache    *cache.Client // 可选，Redis 不可用时为 nil
-	ai       *ai.Processor // 可选，AI 功能关闭时为 nil
-	indexer  ai.Indexer    // 可选，检索引擎（用于删除时清理索引）
+	fileRepo      repository.FileRepository
+	multipartRepo repository.MultipartRepository // 可选，分片直传元数据仓库
+	store         storage.Storage
+	cfg           *config.Config
+	cache         *cache.Client // 可选，Redis 不可用时为 nil
+	ai            *ai.Processor // 可选，AI 功能关闭时为 nil
+	indexer       ai.Indexer    // 可选，检索引擎（用于删除时清理索引）
 }
 
 // NewFileService 创建文件服务（cache 为 nil 时回退到原有逻辑）
@@ -44,6 +45,12 @@ func NewFileService(fileRepo repository.FileRepository, store storage.Storage, c
 		cc = c[0]
 	}
 	return &FileService{fileRepo: fileRepo, store: store, cfg: cfg, cache: cc}
+}
+
+// WithMultipart 注入分片直传仓库
+func (s *FileService) WithMultipart(r repository.MultipartRepository) *FileService {
+	s.multipartRepo = r
+	return s
 }
 
 // WithAI 注入 AI 异步编排器（main 组装时调用，可选）
@@ -591,4 +598,304 @@ func saveMergedFile(ctx context.Context, store storage.Storage, fileHash, tmpPat
 	defer os.Remove(tmpPath)
 
 	return store.Put(ctx, fileHash, tmpReader, totalSize)
+}
+
+// ---- S3 Multipart 直传直合 ----
+
+// InitMultipartUpload 初始化分片直传，包含秒传判定与批量预签名 URL 签发
+func (s *FileService) InitMultipartUpload(ctx context.Context, username string, req model.MultipartInitReq) (model.MultipartInitResp, error) {
+	if s.multipartRepo == nil {
+		return model.MultipartInitResp{}, fmt.Errorf("multipart repository not configured")
+	}
+
+	// 默认分块大小 10MB，最小 5MB（除最后一个分块外）
+	chunkSize := req.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = 10 * 1024 * 1024
+	}
+	if chunkSize < 5*1024*1024 {
+		chunkSize = 5 * 1024 * 1024
+	}
+
+	// 计算目标物化路径
+	targetDirPath := "/"
+	if req.ParentID != 0 {
+		parent, err := s.fileRepo.GetUserFileByID(ctx, uint(req.ParentID), username)
+		if err != nil || parent.IsDir != 1 || parent.Status != model.UserFileStatusActive {
+			return model.MultipartInitResp{}, fmt.Errorf("invalid target directory")
+		}
+		targetDirPath = parent.DirPath
+	}
+
+	// 1. 秒传判定：Redis 缓存 O(1) 过滤 + 存储层确认
+	var isFastUpload bool
+	if s.cache != nil {
+		seen, _ := s.cache.HashExists(ctx, req.FileSha1)
+		if seen {
+			exists, _ := s.store.Exists(ctx, req.FileSha1)
+			if exists {
+				isFastUpload = true
+			}
+		}
+	}
+	if !isFastUpload {
+		exists, err := s.store.Exists(ctx, req.FileSha1)
+		if err == nil && exists {
+			isFastUpload = true
+		}
+	}
+
+	if isFastUpload {
+		// 秒传命中：直接绑定用户关系并触发 AI 任务
+		s.fileRepo.CreateUserFile(ctx, model.UserFile{
+			Username: username,
+			ParentID: req.ParentID,
+			FileSha1: req.FileSha1,
+			FileName: req.FileName,
+			DirPath:  targetDirPath,
+			Status:   model.UserFileStatusActive,
+		})
+		s.cacheMark(ctx, req.FileSha1)
+		s.enqueue(ctx, req.FileSha1, req.FileName, username)
+		slog.InfoContext(ctx, "multipart init: fast upload hit", "filehash", req.FileSha1, "username", username)
+		return model.MultipartInitResp{FastUpload: true}, nil
+	}
+
+	// 2. 未命中秒传：调用 S3 初始化 Multipart Upload
+	uploadID, err := s.store.InitMultipart(ctx, req.FileSha1)
+	if err != nil {
+		return model.MultipartInitResp{}, fmt.Errorf("init s3 multipart failed: %w", err)
+	}
+
+	// 计算分片总数
+	chunkCount := int((req.FileSize + int64(chunkSize) - 1) / int64(chunkSize))
+	partURLs := make([]string, chunkCount)
+	for i := 1; i <= chunkCount; i++ {
+		u, err := s.store.PresignPartPut(ctx, req.FileSha1, uploadID, i, 24*time.Hour)
+		if err != nil {
+			_ = s.store.AbortMultipart(ctx, req.FileSha1, uploadID)
+			return model.MultipartInitResp{}, fmt.Errorf("presign part url failed: %w", err)
+		}
+		partURLs[i-1] = u
+	}
+
+	// 持久化分片任务记录
+	record := model.MultipartUpload{
+		UploadID:   uploadID,
+		FileSha1:   req.FileSha1,
+		FileName:   req.FileName,
+		FileSize:   req.FileSize,
+		ChunkSize:  chunkSize,
+		ChunkCount: chunkCount,
+		Username:   username,
+		ParentID:   req.ParentID,
+		Status:     model.MultipartStatusUploading,
+		ExpiredAt:  time.Now().Add(24 * time.Hour),
+	}
+	if err := s.multipartRepo.Create(ctx, record); err != nil {
+		_ = s.store.AbortMultipart(ctx, req.FileSha1, uploadID)
+		return model.MultipartInitResp{}, fmt.Errorf("save multipart record failed: %w", err)
+	}
+
+	slog.InfoContext(ctx, "multipart init: s3 session created", "upload_id", uploadID, "chunks", chunkCount, "filehash", req.FileSha1)
+	return model.MultipartInitResp{
+		FastUpload: false,
+		UploadID:   uploadID,
+		ChunkSize:  chunkSize,
+		ChunkCount: chunkCount,
+		PartURLs:   partURLs,
+	}, nil
+}
+
+// CompleteMultipartUpload 完成分片上传并在存储层原子合并
+func (s *FileService) CompleteMultipartUpload(ctx context.Context, username string, req model.MultipartCompleteReq) (model.FileMeta, error) {
+	if s.multipartRepo == nil {
+		return model.FileMeta{}, fmt.Errorf("multipart repository not configured")
+	}
+
+	mu, err := s.multipartRepo.GetByUploadID(ctx, req.UploadID, username)
+	if err != nil {
+		return model.FileMeta{}, fmt.Errorf("multipart upload session not found: %w", err)
+	}
+	if mu.Status != model.MultipartStatusUploading {
+		return model.FileMeta{}, fmt.Errorf("upload session is not active")
+	}
+
+	// 1. 在存储层完成分片合并（零后端带宽与磁盘 I/O）
+	if err := s.store.CompleteMultipart(ctx, mu.FileSha1, mu.UploadID, req.Parts); err != nil {
+		slog.ErrorContext(ctx, "s3 complete multipart failed", "upload_id", mu.UploadID, "error", err)
+		return model.FileMeta{}, fmt.Errorf("s3 complete multipart failed: %w", err)
+	}
+
+	// 2. 注册全局文件
+	if err := s.fileRepo.Create(ctx, model.File{
+		FileSha1: mu.FileSha1,
+		FileName: mu.FileName,
+		FileSize: mu.FileSize,
+		FileAddr: mu.FileSha1,
+	}); err != nil {
+		slog.WarnContext(ctx, "save global file meta failed", "filehash", mu.FileSha1, "error", err)
+	}
+
+	// 计算物化路径
+	targetDirPath := "/"
+	if mu.ParentID != 0 {
+		if parent, err := s.fileRepo.GetUserFileByID(ctx, uint(mu.ParentID), username); err == nil {
+			targetDirPath = parent.DirPath
+		}
+	}
+
+	// 3. 建立用户关联关系
+	if err := s.fileRepo.CreateUserFile(ctx, model.UserFile{
+		Username: username,
+		ParentID: mu.ParentID,
+		FileSha1: mu.FileSha1,
+		FileName: mu.FileName,
+		DirPath:  targetDirPath,
+		Status:   model.UserFileStatusActive,
+	}); err != nil {
+		slog.WarnContext(ctx, "create user file relation failed", "error", err)
+	}
+
+	// 4. 更新分片元数据状态
+	_ = s.multipartRepo.UpdateStatus(ctx, mu.UploadID, username, model.MultipartStatusCompleted)
+
+	// 5. 缓存标记 + 投递 AI 分析任务
+	s.cacheMark(ctx, mu.FileSha1)
+	s.enqueue(ctx, mu.FileSha1, mu.FileName, username)
+	metrics.AddUploadBytes(mu.FileSize)
+
+	slog.InfoContext(ctx, "multipart completed successfully", "upload_id", mu.UploadID, "filehash", mu.FileSha1, "username", username)
+	return model.FileMeta{
+		FileSha1: mu.FileSha1,
+		FileName: mu.FileName,
+		FileSize: mu.FileSize,
+		Username: username,
+		ParentID: mu.ParentID,
+		DirPath:  targetDirPath,
+	}, nil
+}
+
+// AbortMultipartUpload 取消并清理 S3 分片会话
+func (s *FileService) AbortMultipartUpload(ctx context.Context, username, uploadID string) error {
+	if s.multipartRepo == nil {
+		return fmt.Errorf("multipart repository not configured")
+	}
+
+	mu, err := s.multipartRepo.GetByUploadID(ctx, uploadID, username)
+	if err != nil {
+		return fmt.Errorf("upload session not found: %w", err)
+	}
+
+	_ = s.store.AbortMultipart(ctx, mu.FileSha1, uploadID)
+	_ = s.multipartRepo.UpdateStatus(ctx, uploadID, username, model.MultipartStatusAborted)
+	slog.InfoContext(ctx, "multipart aborted", "upload_id", uploadID, "username", username)
+	return nil
+}
+
+// ---- VFS 虚拟文件系统目录管理 ----
+
+// CreateFolder 创建新文件夹
+func (s *FileService) CreateFolder(ctx context.Context, username string, req model.FolderCreateReq) (model.UserFile, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") {
+		return model.UserFile{}, fmt.Errorf("invalid folder name")
+	}
+
+	dirPath := "/" + name + "/"
+	if req.ParentID != 0 {
+		parent, err := s.fileRepo.GetUserFileByID(ctx, uint(req.ParentID), username)
+		if err != nil || parent.IsDir != 1 || parent.Status != model.UserFileStatusActive {
+			return model.UserFile{}, fmt.Errorf("parent folder does not exist")
+		}
+		dirPath = parent.DirPath + name + "/"
+	}
+
+	uf, err := s.fileRepo.CreateFolder(ctx, model.UserFile{
+		Username: username,
+		ParentID: req.ParentID,
+		FileName: name,
+		DirPath:  dirPath,
+		IsDir:    1,
+		Status:   model.UserFileStatusActive,
+	})
+	if err != nil {
+		return model.UserFile{}, fmt.Errorf("create folder failed: %w", err)
+	}
+
+	slog.InfoContext(ctx, "folder created", "name", name, "path", dirPath, "username", username)
+	return uf, nil
+}
+
+// RenameFolderOrFile 重命名文件或文件夹
+func (s *FileService) RenameFolderOrFile(ctx context.Context, username string, req model.FolderRenameReq) error {
+	newName := strings.TrimSpace(req.NewName)
+	if newName == "" || strings.Contains(newName, "/") || strings.Contains(newName, "\\") || strings.Contains(newName, "..") {
+		return fmt.Errorf("invalid new name")
+	}
+
+	uf, err := s.fileRepo.GetUserFileByID(ctx, req.FileID, username)
+	if err != nil || uf.Status != model.UserFileStatusActive {
+		return fmt.Errorf("file or folder not found")
+	}
+
+	if uf.IsDir == 1 {
+		// 计算当前父级目录路径
+		parentDirPath := strings.TrimSuffix(uf.DirPath, uf.FileName+"/")
+		newDirPath := parentDirPath + newName + "/"
+		oldDirPath := uf.DirPath
+
+		if err := s.fileRepo.RenameItem(ctx, req.FileID, username, newName, newDirPath); err != nil {
+			return err
+		}
+		return s.fileRepo.UpdateDirPathPrefix(ctx, username, oldDirPath, newDirPath)
+	}
+
+	return s.fileRepo.RenameItem(ctx, req.FileID, username, newName, uf.DirPath)
+}
+
+// MoveFolderOrFile 移动文件或文件夹（含防循环嵌套检查）
+func (s *FileService) MoveFolderOrFile(ctx context.Context, username string, req model.FolderMoveReq) error {
+	uf, err := s.fileRepo.GetUserFileByID(ctx, req.FileID, username)
+	if err != nil || uf.Status != model.UserFileStatusActive {
+		return fmt.Errorf("item not found")
+	}
+
+	targetDirPath := "/"
+	if req.TargetParentID != 0 {
+		parent, err := s.fileRepo.GetUserFileByID(ctx, uint(req.TargetParentID), username)
+		if err != nil || parent.IsDir != 1 || parent.Status != model.UserFileStatusActive {
+			return fmt.Errorf("target folder not found")
+		}
+		targetDirPath = parent.DirPath
+	}
+
+	if uf.IsDir == 1 {
+		// 防循环移动检测：不能将文件夹移入自身子目录下
+		if strings.HasPrefix(targetDirPath, uf.DirPath) {
+			return fmt.Errorf("cannot move folder into its own subfolder")
+		}
+		oldDirPath := uf.DirPath
+		newDirPath := targetDirPath + uf.FileName + "/"
+
+		if err := s.fileRepo.MoveItem(ctx, req.FileID, username, req.TargetParentID, newDirPath); err != nil {
+			return err
+		}
+		return s.fileRepo.UpdateDirPathPrefix(ctx, username, oldDirPath, newDirPath)
+	}
+
+	return s.fileRepo.MoveItem(ctx, req.FileID, username, req.TargetParentID, targetDirPath)
+}
+
+// QueryDirectory 查询指定目录下的文件列表与面包屑导航
+func (s *FileService) QueryDirectory(ctx context.Context, username string, parentID uint64, offset, limit int) ([]model.FileMeta, int64, []model.Breadcrumb, error) {
+	files, total, err := s.fileRepo.ListByParent(ctx, username, parentID, offset, limit)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	crumbs, err := s.fileRepo.GetBreadcrumbs(ctx, username, parentID)
+	if err != nil {
+		crumbs = []model.Breadcrumb{{ID: 0, Name: "全部文件", Path: "/"}}
+	}
+	return files, total, crumbs, nil
 }

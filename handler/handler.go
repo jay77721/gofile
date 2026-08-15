@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"gofile/config"
+	"gofile/model"
 	"gofile/service"
 	"gofile/storage"
 	"io"
@@ -558,9 +559,37 @@ func (h *FileHandler) PurgeHandler(c *gin.Context) {
 func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 	username := c.GetString("username")
 
-	// 检查是否有分页参数
+	parentIDStr := c.Query("parent_id")
 	pageStr := c.Query("page")
 	sizeStr := c.Query("size")
+
+	// 若传递了 parent_id，按目录层级与面包屑查询
+	if parentIDStr != "" {
+		parentID, _ := strconv.ParseUint(parentIDStr, 10, 64)
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(sizeStr)
+		if page < 1 {
+			page = 1
+		}
+		if size < 1 || size > 100 {
+			size = 50
+		}
+		offset := (page - 1) * size
+		files, total, crumbs, err := h.fileSvc.QueryDirectory(c.Request.Context(), username, parentID, offset, size)
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "query directory failed", "error", err)
+			respondError(c, http.StatusInternalServerError, CodeInternalError, "查询目录失败")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
+			"list":        files,
+			"total":       total,
+			"page":        page,
+			"size":        size,
+			"breadcrumbs": crumbs,
+		}})
+		return
+	}
 
 	if pageStr == "" && sizeStr == "" {
 		// 无分页参数：返回全部（兼容旧逻辑）
@@ -811,4 +840,132 @@ func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
 		"download_url": downloadURL,
 	}})
+}
+
+// ---- S3 Multipart 分片直传 Handlers ----
+
+// InitMultipartHandler 初始化 S3 分片直传
+func (h *FileHandler) InitMultipartHandler(c *gin.Context) {
+	var req model.MultipartInitReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+		return
+	}
+
+	if !isValidHash(req.FileSha1) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
+		return
+	}
+	if isDangerousExtension(req.FileName) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
+		return
+	}
+
+	username := c.GetString("username")
+	resp, err := h.fileSvc.InitMultipartUpload(c.Request.Context(), username, req)
+	if err != nil {
+		if errors.Is(err, storage.ErrPresignNotSupported) {
+			respondError(c, http.StatusBadRequest, CodeStorageError, "分片直传仅支持 MinIO/S3 存储，当前为本地存储")
+			return
+		}
+		slog.ErrorContext(c.Request.Context(), "init multipart failed", "error", err, "username", username)
+		respondError(c, http.StatusInternalServerError, CodeUploadFailed, "初始化分片直传失败: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": resp})
+}
+
+// CompleteMultipartHandler 完成分片上传并由存储层合并
+func (h *FileHandler) CompleteMultipartHandler(c *gin.Context) {
+	var req model.MultipartCompleteReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+		return
+	}
+
+	username := c.GetString("username")
+	meta, err := h.fileSvc.CompleteMultipartUpload(c.Request.Context(), username, req)
+	if err != nil {
+		slog.ErrorContext(c.Request.Context(), "complete multipart failed", "error", err, "upload_id", req.UploadID, "username", username)
+		respondError(c, http.StatusInternalServerError, CodeMergeFailed, "分片合并失败: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传并合并成功", "data": meta})
+}
+
+// AbortMultipartHandler 取消分片上传会话
+func (h *FileHandler) AbortMultipartHandler(c *gin.Context) {
+	var req model.MultipartAbortReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+		return
+	}
+
+	username := c.GetString("username")
+	if err := h.fileSvc.AbortMultipartUpload(c.Request.Context(), username, req.UploadID); err != nil {
+		slog.WarnContext(c.Request.Context(), "abort multipart failed", "error", err, "upload_id", req.UploadID)
+		respondError(c, http.StatusInternalServerError, CodeStorageError, "取消分片失败: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已取消", "data": nil})
+}
+
+// ---- VFS 树形目录管理 Handlers ----
+
+// CreateFolderHandler 创建文件夹
+func (h *FileHandler) CreateFolderHandler(c *gin.Context) {
+	var req model.FolderCreateReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+		return
+	}
+
+	username := c.GetString("username")
+	uf, err := h.fileSvc.CreateFolder(c.Request.Context(), username, req)
+	if err != nil {
+		slog.ErrorContext(c.Request.Context(), "create folder failed", "error", err, "username", username)
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "创建文件夹失败: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "创建成功", "data": uf})
+}
+
+// RenameFolderHandler 重命名文件或文件夹
+func (h *FileHandler) RenameFolderHandler(c *gin.Context) {
+	var req model.FolderRenameReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+		return
+	}
+
+	username := c.GetString("username")
+	if err := h.fileSvc.RenameFolderOrFile(c.Request.Context(), username, req); err != nil {
+		slog.ErrorContext(c.Request.Context(), "rename folder/file failed", "error", err, "username", username)
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "重命名失败: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "重命名成功", "data": nil})
+}
+
+// MoveFolderHandler 移动文件或文件夹
+func (h *FileHandler) MoveFolderHandler(c *gin.Context) {
+	var req model.FolderMoveReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+		return
+	}
+
+	username := c.GetString("username")
+	if err := h.fileSvc.MoveFolderOrFile(c.Request.Context(), username, req); err != nil {
+		slog.ErrorContext(c.Request.Context(), "move folder/file failed", "error", err, "username", username)
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "移动失败: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "移动成功", "data": nil})
 }

@@ -175,6 +175,31 @@ func (m *mockFileRepoForProc) ListOldest(ctx context.Context, before time.Time) 
 }
 func (m *mockFileRepoForProc) RemoveOrphan(ctx context.Context, filehash string) error { return nil }
 
+func (m *mockFileRepoForProc) GetUserFileByID(ctx context.Context, id uint, username string) (model.UserFile, error) {
+	return model.UserFile{}, nil
+}
+func (m *mockFileRepoForProc) ListByParent(ctx context.Context, username string, parentID uint64, offset, limit int) ([]model.FileMeta, int64, error) {
+	return nil, 0, nil
+}
+func (m *mockFileRepoForProc) CreateFolder(ctx context.Context, uf model.UserFile) (model.UserFile, error) {
+	return uf, nil
+}
+func (m *mockFileRepoForProc) MoveItem(ctx context.Context, id uint, username string, targetParentID uint64, newDirPath string) error {
+	return nil
+}
+func (m *mockFileRepoForProc) UpdateDirPathPrefix(ctx context.Context, username, oldPrefix, newPrefix string) error {
+	return nil
+}
+func (m *mockFileRepoForProc) RenameItem(ctx context.Context, id uint, username, newName, newDirPath string) error {
+	return nil
+}
+func (m *mockFileRepoForProc) SoftDeleteDir(ctx context.Context, username, dirPath string) error {
+	return nil
+}
+func (m *mockFileRepoForProc) GetBreadcrumbs(ctx context.Context, username string, folderID uint64) ([]model.Breadcrumb, error) {
+	return nil, nil
+}
+
 // storage mock（最小实现，满足 storage.Storage 接口）
 type mockStorage struct {
 	content []byte
@@ -206,6 +231,18 @@ func (m mockStorage) PresignPut(ctx context.Context, key string, expiry time.Dur
 }
 func (m mockStorage) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	return "", nil
+}
+func (m mockStorage) InitMultipart(ctx context.Context, key string) (string, error) {
+	return "mock-upload-id", nil
+}
+func (m mockStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
+	return "http://mock/part", nil
+}
+func (m mockStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
+	return nil
+}
+func (m mockStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	return nil
 }
 
 // --- 测试 ---

@@ -91,6 +91,7 @@ func main() {
 	db := mysql.DBConn()
 
 	fileRepo := repository.NewFileRepository(db)
+	multipartRepo := repository.NewMultipartRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	tokenRepo := repository.NewTokenRepository(db)
 	shareRepo := repository.NewShareRepository(db)
@@ -133,7 +134,10 @@ func main() {
 
 	handler.StartSoftDeleteGC(fileRepo, store, 0, indexer)
 
-	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).WithAI(aiProcessor).WithIndexer(indexer)
+	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).
+		WithMultipart(multipartRepo).
+		WithAI(aiProcessor).
+		WithIndexer(indexer)
 	userSvc := service.NewUserService(userRepo, tokenRepo)
 	authSvc := service.NewAuthService(tokenRepo)
 	shareSvc := service.NewShareService(shareRepo, fileRepo)
@@ -206,6 +210,10 @@ func main() {
 		file.GET("/trash", fileHandler.TrashHandler)
 		file.POST("/restore", fileHandler.RestoreHandler)
 		file.POST("/purge", fileHandler.PurgeHandler)
+		// 文件夹树形管理 (VFS)
+		file.POST("/folder/create", fileHandler.CreateFolderHandler)
+		file.POST("/folder/rename", fileHandler.RenameFolderHandler)
+		file.POST("/folder/move", fileHandler.MoveFolderHandler)
 		// 文件分享
 		file.POST("/share", shareHandler.CreateShareHandler)
 		file.GET("/share/list", shareHandler.ShareListHandler)
@@ -213,10 +221,13 @@ func main() {
 		file.POST("/upload/chunk", fileHandler.UploadChunkHandler)
 		file.GET("/upload/status", fileHandler.UploadStatusHandler)
 		file.POST("/upload/merge", fileHandler.MergeChunkHandler)
-		// 预签名 URL 直传直下
+		// S3 预签名直传直下与 S3 Multipart 分片直传
 		file.POST("/presigned/upload", fileHandler.PresignUploadHandler)
 		file.POST("/presigned/upload/confirm", fileHandler.ConfirmUploadHandler)
 		file.GET("/presigned/download", fileHandler.PresignDownloadHandler)
+		file.POST("/upload/multipart/init", fileHandler.InitMultipartHandler)
+		file.POST("/upload/multipart/complete", fileHandler.CompleteMultipartHandler)
+		file.POST("/upload/multipart/abort", fileHandler.AbortMultipartHandler)
 		// AI 语义检索（全部需要鉴权）
 		if aiHandler != nil {
 			file.GET("/ai/search", aiHandler.SearchHandler)

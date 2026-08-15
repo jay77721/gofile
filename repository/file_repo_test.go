@@ -183,3 +183,88 @@ func TestFileRepoSaveAnalysisAndGC(t *testing.T) {
 		t.Fatalf("ListOldest before any create should be empty, got %d err=%v", len(old), err)
 	}
 }
+
+func TestFileRepoVFS(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+
+	// 1. 创建根目录下的文件夹 A
+	folderA, err := repo.CreateFolder(ctx, model.UserFile{
+		Username: "alice",
+		ParentID: 0,
+		FileName: "学习资料",
+		DirPath:  "/学习资料/",
+	})
+	if err != nil {
+		t.Fatalf("create folderA failed: %v", err)
+	}
+	if folderA.ID == 0 || folderA.IsDir != 1 {
+		t.Fatalf("expected folder with is_dir=1 and ID>0, got %+v", folderA)
+	}
+
+	// 2. 创建子文件夹 B (/学习资料/Go/)
+	folderB, err := repo.CreateFolder(ctx, model.UserFile{
+		Username: "alice",
+		ParentID: uint64(folderA.ID),
+		FileName: "Go",
+		DirPath:  "/学习资料/Go/",
+	})
+	if err != nil {
+		t.Fatalf("create folderB failed: %v", err)
+	}
+
+	// 3. 在 folderB 下创建文件
+	_ = repo.Create(ctx, model.File{FileSha1: testHash, FileName: "main.go", FileSize: 100})
+	if err := repo.CreateUserFile(ctx, model.UserFile{
+		Username: "alice",
+		ParentID: uint64(folderB.ID),
+		FileSha1: testHash,
+		FileName: "main.go",
+		DirPath:  "/学习资料/Go/",
+		Status:   model.UserFileStatusActive,
+	}); err != nil {
+		t.Fatalf("create user file in folderB failed: %v", err)
+	}
+
+	// 4. 查询 folderB 下的文件
+	files, total, err := repo.ListByParent(ctx, "alice", uint64(folderB.ID), 0, 10)
+	if err != nil {
+		t.Fatalf("list by parent failed: %v", err)
+	}
+	if total != 1 || len(files) != 1 || files[0].FileName != "main.go" {
+		t.Fatalf("expected 1 file in folderB, got %d files: %+v", total, files)
+	}
+
+	// 5. 面包屑测试
+	crumbs, err := repo.GetBreadcrumbs(ctx, "alice", uint64(folderB.ID))
+	if err != nil {
+		t.Fatalf("get breadcrumbs failed: %v", err)
+	}
+	if len(crumbs) != 3 { // 全部文件 -> 学习资料 -> Go
+		t.Fatalf("expected 3 breadcrumbs, got %d: %+v", len(crumbs), crumbs)
+	}
+	if crumbs[0].Name != "全部文件" || crumbs[1].Name != "学习资料" || crumbs[2].Name != "Go" {
+		t.Fatalf("breadcrumb hierarchy mismatch: %+v", crumbs)
+	}
+
+	// 6. 重命名与前缀迁移
+	err = repo.RenameItem(ctx, folderA.ID, "alice", "资料库", "/资料库/")
+	if err != nil {
+		t.Fatalf("rename folderA failed: %v", err)
+	}
+	err = repo.UpdateDirPathPrefix(ctx, "alice", "/学习资料/", "/资料库/")
+	if err != nil {
+		t.Fatalf("update dir path prefix failed: %v", err)
+	}
+
+	// 7. 软删除目录级联
+	err = repo.SoftDeleteDir(ctx, "alice", "/资料库/")
+	if err != nil {
+		t.Fatalf("soft delete dir failed: %v", err)
+	}
+	listAfterDelete, totalAfter, _ := repo.ListByParent(ctx, "alice", uint64(folderB.ID), 0, 10)
+	if totalAfter != 0 || len(listAfterDelete) != 0 {
+		t.Fatalf("expected 0 files after cascade delete, got %d", totalAfter)
+	}
+}

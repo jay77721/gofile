@@ -9,6 +9,7 @@ import (
 	"gofile/storage"
 	"io"
 	"testing"
+	"time"
 )
 
 // newTestFileService 组装 mock repo + 真实本地存储的 FileService
@@ -215,5 +216,136 @@ func TestFastUploadMiss(t *testing.T) {
 	}
 	if _, err := svc.GetMeta(context.Background(), hash, "bob"); err == nil {
 		t.Fatal("bob should not own a file that was never uploaded")
+	}
+}
+
+func TestVFSFolderManagement(t *testing.T) {
+	repo := repository.NewMockFileRepository()
+	store := storage.NewLocal(t.TempDir())
+	svc := NewFileService(repo, store, nil)
+	ctx := context.Background()
+
+	// 1. 创建根文件夹
+	folderA, err := svc.CreateFolder(ctx, "alice", model.FolderCreateReq{
+		Name:     "学习资料",
+		ParentID: 0,
+	})
+	if err != nil {
+		t.Fatalf("CreateFolder failed: %v", err)
+	}
+	if folderA.DirPath != "/学习资料/" {
+		t.Fatalf("expected dirPath /学习资料/, got %q", folderA.DirPath)
+	}
+
+	// 2. 创建子文件夹
+	folderB, err := svc.CreateFolder(ctx, "alice", model.FolderCreateReq{
+		Name:     "Go源码",
+		ParentID: uint64(folderA.ID),
+	})
+	if err != nil {
+		t.Fatalf("create subfolder failed: %v", err)
+	}
+	if folderB.DirPath != "/学习资料/Go源码/" {
+		t.Fatalf("expected dirPath /学习资料/Go源码/, got %q", folderB.DirPath)
+	}
+
+	// 3. 重命名文件夹
+	err = svc.RenameFolderOrFile(ctx, "alice", model.FolderRenameReq{
+		FileID:  folderA.ID,
+		NewName: "核心资料",
+	})
+	if err != nil {
+		t.Fatalf("RenameFolderOrFile failed: %v", err)
+	}
+
+	// 4. 防循环移动测试：禁止将父目录移入自己的子目录
+	err = svc.MoveFolderOrFile(ctx, "alice", model.FolderMoveReq{
+		FileID:         folderA.ID,
+		TargetParentID: uint64(folderB.ID),
+	})
+	if err == nil {
+		t.Fatal("expected error when moving folder into its own subfolder, got nil")
+	}
+
+	// 5. 目录与面包屑查询
+	_, _, crumbs, err := svc.QueryDirectory(ctx, "alice", uint64(folderB.ID), 0, 10)
+	if err != nil {
+		t.Fatalf("QueryDirectory failed: %v", err)
+	}
+	if len(crumbs) < 2 {
+		t.Fatalf("expected breadcrumbs, got %+v", crumbs)
+	}
+}
+
+type mockMultipartStorage struct {
+	*storage.LocalStorage
+	inited   bool
+	complete bool
+}
+
+func (m *mockMultipartStorage) InitMultipart(ctx context.Context, key string) (string, error) {
+	m.inited = true
+	return "upload-xyz-123", nil
+}
+
+func (m *mockMultipartStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
+	return "http://mock-minio/part?partNumber=1", nil
+}
+
+func (m *mockMultipartStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
+	m.complete = true
+	return nil
+}
+
+func (m *mockMultipartStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	return nil
+}
+
+func TestMultipartService(t *testing.T) {
+	repo := repository.NewMockFileRepository()
+	multipartRepo := repository.NewMockMultipartRepository()
+	localStorage := storage.NewLocal(t.TempDir())
+	mockStore := &mockMultipartStorage{LocalStorage: localStorage}
+
+	svc := NewFileService(repo, mockStore, nil).WithMultipart(multipartRepo)
+	ctx := context.Background()
+
+	const hash = "1234567890123456789012345678901234567890"
+
+	// 1. 初始化直传（未命中秒传）
+	initResp, err := svc.InitMultipartUpload(ctx, "alice", model.MultipartInitReq{
+		FileSha1:  hash,
+		FileName:  "bigfile.zip",
+		FileSize:  25 * 1024 * 1024, // 25MB -> 3 parts (10MB each)
+		ChunkSize: 10 * 1024 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("InitMultipartUpload failed: %v", err)
+	}
+	if initResp.FastUpload {
+		t.Fatal("expected fast_upload=false")
+	}
+	if initResp.UploadID != "upload-xyz-123" || initResp.ChunkCount != 3 || len(initResp.PartURLs) != 3 {
+		t.Fatalf("unexpected init response: %+v", initResp)
+	}
+
+	// 2. 完成合并
+	parts := []storage.CompletePart{
+		{PartNumber: 1, ETag: "etag1"},
+		{PartNumber: 2, ETag: "etag2"},
+		{PartNumber: 3, ETag: "etag3"},
+	}
+	meta, err := svc.CompleteMultipartUpload(ctx, "alice", model.MultipartCompleteReq{
+		UploadID: initResp.UploadID,
+		Parts:    parts,
+	})
+	if err != nil {
+		t.Fatalf("CompleteMultipartUpload failed: %v", err)
+	}
+	if meta.FileSha1 != hash || meta.FileName != "bigfile.zip" {
+		t.Fatalf("unexpected completed meta: %+v", meta)
+	}
+	if !mockStore.complete {
+		t.Fatal("expected complete multipart to be called on storage")
 	}
 }
