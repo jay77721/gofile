@@ -1,17 +1,12 @@
 package handler
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
 	"gofile/config"
-	"gofile/model"
 	"gofile/service"
 	"gofile/storage"
-	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -128,623 +123,28 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传成功", "data": gin.H{"filehash": fMeta.FileSha1}})
 }
 
-// GetFileHandler 获取文件元信息
-func (h *FileHandler) GetFileHandler(c *gin.Context) {
-	filehash := c.Query("filehash")
-	if filehash == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
-		return
-	}
-
-	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, c.GetString("username"))
-	if err != nil {
-		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fMeta})
-}
-
-// sanitizeFilename 清理文件名中的危险字符
-func sanitizeFilename(name string) string {
-	name = strings.ReplaceAll(name, `"`, "")
-	name = strings.ReplaceAll(name, "\r", "")
-	name = strings.ReplaceAll(name, "\n", "")
-	return name
-}
-
-// DownloadHandler 下载文件（支持 HTTP Range 断点续传）
-// @Summary 下载文件
-// @Description 支持 Range 请求头实现断点续传和拖动播放
-// @Tags 文件
-// @Produce application/octet-stream
-// @Security ApiKeyAuth
-// @Param filehash query string true "文件 SHA1"
-// @Param range header string false "Range 请求头（如 bytes=0-1023）"
-// @Success 200 "完整文件内容"
-// @Success 206 "区间响应"
-// @Failure 404 "文件不存在"
-// @Router /file/download [get]
-func (h *FileHandler) DownloadHandler(c *gin.Context) {
-	filehash := c.Query("filehash")
-	if filehash == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
-		return
-	}
-
-	username := c.GetString("username")
-
-	// 获取文件元信息（用于文件名和 Content-Type）
-	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, username)
-	if err != nil {
-		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
-		return
-	}
-
-	// 解析 Range 请求头
-	rangeHeader := c.GetHeader("Range")
-	if rangeHeader == "" {
-		// 无 Range 头：返回完整文件
-		reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
-		if err != nil {
-			slog.ErrorContext(c.Request.Context(), "download failed", "error", err, "filehash", filehash)
-			respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
-			return
-		}
-		defer reader.Close()
-
-		safeName := sanitizeFilename(fMeta.FileName)
-		c.Header("Content-Disposition", buildContentDisposition(safeName))
-		c.Header("Content-Type", "application/octet-stream")
-		c.Header("Accept-Ranges", "bytes")
-
-		buf := make([]byte, 32*1024)
-		io.CopyBuffer(c.Writer, reader, buf)
-		return
-	}
-
-	// 有 Range 头：解析范围（开放区间 bytes=a- 由 service 按文件大小补齐）
-	offset, length, ok := parseRangeHeader(rangeHeader, 0)
-	if !ok {
-		if size, err := h.fileSvc.FileSize(c.Request.Context(), filehash, username); err == nil {
-			c.Header("Content-Range", fmt.Sprintf("bytes */%d", size))
-		}
-		respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "无效的 Range 范围")
-		return
-	}
-
-	reader, _, totalSize, actualLen, err := h.fileSvc.DownloadRange(c.Request.Context(), filehash, username, offset, length)
-	if err != nil {
-		if errors.Is(err, service.ErrRangeOutOfBounds) {
-			c.Header("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-			respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "Range 越界")
-			return
-		}
-		slog.ErrorContext(c.Request.Context(), "download range failed", "error", err, "filehash", filehash)
-		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
-		return
-	}
-	defer reader.Close()
-
-	safeName := sanitizeFilename(fMeta.FileName)
-	c.Header("Content-Disposition", buildContentDisposition(safeName))
-	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Accept-Ranges", "bytes")
-	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+actualLen-1, totalSize))
-	c.Header("Content-Length", fmt.Sprintf("%d", actualLen))
-
-	c.Status(http.StatusPartialContent) // 206
-
-	buf := make([]byte, 32*1024)
-	io.CopyBuffer(c.Writer, reader, buf)
-}
-
-// parseRangeHeader 解析 Range 头，返回 offset 和 length
-// totalSize=0 表示还不知道总大小，会先查 storage 获取
-func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64, ok bool) {
-	// 格式：bytes=start-end 或 bytes=start-
-	if !strings.HasPrefix(rangeHeader, "bytes=") {
-		return 0, 0, false
-	}
-	rangeSpec := strings.TrimPrefix(rangeHeader, "bytes=")
-	parts := strings.SplitN(rangeSpec, "-", 2)
-	if len(parts) != 2 {
-		return 0, 0, false
-	}
-
-	start, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || start < 0 {
-		return 0, 0, false
-	}
-
-	if parts[1] == "" {
-		// bytes=100-  → 从 100 到末尾；length 未知时返回 -1，由 service 按文件大小补齐
-		offset = start
-		length = -1
-		if totalSize > 0 {
-			length = totalSize - start
-		}
-		if length == 0 {
-			return 0, 0, false
-		}
-	} else {
-		end, err := strconv.ParseInt(parts[1], 10, 64)
-		if err != nil || end < start {
-			return 0, 0, false
-		}
-		offset = start
-		length = end - start + 1
-		// 空区间或溢出（end-start 达到 MaxInt64 时 +1 变负）均非法
-		if length <= 0 {
-			return 0, 0, false
-		}
-	}
-
-	// length == 0 表示空区间（非法）；-1 表示开放区间未知大小，放行由 service 补齐
-	if length == 0 {
-		return 0, 0, false
-	}
-	return offset, length, true
-}
-
-func buildContentDisposition(name string) string {
-	return `attachment; filename="` + name + `"; filename*=UTF-8''` + url.PathEscape(name)
-}
-
-// PreviewHandler 在线预览文件（图片/PDF/文本/视频等，支持 Range 拖动）
-func (h *FileHandler) PreviewHandler(c *gin.Context) {
-	filehash := c.Query("filehash")
-	if filehash == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
-		return
-	}
-
-	username := c.GetString("username")
-
-	// 获取文件元信息（用于文件名和 Content-Type）
-	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, username)
-	if err != nil {
-		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
-		return
-	}
-
-	// 根据扩展名检测 Content-Type
-	ext := strings.ToLower(filepath.Ext(fMeta.FileName))
-	contentType := detectMimeType(ext)
-	safeName := sanitizeFilename(fMeta.FileName)
-
-	// Range 请求：206 区间响应（视频/音频拖动播放依赖）
-	if rangeHeader := c.GetHeader("Range"); rangeHeader != "" {
-		offset, length, ok := parseRangeHeader(rangeHeader, 0)
-		if !ok {
-			if size, err := h.fileSvc.FileSize(c.Request.Context(), filehash, username); err == nil {
-				c.Header("Content-Range", fmt.Sprintf("bytes */%d", size))
-			}
-			respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "无效的 Range 范围")
-			return
-		}
-
-		reader, _, totalSize, actualLen, err := h.fileSvc.DownloadRange(c.Request.Context(), filehash, username, offset, length)
-		if err != nil {
-			if errors.Is(err, service.ErrRangeOutOfBounds) {
-				c.Header("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
-				respondError(c, http.StatusRequestedRangeNotSatisfiable, CodeInvalidParams, "Range 越界")
-				return
-			}
-			slog.ErrorContext(c.Request.Context(), "preview range failed", "error", err, "filehash", filehash)
-			respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
-			return
-		}
-		defer reader.Close()
-
-		c.Header("Content-Disposition", "inline; filename=\""+safeName+"\"")
-		c.Header("Content-Type", contentType)
-		c.Header("Accept-Ranges", "bytes")
-		c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+actualLen-1, totalSize))
-		c.Header("Content-Length", fmt.Sprintf("%d", actualLen))
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Status(http.StatusPartialContent) // 206
-
-		io.CopyBuffer(c.Writer, reader, make([]byte, 32*1024))
-		return
-	}
-
-	// 无 Range 头：返回完整文件
-	reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
-	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "preview failed", "error", err, "filehash", filehash)
-		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
-		return
-	}
-	defer reader.Close()
-
-	c.Header("Content-Disposition", "inline; filename=\""+safeName+"\"")
-	c.Header("Content-Type", contentType)
-	c.Header("Accept-Ranges", "bytes")
-	c.Header("X-Content-Type-Options", "nosniff")
-
-	// 扩展名无法识别时，读取文件头探测真实类型
-	if contentType == "application/octet-stream" {
-		buf := make([]byte, 512)
-		n, _ := reader.Read(buf)
-		if n > 0 {
-			contentType = http.DetectContentType(buf[:n])
-			c.Header("Content-Type", contentType)
-		}
-		// 重新组合读取器
-		combinedReader := io.MultiReader(bytes.NewReader(buf[:n]), reader)
-		io.CopyBuffer(c.Writer, combinedReader, make([]byte, 32*1024))
-		return
-	}
-
-	io.CopyBuffer(c.Writer, reader, make([]byte, 32*1024))
-}
-
-// detectMimeType 根据文件扩展名返回 MIME 类型
-func detectMimeType(ext string) string {
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".bmp":
-		return "image/bmp"
-	case ".ico":
-		return "image/x-icon"
-	case ".pdf":
-		return "application/pdf"
-	case ".mp4":
-		return "video/mp4"
-	case ".webm":
-		return "video/webm"
-	case ".mov", ".qt":
-		return "video/quicktime"
-	case ".avi":
-		return "video/x-msvideo"
-	case ".mp3":
-		return "audio/mpeg"
-	case ".wav":
-		return "audio/wav"
-	case ".ogg", ".oga":
-		return "audio/ogg"
-	case ".flac":
-		return "audio/flac"
-	case ".txt", ".md", ".log":
-		return "text/plain; charset=utf-8"
-	case ".json":
-		return "application/json; charset=utf-8"
-	case ".xml":
-		return "application/xml; charset=utf-8"
-	case ".yaml", ".yml":
-		return "text/plain; charset=utf-8"
-	case ".go", ".js", ".ts", ".jsx", ".tsx", ".py", ".css", ".html", ".htm":
-		return "text/plain; charset=utf-8"
-	case ".sh", ".bash", ".zsh":
-		return "text/plain; charset=utf-8"
-	case ".bat", ".cmd":
-		return "text/plain; charset=utf-8"
-	case ".env", ".conf", ".ini", ".toml":
-		return "text/plain; charset=utf-8"
-	case ".sql":
-		return "text/plain; charset=utf-8"
-	case ".java", ".rb", ".php", ".rs", ".swift", ".kt", ".scala":
-		return "text/plain; charset=utf-8"
-	case ".csv":
-		return "text/csv; charset=utf-8"
-	default:
-		return "application/octet-stream"
-	}
-}
-
-// FileMetaUpdateHandler 更新元信息接口（重命名）
-func (h *FileHandler) FileMetaUpdateHandler(c *gin.Context) {
-	opType := c.PostForm("op")
-	fileSha1 := c.PostForm("filehash")
-	username := c.GetString("username")
-
-	if opType != "0" {
-		respondError(c, http.StatusForbidden, CodeInvalidParams, "不支持的操作")
-		return
-	}
-	if fileSha1 == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少参数")
-		return
-	}
-
-	newFileName := c.PostForm("filename")
-	if newFileName == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filename 参数")
-		return
-	}
-
-	if err := h.fileSvc.Rename(c.Request.Context(), fileSha1, username, filepath.Base(newFileName)); err != nil {
-		slog.ErrorContext(c.Request.Context(), "rename failed", "error", err, "filehash", fileSha1)
-		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "更新成功", "data": nil})
-}
-
-// FileDeleteHandler 删除文件及元信息（软删除）
-func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
-	fileSha1 := c.PostForm("filehash")
-	if fileSha1 == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
-		return
-	}
-
-	if err := h.fileSvc.Delete(c.Request.Context(), fileSha1, c.GetString("username")); err != nil {
-		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
-		return
-	}
-
-	slog.InfoContext(c.Request.Context(), "file deleted", "filehash", fileSha1, "username", c.GetString("username"))
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功", "data": nil})
-}
-
-// TrashHandler 回收站文件列表（分页）
-func (h *FileHandler) TrashHandler(c *gin.Context) {
-	username := c.GetString("username")
-	page, _ := strconv.Atoi(c.Query("page"))
-	size, _ := strconv.Atoi(c.Query("size"))
-	if page < 1 {
-		page = 1
-	}
-	if size < 1 || size > 100 {
-		size = 20
-	}
-
-	files, total, err := h.fileSvc.ListTrash(c.Request.Context(), username, page, size)
-	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "list trash failed", "error", err, "username", username)
-		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询回收站失败")
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{"list": files, "total": total, "page": page, "size": size}})
-}
-
-// RestoreHandler 恢复回收站文件
-func (h *FileHandler) RestoreHandler(c *gin.Context) {
-	filehash := c.PostForm("filehash")
-	if filehash == "" || !isValidHash(filehash) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
-		return
-	}
-
-	if err := h.fileSvc.Restore(c.Request.Context(), filehash, c.GetString("username")); err != nil {
-		slog.ErrorContext(c.Request.Context(), "restore failed", "error", err, "filehash", filehash)
-		respondError(c, http.StatusNotFound, CodeNotFound, "回收站中不存在该文件")
-		return
-	}
-
-	slog.InfoContext(c.Request.Context(), "file restored", "filehash", filehash, "username", c.GetString("username"))
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "恢复成功", "data": nil})
-}
-
-// PurgeHandler 彻底删除回收站文件（不可恢复）
-func (h *FileHandler) PurgeHandler(c *gin.Context) {
-	filehash := c.PostForm("filehash")
-	if filehash == "" || !isValidHash(filehash) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
-		return
-	}
-
-	if err := h.fileSvc.Purge(c.Request.Context(), filehash, c.GetString("username")); err != nil {
-		slog.ErrorContext(c.Request.Context(), "purge failed", "error", err, "filehash", filehash)
-		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
-		return
-	}
-
-	slog.InfoContext(c.Request.Context(), "file purged", "filehash", filehash, "username", c.GetString("username"))
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已彻底删除", "data": nil})
-}
-
-// FileQueryHandler 返回用户文件列表（支持分页）
-// @Summary 查询文件列表
-// @Description 支持分页，无分页参数时返回全部文件
-// @Tags 文件
-// @Produce json
-// @Security ApiKeyAuth
-// @Param page query int false "页码（从 1 开始）"
-// @Param size query int false "每页数量（1-100，默认 20）"
-// @Success 200 {object} map[string]any{code=int,msg=string,data=object{list=array,total=int,page=int,size=int}} "文件列表"
-// @Router /file/query [get]
-func (h *FileHandler) FileQueryHandler(c *gin.Context) {
-	username := c.GetString("username")
-
-	parentIDStr := c.Query("parent_id")
-	pageStr := c.Query("page")
-	sizeStr := c.Query("size")
-
-	// 若传递了 parent_id，按目录层级与面包屑查询
-	if parentIDStr != "" {
-		parentID, _ := strconv.ParseUint(parentIDStr, 10, 64)
-		page, _ := strconv.Atoi(pageStr)
-		size, _ := strconv.Atoi(sizeStr)
-		if page < 1 {
-			page = 1
-		}
-		if size < 1 || size > 100 {
-			size = 50
-		}
-		offset := (page - 1) * size
-		files, total, crumbs, err := h.fileSvc.QueryDirectory(c.Request.Context(), username, parentID, offset, size)
-		if err != nil {
-			slog.ErrorContext(c.Request.Context(), "query directory failed", "error", err)
-			respondError(c, http.StatusInternalServerError, CodeInternalError, "查询目录失败")
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
-			"list":        files,
-			"total":       total,
-			"page":        page,
-			"size":        size,
-			"breadcrumbs": crumbs,
-		}})
-		return
-	}
-
-	if pageStr == "" && sizeStr == "" {
-		// 无分页参数：返回全部（兼容旧逻辑）
-		fileMetas, err := h.fileSvc.ListByUser(c.Request.Context(), username)
-		if err != nil {
-			slog.ErrorContext(c.Request.Context(), "query all files failed", "error", err)
-			respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fileMetas})
-		return
-	}
-
-	// 有分页参数：走分页逻辑
-	page, _ := strconv.Atoi(pageStr)
-	size, _ := strconv.Atoi(sizeStr)
-	if page < 1 {
-		page = 1
-	}
-	if size < 1 || size > 100 {
-		size = 20
-	}
-
-	files, total, err := h.fileSvc.ListByUserPaged(c.Request.Context(), username, page, size)
-	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "paged query files failed", "error", err)
-		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
-		"list":  files,
-		"total": total,
-		"page":  page,
-		"size":  size,
-	}})
-}
-
-// UploadChunkHandler 分块上传（用户隔离）
-func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
-	r := c.Request
-	r.Body = http.MaxBytesReader(c.Writer, r.Body, MaxUploadSize)
-
+// FastUploadHandler 处理独立秒传检测接口
+func (h *FileHandler) FastUploadHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
-	index := c.PostForm("index")
-
-	if fileHash == "" || index == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 或 index 参数")
-		return
-	}
-
-	// 校验 hash 格式，防止路径穿越
-	if !isValidHash(fileHash) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
-		return
-	}
-
-	chunkIndex, err := parseInt(index)
-	if err != nil || chunkIndex < 0 {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 chunk index")
-		return
-	}
-
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "分块文件获取失败")
-		return
-	}
-	defer file.Close()
-
-	username := c.GetString("username")
-	if err := h.fileSvc.UploadChunk(c.Request.Context(), fileHash, chunkIndex, file, username); err != nil {
-		slog.ErrorContext(c.Request.Context(), "upload chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex, "username", username)
-		// 已上传的情况不算错误
-		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk already uploaded", "data": nil})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk upload success", "data": nil})
-}
-
-// UploadStatusHandler 断点续传状态查询（用户隔离）
-func (h *FileHandler) UploadStatusHandler(c *gin.Context) {
-	fileHash := c.Query("filehash")
 	if fileHash == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
+		fileHash = c.Query("filehash")
+	}
+	if fileHash == "" || !isValidHash(fileHash) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少有效 filehash 参数")
 		return
 	}
 
-	// 校验 hash 格式，防止路径穿越
-	if !isValidHash(fileHash) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
-		return
-	}
-
-	chunks, err := h.fileSvc.GetChunkStatus(fileHash, c.GetString("username"))
+	exists, err := h.fileSvc.FastUpload(c.Request.Context(), fileHash, c.GetString("username"))
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": []string{}})
+		slog.WarnContext(c.Request.Context(), "fast upload check failed", "error", err, "filehash", fileHash)
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "秒传检测失败")
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": chunks})
-}
-
-// MergeChunkHandler 分块合并
-func (h *FileHandler) MergeChunkHandler(c *gin.Context) {
-	fileHash := c.PostForm("filehash")
-	fileName := c.PostForm("filename")
-	totalStr := c.PostForm("chunks")
-
-	if fileHash == "" || fileName == "" {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 或 filename 参数")
+	if exists {
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "秒传成功", "data": gin.H{"filehash": fileHash}})
 		return
 	}
-
-	// 校验 hash 格式，防止路径穿越
-	if !isValidHash(fileHash) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
-		return
-	}
-
-	// 路径穿越防护
-	fileName = filepath.Base(fileName)
-
-	// 危险文件类型黑名单（防存储型 XSS / 恶意文件分发）
-	if isDangerousExtension(fileName) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
-		return
-	}
-
-	fMeta, err := h.fileSvc.MergeChunks(c.Request.Context(), fileHash, fileName, c.GetString("username"), totalStr)
-	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "merge chunks failed", "error", err, "filehash", fileHash)
-		respondError(c, http.StatusInternalServerError, CodeMergeFailed, "文件合并失败")
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "merge success", "data": gin.H{"filehash": fMeta.FileSha1}})
-}
-
-// 辅助函数
-func parseInt(s string) (int, error) {
-	var n int
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, strconv.ErrSyntax
-		}
-		n = n*10 + int(c-'0')
-	}
-	return n, nil
-}
-
-// HealthCheckHandler 健康检查端点（纯函数，不需要注入）
-func HealthCheckHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": nil})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "文件不存在，需完整上传", "data": nil})
 }
 
 // PresignUploadHandler 获取预签名上传 URL
@@ -842,130 +242,242 @@ func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
 	}})
 }
 
-// ---- S3 Multipart 分片直传 Handlers ----
-
-// InitMultipartHandler 初始化 S3 分片直传
-func (h *FileHandler) InitMultipartHandler(c *gin.Context) {
-	var req model.MultipartInitReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+// MetaHandler 获取文件元信息
+func (h *FileHandler) MetaHandler(c *gin.Context) {
+	filehash := c.Query("filehash")
+	if filehash == "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
-	if !isValidHash(req.FileSha1) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
-		return
-	}
-	if isDangerousExtension(req.FileName) {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
-		return
-	}
-
-	username := c.GetString("username")
-	resp, err := h.fileSvc.InitMultipartUpload(c.Request.Context(), username, req)
+	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, c.GetString("username"))
 	if err != nil {
-		if errors.Is(err, storage.ErrPresignNotSupported) {
-			respondError(c, http.StatusBadRequest, CodeStorageError, "分片直传仅支持 MinIO/S3 存储，当前为本地存储")
+		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fMeta})
+}
+
+// GetFileHandler 兼容别名
+func (h *FileHandler) GetFileHandler(c *gin.Context) {
+	h.MetaHandler(c)
+}
+
+// QueryHandler 返回用户文件列表（支持分页与目录树查询）
+// @Summary 查询文件列表
+// @Description 支持分页，无分页参数时返回全部文件
+// @Tags 文件
+// @Produce json
+// @Security ApiKeyAuth
+// @Param page query int false "页码（从 1 开始）"
+// @Param size query int false "每页数量（1-100，默认 20）"
+// @Success 200 {object} map[string]any{code=int,msg=string,data=object{list=array,total=int,page=int,size=int}} "文件列表"
+// @Router /file/query [get]
+func (h *FileHandler) QueryHandler(c *gin.Context) {
+	username := c.GetString("username")
+
+	parentIDStr := c.Query("parent_id")
+	pageStr := c.Query("page")
+	sizeStr := c.Query("size")
+
+	// 若传递了 parent_id，按目录层级与面包屑查询
+	if parentIDStr != "" {
+		parentID, _ := strconv.ParseUint(parentIDStr, 10, 64)
+		page, _ := strconv.Atoi(pageStr)
+		size, _ := strconv.Atoi(sizeStr)
+		if page < 1 {
+			page = 1
+		}
+		if size < 1 || size > 100 {
+			size = 50
+		}
+		offset := (page - 1) * size
+		files, total, crumbs, err := h.fileSvc.QueryDirectory(c.Request.Context(), username, parentID, offset, size)
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "query directory failed", "error", err)
+			respondError(c, http.StatusInternalServerError, CodeInternalError, "查询目录失败")
 			return
 		}
-		slog.ErrorContext(c.Request.Context(), "init multipart failed", "error", err, "username", username)
-		respondError(c, http.StatusInternalServerError, CodeUploadFailed, "初始化分片直传失败: "+err.Error())
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
+			"list":        files,
+			"total":       total,
+			"page":        page,
+			"size":        size,
+			"breadcrumbs": crumbs,
+		}})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": resp})
-}
-
-// CompleteMultipartHandler 完成分片上传并由存储层合并
-func (h *FileHandler) CompleteMultipartHandler(c *gin.Context) {
-	var req model.MultipartCompleteReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+	if pageStr == "" && sizeStr == "" {
+		// 无分页参数：返回全部（兼容旧逻辑）
+		fileMetas, err := h.fileSvc.ListByUser(c.Request.Context(), username)
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "query all files failed", "error", err)
+			respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fileMetas})
 		return
 	}
 
-	username := c.GetString("username")
-	meta, err := h.fileSvc.CompleteMultipartUpload(c.Request.Context(), username, req)
+	// 有分页参数：走分页逻辑
+	page, _ := strconv.Atoi(pageStr)
+	size, _ := strconv.Atoi(sizeStr)
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+
+	files, total, err := h.fileSvc.ListByUserPaged(c.Request.Context(), username, page, size)
 	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "complete multipart failed", "error", err, "upload_id", req.UploadID, "username", username)
-		respondError(c, http.StatusInternalServerError, CodeMergeFailed, "分片合并失败: "+err.Error())
+		slog.ErrorContext(c.Request.Context(), "paged query files failed", "error", err)
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传并合并成功", "data": meta})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{
+		"list":  files,
+		"total": total,
+		"page":  page,
+		"size":  size,
+	}})
 }
 
-// AbortMultipartHandler 取消分片上传会话
-func (h *FileHandler) AbortMultipartHandler(c *gin.Context) {
-	var req model.MultipartAbortReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
-		return
-	}
-
-	username := c.GetString("username")
-	if err := h.fileSvc.AbortMultipartUpload(c.Request.Context(), username, req.UploadID); err != nil {
-		slog.WarnContext(c.Request.Context(), "abort multipart failed", "error", err, "upload_id", req.UploadID)
-		respondError(c, http.StatusInternalServerError, CodeStorageError, "取消分片失败: "+err.Error())
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已取消", "data": nil})
+// FileQueryHandler 兼容别名
+func (h *FileHandler) FileQueryHandler(c *gin.Context) {
+	h.QueryHandler(c)
 }
 
-// ---- VFS 树形目录管理 Handlers ----
+// RenameHandler 更新元信息接口（重命名）
+func (h *FileHandler) RenameHandler(c *gin.Context) {
+	opType := c.PostForm("op")
+	fileSha1 := c.PostForm("filehash")
+	username := c.GetString("username")
 
-// CreateFolderHandler 创建文件夹
-func (h *FileHandler) CreateFolderHandler(c *gin.Context) {
-	var req model.FolderCreateReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+	if opType != "0" {
+		respondError(c, http.StatusForbidden, CodeInvalidParams, "不支持的操作")
+		return
+	}
+	if fileSha1 == "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少参数")
 		return
 	}
 
+	newFileName := c.PostForm("filename")
+	if newFileName == "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filename 参数")
+		return
+	}
+
+	if err := h.fileSvc.Rename(c.Request.Context(), fileSha1, username, filepath.Base(newFileName)); err != nil {
+		slog.ErrorContext(c.Request.Context(), "rename failed", "error", err, "filehash", fileSha1)
+		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "更新成功", "data": nil})
+}
+
+// FileMetaUpdateHandler 兼容别名
+func (h *FileHandler) FileMetaUpdateHandler(c *gin.Context) {
+	h.RenameHandler(c)
+}
+
+// DeleteHandler 删除文件及元信息（软删除）
+func (h *FileHandler) DeleteHandler(c *gin.Context) {
+	fileSha1 := c.PostForm("filehash")
+	if fileSha1 == "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
+		return
+	}
+
+	if err := h.fileSvc.Delete(c.Request.Context(), fileSha1, c.GetString("username")); err != nil {
+		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
+		return
+	}
+
+	slog.InfoContext(c.Request.Context(), "file deleted", "filehash", fileSha1, "username", c.GetString("username"))
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功", "data": nil})
+}
+
+// FileDeleteHandler 兼容别名
+func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
+	h.DeleteHandler(c)
+}
+
+// TrashHandler 回收站文件列表（分页）
+func (h *FileHandler) TrashHandler(c *gin.Context) {
 	username := c.GetString("username")
-	uf, err := h.fileSvc.CreateFolder(c.Request.Context(), username, req)
+	page, _ := strconv.Atoi(c.Query("page"))
+	size, _ := strconv.Atoi(c.Query("size"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+
+	files, total, err := h.fileSvc.ListTrash(c.Request.Context(), username, page, size)
 	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "create folder failed", "error", err, "username", username)
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "创建文件夹失败: "+err.Error())
+		slog.ErrorContext(c.Request.Context(), "list trash failed", "error", err, "username", username)
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "查询回收站失败")
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "创建成功", "data": uf})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{"list": files, "total": total, "page": page, "size": size}})
 }
 
-// RenameFolderHandler 重命名文件或文件夹
-func (h *FileHandler) RenameFolderHandler(c *gin.Context) {
-	var req model.FolderRenameReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+// RestoreHandler 恢复回收站文件
+func (h *FileHandler) RestoreHandler(c *gin.Context) {
+	filehash := c.PostForm("filehash")
+	if filehash == "" || !isValidHash(filehash) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
-	username := c.GetString("username")
-	if err := h.fileSvc.RenameFolderOrFile(c.Request.Context(), username, req); err != nil {
-		slog.ErrorContext(c.Request.Context(), "rename folder/file failed", "error", err, "username", username)
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "重命名失败: "+err.Error())
+	if err := h.fileSvc.Restore(c.Request.Context(), filehash, c.GetString("username")); err != nil {
+		slog.ErrorContext(c.Request.Context(), "restore failed", "error", err, "filehash", filehash)
+		respondError(c, http.StatusNotFound, CodeNotFound, "回收站中不存在该文件")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "重命名成功", "data": nil})
+	slog.InfoContext(c.Request.Context(), "file restored", "filehash", filehash, "username", c.GetString("username"))
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "恢复成功", "data": nil})
 }
 
-// MoveFolderHandler 移动文件或文件夹
-func (h *FileHandler) MoveFolderHandler(c *gin.Context) {
-	var req model.FolderMoveReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "参数错误: "+err.Error())
+// PurgeHandler 彻底删除回收站文件（不可恢复）
+func (h *FileHandler) PurgeHandler(c *gin.Context) {
+	filehash := c.PostForm("filehash")
+	if filehash == "" || !isValidHash(filehash) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 参数")
 		return
 	}
 
-	username := c.GetString("username")
-	if err := h.fileSvc.MoveFolderOrFile(c.Request.Context(), username, req); err != nil {
-		slog.ErrorContext(c.Request.Context(), "move folder/file failed", "error", err, "username", username)
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "移动失败: "+err.Error())
+	if err := h.fileSvc.Purge(c.Request.Context(), filehash, c.GetString("username")); err != nil {
+		slog.ErrorContext(c.Request.Context(), "purge failed", "error", err, "filehash", filehash)
+		respondError(c, http.StatusForbidden, CodeForbidden, "无权操作该文件")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "移动成功", "data": nil})
+	slog.InfoContext(c.Request.Context(), "file purged", "filehash", filehash, "username", c.GetString("username"))
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已彻底删除", "data": nil})
+}
+
+// parseInt 字符串转正整数辅助函数
+func parseInt(s string) (int, error) {
+	var n int
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, strconv.ErrSyntax
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, nil
+}
+
+// HealthCheckHandler 健康检查端点（纯函数，不需要注入）
+func HealthCheckHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": nil})
 }
