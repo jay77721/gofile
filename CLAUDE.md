@@ -24,12 +24,12 @@ gofile 是一个轻量级自建网盘服务：Go + Gin + GORM/MySQL + MinIO + Re
 ```
 gofile/
 ├── main.go                入口、依赖组装、路由注册、优雅关闭、Swagger 注解
-├── config/config.go       环境变量配置（Server/MySQL/MinIO/Redis/AI/Cookie 安全）
-├── model/                 GORM 模型 + DTO：File/UserFile/User/Token/AITask/AIConfig/Share
-├── repository/            数据访问层：接口 + GORM 实现 + 内存 mock（file/user/token/share/ai_task/ai_config）
+├── config/config.go       环境变量配置（Server/MySQL/MinIO/Redis/AI/Cookie/Asynq）
+├── model/                 GORM 模型 + DTO：File/UserFile/User/Token/AITask/AIConfig/Share/Multipart
+├── repository/            数据访问层：接口 + GORM 实现 + 内存 mock（file/user/token/share/ai_task/ai_config/multipart）
 ├── service/               业务层：file/user/auth/share/ai/ai_config
 ├── handler/
-│   ├── handler.go         上传/秒传/下载(Range)/预览/回收站/分片/预签名
+│   ├── handler.go         上传/秒传/下载(Range)/预览/回收站/分片/预签名/VFS/S3 Multipart
 │   ├── user.go            注册/登录/登出/用户信息
 │   ├── share.go           分享创建/列表/撤销/免登录下载
 │   ├── ai.go              语义检索（搜索/相似/重复检测）
@@ -45,16 +45,21 @@ gofile/
 │   ├── extract.go / pdf.go   文本提取（text/pdf/office/压缩包，1MB 预算）
 │   ├── nlp.go             对话式查询解析（时间/类型/停用词）
 │   ├── typesense.go / indexer.go / indexer_mock.go   检索引擎
-│   └── processor.go       异步任务编排（worker pool + 状态机 + 补偿）
+│   └── processor.go       异步任务编排（worker pool + 状态机 + 补偿；Asynq 优先，chan 降级）
+├── task/                  M3 Asynq 分布式任务调度（hibiken/asynq）
+│   ├── types.go           任务类型常量 + Payload 结构体
+│   ├── client.go          生产者：Enqueue（实现 ai.TaskEnqueuer，幂等 TaskID）
+│   ├── server.go          消费者：NewServer（ai 队列权重 6，slog 桥接）
+│   └── processor.go       Asynq handler → ai.Processor.ProcessOne
 ├── storage/
-│   ├── storage.go         Storage 接口（Put/Get/GetRange/FileSize/Exists/Delete/PresignPut/PresignGet）
-│   ├── minio.go           MinIO 实现（自动建桶 + 预签名）
-│   └── local.go           本地磁盘实现（原子写）
+│   ├── storage.go         Storage 接口（Put/Get/GetRange/FileSize/Exists/Delete/PresignPut/PresignGet/InitMultipart/PresignPartPut/CompleteMultipart/AbortMultipart）
+│   ├── minio.go           MinIO 实现（自动建桶 + 预签名 + S3 Multipart）
+│   └── local.go           本地磁盘实现（原子写；Multipart 返回 ErrPresignNotSupported）
 ├── cache/                 Redis 封装：hash 秒传缓存 + 分布式锁
 ├── metrics/               Prometheus 指标 + request_id + 访问日志中间件
 ├── util/                  SHA1/MD5、分片追踪、AES-GCM 加解密、SSRF URL 校验
 ├── db/mysql/              GORM 连接池 + 启动时自动跑 migrations/
-├── migrations/            golang-migrate 版本化迁移 SQL
+├── migrations/            golang-migrate 版本化迁移 SQL（000001_init, 000002_multipart_and_vfs）
 ├── docs/                  Swagger 生成文档（docs.go/swagger.json/yaml）
 ├── web/                   Vue 3 前端工程（Vite + TS + Vitest + ESLint）
 ├── schema.sql             建表脚本（与 migrations/ 同步，初始化参考）
@@ -105,8 +110,9 @@ docker compose up -d
 | `TYPESENSE_URL` / `TYPESENSE_API_KEY` | `http://localhost:8108` / `xyz` | 检索引擎（不可用降级 LIKE） |
 | `AI_CONFIG_SECRET` | 空 | 用户 API key 加密密钥（未配置从 DSN 派生） |
 | `ALLOW_PRIVATE_AI_URL` | `false` | 允许自定义 baseURL 指向内网（本地 Ollama 场景） |
+| `ASYNQ_ENABLED` | `false` | 启用 Asynq 持久化任务队列（替代进程内 chan，需 Redis）；true = 任务写 Redis，跨实例，内置重试 |
 
-> 所有可选依赖（Redis/AI/Typesense）缺失时服务照常启动并降级。
+> 所有可选依赖（Redis/AI/Typesense/Asynq）缺失时服务照常启动并降级。
 
 ## API Endpoints
 
@@ -115,47 +121,7 @@ docker compose up -d
 |--------|-------|-------------|
 | POST | `/file/upload` | 上传（含秒传检测，100MB 上限） |
 | GET | `/file/meta` | 文件元信息（含 AI 摘要/标签） |
-| GET | `/file/query` | 文件列表（支持 `page`/`size` 分页） |
-| GET | `/file/download` | 下载（支持 HTTP Range 206） |
-| GET | `/file/preview` | 在线预览（MIME 探测） |
-| POST | `/file/update` | 重命名（op=0） |
-| POST | `/file/delete` | 软删除 |
-| GET | `/file/trash` | 回收站列表（分页） |
-| POST | `/file/restore` | 回收站恢复 |
-| POST | `/file/purge` | 回收站彻底删除 |
-| POST | `/file/share` | 创建分享（days 1-30 默认 7，password 可选） |
-| GET | `/file/share/list` | 我的分享列表 |
-| POST | `/file/share/revoke` | 撤销分享 |
-| POST | `/file/upload/chunk` | 上传分片（幂等） |
-| GET | `/file/upload/status` | 已上传分片索引 |
-| POST | `/file/upload/merge` | 合并分片（分布式锁） |
-| POST | `/file/presigned/upload` | 签发预签名上传 URL（15min） |
-| POST | `/file/presigned/upload/confirm` | 确认预签名上传完成 |
-| GET | `/file/presigned/download` | 签发预签名下载 URL（5min） |
-| GET | `/file/ai/search` | 语义搜索（AI_ENABLED 时注册） |
-| GET | `/file/ai/similar` | 相似文件推荐 |
-| GET | `/file/ai/duplicates` | 近似重复检测 |
-
-### 用户
-| Method | Route | Auth | Rate Limit | Description |
-|--------|-------|:----:|:----------:|-------------|
-| POST | `/user/signup` | × | 5/s burst 10 | 注册 |
-| POST | `/user/signin` | × | 5/s burst 10 | 登录，HttpOnly Cookie |
-| POST | `/user/logout` | × | × | 登出（删 token + 清 Cookie） |
-| GET | `/user/info` | ✓ | × | 用户信息 |
-
-### 分享（公开）
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET | `/share/:token?pwd=` | 免登录分享下载（限流 10/s burst 20，支持 Range） |
-
-### AI 配置（`/ai/config` 组，鉴权，AI_ENABLED 时注册）
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET / POST / DELETE | `/ai/config` | 读取（key 掩码）/保存/清除用户级 Provider 配置 |
-| POST | `/ai/config/test` | 连通性测试（对话 + embedding 双探测） |
-
-### 系统
+| GET | `/file/query` | 文件列表（支持 `parent_id` 目录 + `pa### 系统
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `/healthz` | 健康检查 |
@@ -166,7 +132,7 @@ docker compose up -d
 ## Architecture Notes
 
 ### 三层架构与依赖注入
-`handler → service → repository + storage/cache/ai` 单向依赖，全部通过构造器注入（`NewXxxHandler(svc, cfg)`），`main.go` 负责组装。可选依赖（Redis/AI/Typesense）以 nil 安全方式注入，缺失时自动降级。
+`handler → service → repository + storage/cache/ai/task` 单向依赖，全部通过构造器注入（`NewXxxHandler(svc, cfg)`），`main.go` 负责组装。可选依赖（Redis/AI/Typesense/Asynq）以 nil 安全方式注入，缺失时自动降级。
 
 ### 响应格式与统一错误码
 - 统一响应：`gin.H{"code": 0|错误码, "msg": "...", "data": ...}`，成功 code=0
@@ -197,21 +163,28 @@ docker compose up -d
 6. Token **永不**出现在 JSON 响应体，仅通过 Cookie 传递
 
 ### 存储层
-- `storage.Storage`：`Put / Get / GetRange / FileSize / Exists / Delete / PresignPut / PresignGet`
+- `storage.Storage`：`Put / Get / GetRange / FileSize / Exists / Delete / PresignPut / PresignGet / InitMultipart / PresignPartPut / CompleteMultipart / AbortMultipart`
 - MinIO 优先，失败 fallback 本地磁盘；本地 `Put` 为原子写（临时文件 + rename）
-- 本地存储的 `PresignPut/PresignGet` 返回 `ErrPresignNotSupported`
+- 本地存储的 `PresignPut/PresignGet/Multipart` 返回 `ErrPresignNotSupported`
 - MySQL 只存元数据；文件内容在存储层，key = `file_sha1`
 
 ### 文件所有权（全局去重 × 用户隔离）
-- `tbl_file` 全局去重（`file_sha1` 主键），`tbl_user_file` 每用户一行（`UNIQUE(user_name, file_sha1)`）
-- 秒传 = 命中全局文件后仅为当前用户插入关联行 → 用户 B 秒传用户 A 的文件后 B 可查可下
-- 下载/重命名/删除/分享等所有操作先经 `fileRepo.GetByHash(filehash, username)` 校验所有权，无权返回 1003
+- `tbl_file` 全局去重（`file_sha1` 主键），`tbl_user_file` 每用户每文件/文件夹一行
+- 秒传 = 命中全局文件后仅为当前用户插入关联行并触发 AI 任务投递
+- 下载/重命名/删除/移动/分享等所有操作先经 `fileRepo.GetByHash(filehash, username)` 校验所有权，无权返回 1003
 
-### 分片上传
-- 目录结构：`<CHUNK_DIR>/<username>/<filehash>/<index>`（用户隔离 + 40 位 hex 校验防路径穿越）
-- chunk 上传幂等（已存在直接返回）；`/upload/status` 查询进度；merge 校验分片总数
-- merge 并发保护：Redis 分布式锁 `gofile:lock:merge:<hash>`（SETNX + Lua CAS，2min 自动过期）+ UUID 临时文件防冲突
-- chunk 清理：超过 24h 未更新的分片目录，每小时扫描（`handler/cleanup.go`）
+### VFS 虚拟文件系统
+- 物化路径（Materialized Path）：`dir_path` 字段记录完整路径（如 `/资料/Go/`），方便前缀检索任意子孙节点
+- 文件夹操作：新建、重命名、移动（含防循环嵌套校验：禁止移入自身子文件夹）、面包屑导航
+- 递归更新：文件夹改名/移动时原子批量更新子孙节点物化路径前缀
+
+### S3 Multipart 分片直传
+- 针对大文件：`init` 签发各分片预签名 PUT URL → 客户端并发直接 PUT 到 MinIO → `complete` 存储层服务端合并
+- 应用服务器实现零本地磁盘 I/O、零网络中转带宽开销
+
+### 异步任务与调度（M3 Asynq）
+- 双路任务队列：`ASYNQ_ENABLED=true` 且 Redis 可用时走 `task.Client`（Redis 持久化、跨实例调度、MaxRetry=3 指数退避、死信队列）；Redis 故障或未开启时自动降级进程内 chan（容量 100）
+- 任务幂等：TaskID = `username:filehash`，`tbl_ai_task` 状态机双保险（0 待处理 / 1 处理中 / 2 完成 / 3 失败）
 
 ### 回收站与 GC
 - 软删除 `status=2`（存储层不动）；`/trash` 分页列表；`/restore` 恢复（并重入队 AI 重建索引）；`/purge` 彻底删除
@@ -228,29 +201,16 @@ docker compose up -d
 - `/user/signup`、`/user/signin`：5 req/s burst 10（`c.ClientIP()`）
 - Redis 可用：Lua 固定窗口（`gofile:ratelimit:<ip>`，多实例共享）；否则内存令牌桶（空闲 IP 5min 回收）
 
-### AI 异步管线（`AI_ENABLED=true`）
+### AI 异步管线与语义检索（`AI_ENABLED=true`）
 - `ai.Provider` 接口：`Analyze / Embed / Dimension`；`factory.go` 按 `AI_PROVIDER` 选择 mock|openai|anthropic
-- `ai.Processor`：worker pool（`AIWorkers` 默认 4，队列容量 100，满则丢弃不阻塞上传）+ 任务状态机（0 待处理 / 1 处理中 / 2 完成 / 3 失败）
 - 管线：extract（文本/PDF/Office/压缩包，1MB 读取预算）→ analyze（LLM 摘要+标签）→ embed → `SaveAnalysis` → Typesense upsert
-- 秒传命中复用全局 summary/tags，跳过 LLM 零成本建文档；失败任务 retry ≤3，补偿退避 1m→30m；任务 7 天 TTL 每日清理
-- 任务幂等锚点：`tbl_ai_task` UNIQUE(`file_sha1`, `user_name`)
-
-### AI 语义检索
-- `/file/ai/search?q=`：`ai.ParseQuery` 解析时间短语/类型词/停用词 → Embed → `SearchHybrid`（全文 + 向量 KNN，RRF 融合，按 username 过滤，文档 id = `username:filehash`）
-- `/file/ai/similar`、`/file/ai/duplicates`（相似度阈值默认 0.9）
-- Typesense 不可用 / embed 失败 → 降级 MySQL LIKE filename/summary（`service/ai_service.go`）
-
-### 用户级 AI Provider 配置
-- `/ai/config` CRUD + `/test` 连通性测试（对话 + embedding 双探测，返回维度校验）
-- API key 用 AES-GCM 加密落库（`AI_CONFIG_SECRET`，未配置从 DSN 派生保证重启可解密），任何接口只回掩码
-- baseURL 默认拒绝内网/回环（防 SSRF，`util/urlcheck.go`），`ALLOW_PRIVATE_AI_URL=true` 放行（本地 Ollama）
-- 解析器 5min 内存缓存，保存/删除即失效；生效优先级：用户配置 → env 默认 → mock
+- 检索：`/file/ai/search?q=`（NLP 自然语言解析 + 混合检索 RRF）、`/file/ai/similar`、`/file/ai/duplicates`
+- 用户级配置：`/ai/config` CRUD + `/test` 连通性测试（AES-GCM 加密落库，防 SSRF）
 
 ### 可观测性
 - 中间件顺序（不变量，勿调换）：`RequestIDMiddleware → MetricsMiddleware → gin.Recovery`
 - 指标：`http_requests_total`（method/path/status）、`http_request_duration_seconds`、`file_upload_bytes_total`、`ai_tasks_total`、`ai_llm_duration_seconds`、`ai_index_ops_total`
 - `/metrics` 端点（promhttp 默认注册表，含 go 运行时指标）；request_id 由 `ContextHandler` 自动附加到所有 slog 日志
-- 访问日志：method/path(status 码)/latency/ip
 
 ## Testing
 
@@ -272,48 +232,29 @@ go test ./util/ -bench . -benchmem -run '^$'   # 基准（BENCHMARKS.md）
 - 所有 handler 通过构造器注入依赖，禁止包级全局状态
 - API 前缀：`/file`（鉴权）、`/user`、`/share`（公开限流）、`/ai/config`（鉴权）
 
-## 常见任务
-
-### 添加新 API
-1. service 层实现业务方法（含所有权校验）
-2. handler 层新增方法（`respondError` 统一错误码）+ Swagger 注解
-3. `main.go` 注册路由（注意中间件：鉴权/限流）
-4. 添加测试（mock repository + httptest）
-5. 更新 README/README_CN API 表格；新增端点同步 docs/（`swag` 重新生成）
-
-### 修改数据库表
-1. `migrations/` 新增版本化迁移（`00000x_xxx.up.sql` + `.down.sql`，勿修改已发布迁移）
-2. `model/` 同步 GORM 模型
-3. `repository/` 对应 CRUD（全部带 ctx）
-4. `schema.sql` 同步（作为初始化参考）
-
-### 添加新存储后端
-1. 实现 `storage.Storage` 全接口（含 `GetRange/FileSize/PresignPut/PresignGet`）
-2. `main.go` 初始化 + fallback 策略
-3. 添加对应测试
-
-### 添加新 AI Provider
-1. 实现 `ai.Provider`（`Analyze/Embed/Dimension`）
-2. `ai/factory.go` 注册
-3. 如需用户自定义，在 `AIConfigService.ResolveProvider` 中接入
-
-### 前端
-- 开发：`cd web && npm run dev`（Vite dev server）
-- 构建：`npm run build`（vue-tsc 类型检查 + vite build，产物 `web/dist`）
-- 测试：`npm test`（Vitest）
-
 ## 已知问题
 
-- 🔴 `handler/handler.go` `UploadHandler` 的 FastUpload 短路分支：带 `filehash` 参数且存储层命中时直接返回"秒传成功"，**未为当前用户创建 `tbl_user_file` 关联行** → 用户看不到/下载不到该文件。`service.Upload` 内部秒传分支正确；修复应移除 handler 短路或改为走 service。
+- ~~🔴 `handler/handler.go` FastUpload 缺 enqueue~~ ✅ **已修复**（`50d7309`）：`FastUpload()` 末尾补 `s.enqueue()`，秒传用户 AI 任务现在正确投递
 - 🟡 `web/dist` 未入库：本地/CI 需先 `cd web && npm run build`，否则 `/static` 404。
 - 🟡 Range 开放区间（`bytes=N-`）在未知文件大小时返回 416。
 - 🟡 分页为 `LIMIT/OFFSET`，大数据量深分页需改游标分页。
 
 ## Roadmap 状态
 
-**已落地**：Phase 0 五项 Bug 修复、Phase 1 Redis（秒传缓存/分布式锁/全局限流）、Phase 2 预签名直传直下、Phase 3 Range + 分页、Phase 4 可观测性（Prometheus + request_id + Grafana dashboard）、Phase 6 AI（摘要/标签/语义搜索/相似/重复检测/用户级配置），以及分享、回收站、登出、统一错误码等增量功能；工程化：CI、Swagger、golang-migrate、BENCHMARKS、repository 测试（内存 SQLite）。
+**已落地**：
+- P0 五项 Bug 修复
+- P1 Redis（秒传缓存/分布式锁/全局限流）
+- P2 预签名直传直下
+- P3 Range + 分页
+- P4 可观测性（Prometheus + request_id + Grafana dashboard）
+- P6 AI（摘要/标签/语义搜索/相似/重复检测/用户级配置）
+- **M1** S3 Multipart 分片直传直合（`c9d150f`，2026-08-16）
+- **M2** VFS 虚拟文件系统（物化路径、无限层级目录、面包屑）（`c9d150f`，2026-08-16）
+- **M3** Asynq 分布式任务调度（`50d7309`，2026-08-16）：task/ 包，双路 Enqueue，ProcessOne 公开方法
+- 工程化：CI（gofmt+vet+test-race+build+docker）、Swagger、golang-migrate、BENCHMARKS、repository 测试（内存 SQLite）
 
 **待办**：
-- Phase 5 剩余：覆盖率 80% 目标、MinIO 后端与并发压测、优化前后对比报告
-- Phase 7：Kafka 异步任务、K8s 部署
-- 上表"已知问题"修复
+- P5 剩余：VFS/Multipart/task 专项测试，覆盖率目标 ≥80%；MinIO 并发压测
+- M4 RAG 知识库问答（Chat with your Drive）：文档分块 + SSE 流式输出
+- M5 WebDAV 协议支持：golang.org/x/net/webdav，Windows/Mac 挂载
+- P7 K8s 部署：Helm Chart + HPA + ConfigMap

@@ -155,10 +155,15 @@ task/
 
 ## 📋 执行任务追踪清单（Checklist）
 
-- [ ] **Step 1**: 编写 `migrations/000002_multipart_and_vfs.up.sql` 并运行迁移验证。
-- [ ] **Step 2**: 扩展 `storage.Storage` 接口并在 `storage/minio.go` 与 `storage/local.go` 中实现 S3 Multipart。
-- [ ] **Step 3**: 创建 `model/multipart.go` 与 `repository/multipart_repo.go`。
-- [ ] **Step 4**: 在 `service/file_service.go` 与 `handler/handler.go` 中接入分片初始化、直传预签名与合并 API。
-- [ ] **Step 5**: 改造 `model/file.go`、`repository/file_repo.go` 与 `service/file_service.go`，实现 VFS 树形目录与物化路径。
-- [ ] **Step 6**: 引入 `github.com/hibiken/asynq`，实现 `task/` 包并重构 AI 异步调度链路。
-- [ ] **Step 7**: 编写对应的单元测试与集成测试，验证全链路正确性。
+- [x] **Step 1**: 编写 `migrations/000002_multipart_and_vfs.up.sql` 并运行迁移验证。
+- [x] **Step 2**: 扩展 `storage.Storage` 接口并在 `storage/minio.go` 与 `storage/local.go` 中实现 S3 Multipart。
+- [x] **Step 3**: 创建 `model/multipart.go` 与 `repository/multipart_repo.go`。
+- [x] **Step 4**: 在 `service/file_service.go` 与 `handler/handler.go` 中接入分片初始化、直传预签名与合并 API。
+- [x] **Step 5**: 改造 `model/file.go`、`repository/file_repo.go` 与 `service/file_service.go`，实现 VFS 树形目录与物化路径。
+- [x] **Step 6**: 引入 `github.com/hibiken/asynq`，实现 `task/` 包并重构 AI 异步调度链路。（提交 `50d7309`，2026-08-16）
+- [ ] **Step 7**: 编写对应的单元测试与集成测试，验证全链路正确性。（`go test -race` 全绿；待补 VFS/Multipart/task 专项测试，目标覆盖率 ≥80%）
+
+## 🚀 已超出原计划额外完成
+
+- [x] **FastUpload Bug 修复**：`service/file_service.go` `FastUpload()` 补充 `enqueue` 调用，秒传用户的 AI 分析任务现在正确投递。
+- [x] **M4/M5 待启动**：RAG 知识库问答 & WebDAV 协议支持（下一阶段规划）
