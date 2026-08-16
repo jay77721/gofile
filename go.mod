@@ -6,10 +6,13 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.12
 	github.com/gin-gonic/gin v1.12.0
 	github.com/glebarez/sqlite v1.11.0
+	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
+	github.com/hibiken/asynq v0.26.0
 	github.com/minio/minio-go/v7 v7.2.0
 	github.com/prometheus/client_golang v1.21.0
 	github.com/redis/go-redis/v9 v9.22.0
+	github.com/swaggo/swag v1.16.6
 	github.com/typesense/typesense-go/v2 v2.0.0
 	golang.org/x/crypto v0.52.0
 	gorm.io/driver/mysql v1.6.0
@@ -42,8 +45,6 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/golang-migrate/migrate/v4 v4.19.1 // indirect
-	github.com/hibiken/asynq v0.26.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
@@ -73,7 +74,6 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/swaggo/swag v1.16.6 // indirect
 	github.com/tinylib/msgp v1.6.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect

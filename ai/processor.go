@@ -19,11 +19,17 @@ import (
 const (
 	// maxRetry 单任务最大重试次数
 	maxRetry = 3
-	// queueCapacity 任务队列缓冲容量
+	// queueCapacity 任务队列缓冲容量（降级内存队列）
 	queueCapacity = 100
 )
 
-// taskItem 内部队列项
+// TaskEnqueuer 任务入队接口，由 task.Client 实现
+// 定义在 ai 包中以避免 ai ↔ task 循环引用
+type TaskEnqueuer interface {
+	Enqueue(ctx context.Context, filehash, filename, username string) error
+}
+
+// taskItem 内部队列项（降级内存 chan 使用）
 type taskItem struct {
 	Ctx      context.Context
 	Filehash string
@@ -36,6 +42,8 @@ type taskItem struct {
 // 消费流程：extract → analyze → embed → save → upsert。
 // 秒传命中（全局 summary 已存在）跳过 LLM 调用，零成本建文档。
 // 失败任务 retry_count < maxRetry 时由 RequeueFailed 补偿。
+//
+// 入队优先级：Asynq（Redis 持久化，跨实例）→ 进程内 chan（降级）
 type Processor struct {
 	provider Provider
 	indexer  Indexer
@@ -47,9 +55,15 @@ type Processor struct {
 	// resolve 按用户名解析生效 Provider(用户自定义配置优先),nil 时使用默认 provider
 	resolve func(ctx context.Context, username string) Provider
 
+	// taskEnqueuer Asynq 客户端（可选，nil 时回退到进程内 chan）
+	taskEnqueuer TaskEnqueuer
+	// workers 内部 goroutine 数（启动时固定）
+	workers int
+
 	queue chan taskItem
 	wg    sync.WaitGroup
 }
+
 
 // NewProcessor 创建异步编排器
 func NewProcessor(provider Provider, indexer Indexer, fileRepo repository.FileRepository, aiRepo repository.AITaskRepository, store storage.Storage, cfg *config.Config) *Processor {
@@ -64,6 +78,7 @@ func NewProcessor(provider Provider, indexer Indexer, fileRepo repository.FileRe
 		aiRepo:   aiRepo,
 		store:    store,
 		cfg:      cfg,
+		workers:  workers,
 		queue:    make(chan taskItem, queueCapacity),
 	}
 }
@@ -71,6 +86,12 @@ func NewProcessor(provider Provider, indexer Indexer, fileRepo repository.FileRe
 // WithResolver 注入按用户解析 Provider 的函数(用户级 AI 配置)
 func (p *Processor) WithResolver(fn func(ctx context.Context, username string) Provider) *Processor {
 	p.resolve = fn
+	return p
+}
+
+// WithTaskEnqueuer 注入 Asynq 客户端（可选，nil 时回退内存 chan）
+func (p *Processor) WithTaskEnqueuer(e TaskEnqueuer) *Processor {
+	p.taskEnqueuer = e
 	return p
 }
 
@@ -84,30 +105,37 @@ func (p *Processor) providerFor(ctx context.Context, username string) Provider {
 	return p.provider
 }
 
-// Start 启动 worker pool
+// Start 启动内部 worker pool（降级 chan 路径；Asynq 启用时这些 worker 大多空转）
 func (p *Processor) Start() {
-	n := cap(p.queue)
-	if n <= 0 {
-		n = 4
-	}
-	slog.Info("ai processor started", "workers", n)
-	for i := 0; i < n; i++ {
+	slog.Info("ai processor started", "workers", p.workers)
+	for i := 0; i < p.workers; i++ {
 		p.wg.Add(1)
 		go p.worker()
 	}
 }
 
-// Stop 优雅停止（等待队列排空）
+// Stop 优雅停止（等待内存队列排空）
 func (p *Processor) Stop() {
 	close(p.queue)
 	p.wg.Wait()
 }
 
-// Enqueue 非阻塞入队（队列满则丢弃并打 warn 日志，不阻塞上传主链路）
+// Enqueue 投递 AI 分析任务（非阻塞，不阻断上传主链路）
+// 优先级：Asynq（Redis 持久化 + 跨实例 + 内置重试）→ 进程内 chan（Redis 不可用降级）
 func (p *Processor) Enqueue(ctx context.Context, filehash, filename, username string) {
 	if p == nil {
 		return
 	}
+	// 优先走 Asynq 持久化路径
+	if p.taskEnqueuer != nil {
+		if err := p.taskEnqueuer.Enqueue(ctx, filehash, filename, username); err != nil {
+			slog.WarnContext(ctx, "asynq enqueue failed, fallback to chan",
+				"error", err, "filehash", filehash, "username", username)
+		} else {
+			return
+		}
+	}
+	// 降级：进程内内存队列（Asynq 未配置或 Redis 宕机时）
 	select {
 	case p.queue <- taskItem{Ctx: ctx, Filehash: filehash, Filename: filename, Username: username}:
 	default:
@@ -141,31 +169,37 @@ func (p *Processor) worker() {
 	}
 }
 
-// process 单任务消费（幂等锚点 = UNIQUE(file_sha1, username)）
+// ProcessOne 单任务消费（幂等锚点 = UNIQUE(file_sha1, username)）
+// 供 Asynq handler（task.AITaskProcessor）和内部 worker 共同调用
+// 返回 error 时 Asynq 按 MaxRetry 自动重试
+func (p *Processor) ProcessOne(ctx context.Context, filehash, filename, username string) error {
+	item := taskItem{Ctx: ctx, Filehash: filehash, Filename: filename, Username: username}
+
+	if p.isAlreadyDone(ctx, filehash, username) {
+		return nil
+	}
+	p.registerTask(ctx, filehash, username)
+
+	summary, tags, outFilename, err := p.analyze(ctx, item)
+	if err != nil {
+		p.fail(ctx, filehash, username, err.Error())
+		return err
+	}
+	if err := p.indexDocument(ctx, filehash, username, outFilename, summary, tags); err != nil {
+		p.fail(ctx, filehash, username, err.Error())
+		return err
+	}
+	p.complete(ctx, filehash, username, summary)
+	return nil
+}
+
+// process 内部 worker 调用入口（chan 降级路径）
 func (p *Processor) process(item taskItem) {
 	ctx := item.Ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	filehash, username := item.Filehash, item.Username
-
-	if p.isAlreadyDone(ctx, filehash, username) {
-		return
-	}
-	p.registerTask(ctx, filehash, username)
-
-	summary, tags, filename, err := p.analyze(ctx, item)
-	if err != nil {
-		p.fail(ctx, filehash, username, err.Error())
-		return
-	}
-
-	if err := p.indexDocument(ctx, filehash, username, filename, summary, tags); err != nil {
-		p.fail(ctx, filehash, username, err.Error())
-		return
-	}
-
-	p.complete(ctx, filehash, username, summary)
+	_ = p.ProcessOne(ctx, item.Filehash, item.Filename, item.Username)
 }
 
 // isAlreadyDone 检查任务是否已完成（幂等跳过）

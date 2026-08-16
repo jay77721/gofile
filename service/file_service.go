@@ -260,6 +260,7 @@ func (s *FileService) FastUpload(ctx context.Context, fileHash, username string)
 		slog.WarnContext(ctx, "fast upload: create user file relation failed", "error", ufErr, "filehash", fileHash, "username", username)
 	}
 	s.cacheMark(ctx, fileHash)
+	s.enqueue(ctx, fileHash, fileName, username)
 	slog.InfoContext(ctx, "fast upload (dedup)", "filehash", fileHash, "username", username)
 	return true, nil
 }

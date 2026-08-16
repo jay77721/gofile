@@ -11,6 +11,7 @@ import (
 	"gofile/repository"
 	"gofile/service"
 	"gofile/storage"
+	"gofile/task"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hibiken/asynq"
 	_ "github.com/swaggo/swag"
 )
 
@@ -129,7 +131,28 @@ func main() {
 		aiSvc.WithResolver(aiCfgSvc.ResolveProvider)
 		aiCfgHandler = handler.NewAIConfigHandler(aiCfgSvc)
 
-		slog.Info("AI features enabled", "provider", cfg.AIProvider, "embedDim", cfg.AIEmbedDim, "workers", cfg.AIWorkers)
+		// M3: Asynq 分布式任务队列（ASYNQ_ENABLED=true 且 Redis 可用时启动）
+		// 替代进程内 chan，实现任务持久化 + 跨实例调度 + 内置重试 + 死信队列
+		if cfg.AsynqEnabled && cfg.RedisAddr != "" {
+			taskClient := task.NewClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+			// 注入 taskEnqueuer，Enqueue 优先走 Asynq，Redis 故障自动回退 chan
+			aiProcessor.WithTaskEnqueuer(taskClient)
+
+			asynqSrv := task.NewServer(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.AIWorkers)
+			mux := asynq.NewServeMux()
+			mux.HandleFunc(task.TypeFileAIAnalyze, task.NewAITaskProcessor(aiProcessor).ProcessTask)
+
+			go func() {
+				slog.Info("asynq task server started", "queue", "ai", "workers", cfg.AIWorkers)
+				if err := asynqSrv.Run(mux); err != nil {
+					slog.Error("asynq server stopped", "error", err)
+				}
+			}()
+		} else if cfg.AIEnabled {
+			slog.Info("asynq disabled, using in-process chan queue (set ASYNQ_ENABLED=true to upgrade)")
+		}
+
+		slog.Info("AI features enabled", "provider", cfg.AIProvider, "embedDim", cfg.AIEmbedDim, "workers", cfg.AIWorkers, "asynq", cfg.AsynqEnabled)
 	}
 
 	handler.StartSoftDeleteGC(fileRepo, store, 0, indexer)

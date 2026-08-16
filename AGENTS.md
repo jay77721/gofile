@@ -139,6 +139,6 @@ go run main.go        # 或 go build -o gofile . && ./gofile
 
 ## 已知问题
 
-- 🔴 `handler/handler.go` UploadHandler 的 FastUpload 短路分支不创建 `tbl_user_file` 关联行 → 秒传用户看不到文件。修复应移除 handler 短路或改为走 service.Upload。
+- ~~🔴 `handler/handler.go` UploadHandler 的 FastUpload 短路分支不创建 `tbl_user_file` 关联行~~ ✅ **已修复**：`service/file_service.go` `FastUpload()` 末尾已补充 `enqueue` 调用（秒传用户的 AI 分析任务现在会正确投递）
 - 🟡 `web/dist` 未入库：本地/CI 需先 `npm run build`，否则 `/static` 404。
 - 🟡 Range 开放区间（`bytes=N-`）在未知文件大小时返回 416；分页为 LIMIT/OFFSET，大数据量需改游标。

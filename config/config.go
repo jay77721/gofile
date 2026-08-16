@@ -37,6 +37,11 @@ type Config struct {
 	TypesenseAPIKey   string // Typesense API Key，默认 xyz
 	AIConfigSecret    string // 用户自定义 API key 的 AES 加密密钥，缺失时从 DSN 派生
 	AllowPrivateAIURL bool   // 是否允许自定义 baseURL 指向内网（默认 false，本地 Ollama 场景开启）
+
+	// AsynqEnabled 是否启用 Asynq 持久化任务队列（替代进程内 chan，需 Redis）
+	// true：任务写入 Redis，跨实例共享，内置重试 + 死信队列
+	// false（默认）：回退进程内 chan（重启丢失，单实例）
+	AsynqEnabled bool
 }
 
 // Load 从环境变量加载配置，提供合理默认值
@@ -71,6 +76,8 @@ func Load() *Config {
 		TypesenseAPIKey:   getEnv("TYPESENSE_API_KEY", "xyz"),
 		AIConfigSecret:    getEnv("AI_CONFIG_SECRET", ""),
 		AllowPrivateAIURL: getEnvBool("ALLOW_PRIVATE_AI_URL", false),
+
+		AsynqEnabled: getEnvBool("ASYNQ_ENABLED", false),
 	}
 
 	// MySQL DSN 未设置时使用默认值（本地开发）
