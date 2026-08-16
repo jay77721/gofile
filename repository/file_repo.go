@@ -125,7 +125,7 @@ func (r *mysqlFileRepo) GetByHash(ctx context.Context, filehash, username string
 	}, nil
 }
 
-// ListByUser 查询用户的所有活跃文件
+// ListByUser 查询用户的所有活跃文件（批量查询避免 N+1）
 func (r *mysqlFileRepo) ListByUser(ctx context.Context, username string) ([]model.FileMeta, error) {
 	var ufs []model.UserFile
 	if err := r.db.WithContext(ctx).Where("user_name = ? AND status = ? AND is_dir = 0", username, model.UserFileStatusActive).
@@ -133,11 +133,28 @@ func (r *mysqlFileRepo) ListByUser(ctx context.Context, username string) ([]mode
 		Find(&ufs).Error; err != nil {
 		return nil, fmt.Errorf("query user files failed: %w", err)
 	}
+	if len(ufs) == 0 {
+		return []model.FileMeta{}, nil
+	}
+
+	hashes := make([]string, len(ufs))
+	for i, uf := range ufs {
+		hashes[i] = uf.FileSha1
+	}
+
+	var globalFiles []model.File
+	if err := r.db.WithContext(ctx).Where("file_sha1 IN ?", hashes).Find(&globalFiles).Error; err != nil {
+		return nil, fmt.Errorf("query global files failed: %w", err)
+	}
+	fileMap := make(map[string]model.File, len(globalFiles))
+	for i := range globalFiles {
+		fileMap[globalFiles[i].FileSha1] = globalFiles[i]
+	}
 
 	files := make([]model.FileMeta, 0, len(ufs))
 	for _, uf := range ufs {
-		var f model.File
-		if err := r.db.WithContext(ctx).Where("file_sha1 = ?", uf.FileSha1).First(&f).Error; err != nil {
+		f, ok := fileMap[uf.FileSha1]
+		if !ok {
 			slog.Warn("file record missing", "filehash", uf.FileSha1)
 			continue
 		}

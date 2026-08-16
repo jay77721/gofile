@@ -205,8 +205,14 @@ func (s *FileService) ConfirmUpload(ctx context.Context, fileHash, fileName, use
 		return fmt.Errorf("file not found in storage")
 	}
 
+	// 获取文件在存储层的实际大小
+	size, sizeErr := s.store.FileSize(ctx, fileHash)
+	if sizeErr != nil {
+		slog.WarnContext(ctx, "presigned confirm: query file size failed", "filehash", fileHash, "error", sizeErr)
+	}
+
 	// 注册全局文件（幂等）
-	if err := s.fileRepo.Create(ctx, model.File{FileSha1: fileHash, FileSize: 0, FileAddr: fileHash}); err != nil {
+	if err := s.fileRepo.Create(ctx, model.File{FileSha1: fileHash, FileSize: size, FileAddr: fileHash}); err != nil {
 		slog.WarnContext(ctx, "presigned confirm: save global file meta failed", "filehash", fileHash)
 	}
 

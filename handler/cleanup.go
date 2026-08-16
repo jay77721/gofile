@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"gofile/ai"
+	"gofile/model"
 	"gofile/repository"
 	"gofile/storage"
 	"log/slog"
@@ -91,6 +92,46 @@ func StartShareCleanup(shareRepo repository.ShareRepository) {
 			}
 		}
 	}()
+}
+
+// StartMultipartCleanup 定时清理过期未完成的 S3 Multipart 分片会话（每天）
+// 扫描 tbl_multipart_upload 中 status=1 且 expired_at < NOW() 的记录，
+// 调用 store.AbortMultipart 通知 MinIO 清理未合并切片，并将状态置为已取消 (status=3)。
+func StartMultipartCleanup(multipartRepo repository.MultipartRepository, store storage.Storage) {
+	if multipartRepo == nil || store == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		slog.InfoContext(context.Background(), "multipart cleanup started", "interval", "24h")
+		cleanupExpiredMultipart(multipartRepo, store)
+		for range ticker.C {
+			cleanupExpiredMultipart(multipartRepo, store)
+		}
+	}()
+}
+
+func cleanupExpiredMultipart(multipartRepo repository.MultipartRepository, store storage.Storage) {
+	ctx := context.Background()
+	now := time.Now()
+	expiredList, err := multipartRepo.ListExpired(ctx, now)
+	if err != nil {
+		slog.ErrorContext(ctx, "list expired multipart uploads failed", "error", err)
+		return
+	}
+
+	for _, mu := range expiredList {
+		if err := store.AbortMultipart(ctx, mu.UploadID, mu.FileSha1); err != nil {
+			slog.WarnContext(ctx, "abort expired multipart on storage failed", "upload_id", mu.UploadID, "error", err)
+		}
+		if err := multipartRepo.UpdateStatus(ctx, mu.UploadID, mu.Username, model.MultipartStatusAborted); err != nil {
+			slog.ErrorContext(ctx, "update expired multipart status failed", "upload_id", mu.UploadID, "error", err)
+		} else {
+			slog.InfoContext(ctx, "cleaned up expired multipart upload", "upload_id", mu.UploadID, "filehash", mu.FileSha1, "username", mu.Username)
+		}
+	}
 }
 
 // StartAICompensation 启动 AI 失败任务补偿（周期性重新入队 failed 任务）

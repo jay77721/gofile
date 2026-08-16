@@ -96,11 +96,11 @@
 - [x] **CI/CD**: GitHub Actions 三 Job 自动化流水线（gofmt + vet + test -race + build + docker）
 
 ### 待执行 (Next Actions)
-- [ ] **Step 1 (健壮性治理)**:
-  - [ ] 消除 `ListByUser` 中的 N+1 查询
-  - [ ] `main.go` 停机联动 `asynqSrv.Shutdown()`
-  - [ ] `cleanup.go` 新增过期挂起 Multipart 清理
-  - [ ] `ConfirmUpload` 校准实际文件大小
+- [x] **Step 1 (健壮性治理)**:
+  - [x] 消除 `ListByUser` 中的 N+1 查询
+  - [x] `main.go` 停机联动 `asynqSrv.Shutdown()` 与 `aiProcessor.Stop()`
+  - [x] `cleanup.go` 新增过期挂起 Multipart 清理
+  - [x] `ConfirmUpload` 校准实际文件大小
 - [ ] **Step 2 (M4 RAG 知识库)**: 文档分块 + Typesense Chunk 向量索引 + SSE 流式问答
 - [ ] **Step 3 (M5 WebDAV)**: 实现 `webdav.FileSystem` 协议层
 - [ ] **Step 4 (P5.2 测试覆盖)**: 专项测试套件，测试覆盖率冲刺 ≥80%

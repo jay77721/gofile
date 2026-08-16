@@ -104,6 +104,7 @@ func main() {
 	var aiProcessor *ai.Processor
 	var aiHandler *handler.AIHandler
 	var aiCfgHandler *handler.AIConfigHandler
+	var asynqSrv *asynq.Server
 	if cfg.AIEnabled {
 		aiRepo := repository.NewAITaskRepository(db)
 		provider := ai.NewProvider(cfg)
@@ -138,7 +139,7 @@ func main() {
 			// 注入 taskEnqueuer，Enqueue 优先走 Asynq，Redis 故障自动回退 chan
 			aiProcessor.WithTaskEnqueuer(taskClient)
 
-			asynqSrv := task.NewServer(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.AIWorkers)
+			asynqSrv = task.NewServer(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.AIWorkers)
 			mux := asynq.NewServeMux()
 			mux.HandleFunc(task.TypeFileAIAnalyze, task.NewAITaskProcessor(aiProcessor).ProcessTask)
 
@@ -156,6 +157,7 @@ func main() {
 	}
 
 	handler.StartSoftDeleteGC(fileRepo, store, 0, indexer)
+	handler.StartMultipartCleanup(multipartRepo, store)
 
 	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).
 		WithMultipart(multipartRepo).
@@ -300,7 +302,15 @@ func main() {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("server forced to shutdown", "error", err)
-		os.Exit(1)
+	}
+
+	if asynqSrv != nil {
+		slog.Info("shutting down asynq server...")
+		asynqSrv.Shutdown()
+	}
+	if aiProcessor != nil {
+		slog.Info("stopping ai processor...")
+		aiProcessor.Stop()
 	}
 
 	slog.Info("server exited")
