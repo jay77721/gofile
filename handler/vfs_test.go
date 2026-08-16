@@ -189,7 +189,9 @@ func TestVFS_MoveFolderHandler(t *testing.T) {
 	reqA.Header.Set("Content-Type", "application/json")
 	wA := httptest.NewRecorder()
 	r.ServeHTTP(wA, reqA)
-	var respA struct{ Data model.UserFile `json:"data"` }
+	var respA struct {
+		Data model.UserFile `json:"data"`
+	}
 	_ = json.Unmarshal(wA.Body.Bytes(), &respA)
 	folderAID := respA.Data.ID
 
@@ -198,7 +200,9 @@ func TestVFS_MoveFolderHandler(t *testing.T) {
 	reqB.Header.Set("Content-Type", "application/json")
 	wB := httptest.NewRecorder()
 	r.ServeHTTP(wB, reqB)
-	var respB struct{ Data model.UserFile `json:"data"` }
+	var respB struct {
+		Data model.UserFile `json:"data"`
+	}
 	_ = json.Unmarshal(wB.Body.Bytes(), &respB)
 	folderBID := respB.Data.ID
 
@@ -207,7 +211,9 @@ func TestVFS_MoveFolderHandler(t *testing.T) {
 	reqTarget.Header.Set("Content-Type", "application/json")
 	wTarget := httptest.NewRecorder()
 	r.ServeHTTP(wTarget, reqTarget)
-	var respTarget struct{ Data model.UserFile `json:"data"` }
+	var respTarget struct {
+		Data model.UserFile `json:"data"`
+	}
 	_ = json.Unmarshal(wTarget.Body.Bytes(), &respTarget)
 	targetID := respTarget.Data.ID
 

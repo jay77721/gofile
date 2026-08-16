@@ -64,7 +64,6 @@ type Processor struct {
 	wg    sync.WaitGroup
 }
 
-
 // NewProcessor 创建异步编排器
 func NewProcessor(provider Provider, indexer Indexer, fileRepo repository.FileRepository, aiRepo repository.AITaskRepository, store storage.Storage, cfg *config.Config) *Processor {
 	workers := cfg.AIWorkers

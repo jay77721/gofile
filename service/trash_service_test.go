@@ -15,7 +15,7 @@ type mockIndexer struct {
 	deletedByUser []string
 }
 
-func (m *mockIndexer) EnsureCollection(ctx context.Context) error { return nil }
+func (m *mockIndexer) EnsureCollection(ctx context.Context) error    { return nil }
 func (m *mockIndexer) Upsert(ctx context.Context, doc *ai.Doc) error { return nil }
 func (m *mockIndexer) Delete(ctx context.Context, username, filehash string) error {
 	m.deletedByUser = append(m.deletedByUser, username+":"+filehash)
