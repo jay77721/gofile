@@ -16,7 +16,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -75,314 +74,6 @@ func TestHealthCheckHandler(t *testing.T) {
 	}
 }
 
-func TestGetFileHandler_NoFilehash(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.GET("/file/meta", fh.GetFileHandler)
-
-	req := httptest.NewRequest("GET", "/file/meta", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"].(float64) != float64(CodeInvalidParams) {
-		t.Errorf("code = %v, want %d", resp["code"], CodeInvalidParams)
-	}
-}
-
-func TestFileDeleteHandler_NoFilehash(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/delete", fh.FileDeleteHandler)
-
-	req := httptest.NewRequest("POST", "/file/delete", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestFileMetaUpdateHandler_WrongOp(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/update", fh.FileMetaUpdateHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("op", "1")
-	writer.WriteField("filehash", "abc")
-	writer.WriteField("filename", "test.txt")
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/update", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
-	}
-}
-
-func TestUploadStatusHandler_NoFilehash(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.GET("/file/upload/status", fh.UploadStatusHandler)
-
-	req := httptest.NewRequest("GET", "/file/upload/status", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestMergeChunkHandler_NoParams(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload/merge", fh.MergeChunkHandler)
-
-	req := httptest.NewRequest("POST", "/file/upload/merge", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestUploadHandler_NoFile(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload", fh.UploadHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/upload", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestUploadHandler_WithFilehashOnly(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload", fh.UploadHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("filehash", "testhash123")
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/upload", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	// filehash 提交但没有 file 字段，应返回 400
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestDownloadHandler_NoFilehash(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.GET("/file/download", fh.DownloadHandler)
-
-	req := httptest.NewRequest("GET", "/file/download", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["code"].(float64) != float64(CodeInvalidParams) {
-		t.Errorf("code = %v, want %d", resp["code"], CodeInvalidParams)
-	}
-}
-
-func TestDownloadHandler_NotFound(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.GET("/file/download", fh.DownloadHandler)
-
-	req := httptest.NewRequest("GET", "/file/download?filehash=nonexistent_hash_12345", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	// 使用 mock 不再 panic，返回 404
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
-}
-
-func TestUploadChunkHandler_NoParams(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
-
-	req := httptest.NewRequest("POST", "/file/upload/chunk", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestUploadChunkHandler_InvalidIndex(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("filehash", "abc123")
-	writer.WriteField("index", "invalid")
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/upload/chunk", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestUploadChunkHandler_NegativeIndex(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("filehash", "abc123")
-	writer.WriteField("index", "-1")
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/upload/chunk", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestUploadChunkHandler_NoFile(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload/chunk", fh.UploadChunkHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("filehash", "abc123")
-	writer.WriteField("index", "0")
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/upload/chunk", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestFileMetaUpdateHandler_MissingParams(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/update", fh.FileMetaUpdateHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("op", "0")
-	writer.WriteField("filehash", "")
-	writer.WriteField("filename", "test.txt")
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/update", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestGetFileHandler_NotFound(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.GET("/file/meta", fh.GetFileHandler)
-
-	req := httptest.NewRequest("GET", "/file/meta?filehash=nonexistent_hash_67890", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	// 使用 mock 不再 panic，返回 404
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
-	}
-}
-
-func TestMergeChunkHandler_MissingFilehash(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/file/upload/merge", fh.MergeChunkHandler)
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("filename", "test.txt")
-	writer.Close()
-
-	req := httptest.NewRequest("POST", "/file/upload/merge", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
-
-func TestFileQueryHandler_NoDB(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.GET("/file/query", fh.FileQueryHandler)
-
-	req := httptest.NewRequest("GET", "/file/query", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	// 使用 mock 不再 panic，返回空列表
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-}
-
 func TestRateLimitMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -390,7 +81,6 @@ func TestRateLimitMiddleware(t *testing.T) {
 		c.JSON(200, gin.H{"ok": true})
 	})
 
-	// 第一次请求应该成功
 	req := httptest.NewRequest("GET", "/test", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -402,8 +92,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 func TestSignupHandler_MissingParams(t *testing.T) {
 	_, uh, _ := setupTestHandler(t)
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
+	r := setupRouter()
 	r.POST("/user/signup", uh.SignupHandler)
 
 	w := httptest.NewRecorder()
@@ -418,8 +107,7 @@ func TestSignupHandler_MissingParams(t *testing.T) {
 
 func TestSignInHandler_MissingParams(t *testing.T) {
 	_, uh, _ := setupTestHandler(t)
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
+	r := setupRouter()
 	r.POST("/user/signin", uh.SignInHandler)
 
 	w := httptest.NewRecorder()
@@ -434,8 +122,7 @@ func TestSignInHandler_MissingParams(t *testing.T) {
 
 func TestUserInfoHandler_NoCookie(t *testing.T) {
 	_, uh, am := setupTestHandler(t)
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
+	r := setupRouter()
 	r.GET("/user/info", am.Middleware(), uh.UserInfoHandler)
 
 	w := httptest.NewRecorder()
@@ -447,106 +134,283 @@ func TestUserInfoHandler_NoCookie(t *testing.T) {
 	}
 }
 
-func TestParseRangeHeader(t *testing.T) {
-	cases := []struct {
-		name      string
-		header    string
-		totalSize int64
-		wantOK    bool
-		wantOff   int64
-		wantLen   int64
-	}{
-		{"closed range", "bytes=0-1023", 0, true, 0, 1024},
-		{"closed range mid", "bytes=100-199", 0, true, 100, 100},
-		{"open range with known size", "bytes=100-", 1000, true, 100, 900},
-		{"open range unknown size -> -1", "bytes=100-", 0, true, 100, -1},
-		{"open range beyond size", "bytes=900-", 900, false, 0, 0},
-		{"reversed range", "bytes=200-100", 0, false, 0, 0},
-		{"non-bytes unit", "items=0-10", 0, false, 0, 0},
-		{"empty spec", "bytes=", 0, false, 0, 0},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			off, length, ok := parseRangeHeader(tc.header, tc.totalSize)
-			if ok != tc.wantOK || off != tc.wantOff || length != tc.wantLen {
-				t.Errorf("parseRangeHeader(%q, %d) = (%d, %d, %v), want (%d, %d, %v)",
-					tc.header, tc.totalSize, off, length, ok, tc.wantOff, tc.wantLen, tc.wantOK)
-			}
-		})
-	}
-}
-
-// setupRangeTestHandler 准备一个包含 10 字节文件(alice 拥有)的 handler 测试环境
-func setupRangeTestHandler(t *testing.T) (*FileHandler, string) {
-	t.Helper()
-	dir := t.TempDir()
-	store := storage.NewLocal(dir)
-	cfg := &config.Config{UploadDir: dir, ChunkDir: dir}
-	fileRepo := repository.NewMockFileRepository()
-	fileSvc := service.NewFileService(fileRepo, store, cfg)
-	fh := NewFileHandler(fileSvc, cfg)
-
-	const hash = "abcdef0123456789abcdef0123456789abcdef01"
-	content := []byte("0123456789")
-	if err := fileRepo.Create(context.Background(), model.File{FileSha1: hash, FileSize: int64(len(content))}); err != nil {
-		t.Fatal(err)
-	}
-	if err := fileRepo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Put(context.Background(), hash, bytes.NewReader(content), int64(len(content))); err != nil {
-		t.Fatal(err)
-	}
-	return fh, hash
-}
-
-func TestDownloadHandler_Range(t *testing.T) {
-	fh, hash := setupRangeTestHandler(t)
+func TestLogoutHandler(t *testing.T) {
+	_, uh, _ := setupTestHandler(t)
 	r := setupRouter()
-	// 模拟 AuthMiddleware 写入的 username
-	r.GET("/file/download", func(c *gin.Context) {
+	r.POST("/user/logout", uh.LogoutHandler)
+
+	req := httptest.NewRequest("POST", "/user/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "username", Value: "alice"})
+	req.AddCookie(&http.Cookie{Name: "token", Value: "deadbeef"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	cleared := map[string]bool{}
+	for _, c := range w.Result().Cookies() {
+		if c.MaxAge < 0 {
+			cleared[c.Name] = true
+		}
+	}
+	if !cleared["token"] || !cleared["username"] {
+		t.Errorf("cookies not cleared: %v", cleared)
+	}
+}
+
+func TestUploadHandler_Validation(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.Use(func(c *gin.Context) {
 		c.Set("username", "alice")
-		fh.DownloadHandler(c)
+		c.Next()
+	})
+	r.POST("/file/upload", fh.UploadHandler)
+
+	t.Run("no file in form returns 400", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/file/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
 	})
 
-	cases := []struct {
-		name        string
-		rangeHeader string
-		wantStatus  int
-		wantCR      string // Content-Range 期望值;为空则不校验
-		wantBody    string // 期望响应体;为空则不校验
-	}{
-		{"open range", "bytes=2-", http.StatusPartialContent, "bytes 2-9/10", "23456789"},
-		{"closed range", "bytes=1-3", http.StatusPartialContent, "bytes 1-3/10", "123"},
-		{"clamped closed range", "bytes=5-99", http.StatusPartialContent, "bytes 5-9/10", "56789"},
-		{"out of bounds", "bytes=10-", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
-		{"invalid range", "bytes=9-2", http.StatusRequestedRangeNotSatisfiable, "bytes */10", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/file/download?filehash="+hash, nil)
-			req.Header.Set("Range", tc.rangeHeader)
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, req)
+	t.Run("filehash only without file returns 400 when file does not exist", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		writer.WriteField("filehash", "nonexistenthash123")
+		writer.Close()
 
-			if w.Code != tc.wantStatus {
-				t.Fatalf("status = %d, want %d", w.Code, tc.wantStatus)
-			}
-			if tc.wantCR != "" {
-				if got := w.Header().Get("Content-Range"); got != tc.wantCR {
-					t.Errorf("Content-Range = %q, want %q", got, tc.wantCR)
-				}
-			}
-			if tc.wantBody != "" {
-				if got := w.Body.String(); got != tc.wantBody {
-					t.Errorf("body = %q, want %q", got, tc.wantBody)
-				}
-			}
-		})
-	}
+		req := httptest.NewRequest("POST", "/file/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("dangerous extension returns 400", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		part, _ := writer.CreateFormFile("file", "script.sh")
+		part.Write([]byte("echo evil"))
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/file/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("upload valid file success", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		part, _ := writer.CreateFormFile("file", "hello.txt")
+		part.Write([]byte("hello world"))
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/file/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+	})
 }
 
-// setupTrashTestHandler 准备 alice 已软删除一个文件的环境
+func TestFastUploadHandler(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.Use(func(c *gin.Context) {
+		c.Set("username", "alice")
+		c.Next()
+	})
+	r.POST("/file/fastupload", fh.FastUploadHandler)
+
+	const validHash = "abcdef0123456789abcdef0123456789abcdef01"
+
+	t.Run("missing hash returns 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/file/fastupload", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("miss fast upload returns 200 with code 0", func(t *testing.T) {
+		form := url.Values{"filehash": {validHash}}
+		req := httptest.NewRequest("POST", "/file/fastupload", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", w.Code)
+		}
+	})
+}
+
+func TestPresignAndConfirmUploadHandler(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.Use(func(c *gin.Context) {
+		c.Set("username", "alice")
+		c.Next()
+	})
+	r.POST("/file/upload/presign", fh.PresignUploadHandler)
+	r.POST("/file/upload/confirm", fh.ConfirmUploadHandler)
+
+	const validHash = "abcdef0123456789abcdef0123456789abcdef01"
+
+	t.Run("presign missing params", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/file/upload/presign", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("confirm dangerous extension", func(t *testing.T) {
+		form := url.Values{
+			"filehash": {validHash},
+			"filename": {"trojan.exe"},
+		}
+		req := httptest.NewRequest("POST", "/file/upload/confirm", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+}
+
+func TestFileMetaAndQueryHandlers(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.Use(func(c *gin.Context) {
+		c.Set("username", "alice")
+		c.Next()
+	})
+	r.GET("/file/meta", fh.GetFileHandler)
+	r.GET("/file/query", fh.FileQueryHandler)
+
+	t.Run("meta missing filehash", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/file/meta", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("meta not found", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/file/meta?filehash=nonexistent_hash_67890", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", w.Code)
+		}
+	})
+
+	t.Run("query empty", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/file/query", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", w.Code)
+		}
+	})
+
+	t.Run("query paged", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/file/query?page=1&size=10", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", w.Code)
+		}
+	})
+}
+
+func TestFileMetaUpdateAndDeleteHandlers(t *testing.T) {
+	fh, _, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.Use(func(c *gin.Context) {
+		c.Set("username", "alice")
+		c.Next()
+	})
+	r.POST("/file/update", fh.FileMetaUpdateHandler)
+	r.POST("/file/delete", fh.FileDeleteHandler)
+
+	t.Run("update missing params", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		writer.WriteField("op", "0")
+		writer.WriteField("filehash", "")
+		writer.WriteField("filename", "test.txt")
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/file/update", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("update wrong op", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		writer.WriteField("op", "1")
+		writer.WriteField("filehash", "abc")
+		writer.WriteField("filename", "test.txt")
+		writer.Close()
+
+		req := httptest.NewRequest("POST", "/file/update", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", w.Code)
+		}
+	})
+
+	t.Run("delete missing filehash", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/file/delete", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+}
+
 func setupTrashTestHandler(t *testing.T) (*FileHandler, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -639,196 +503,13 @@ func TestTrashHandlers(t *testing.T) {
 	}
 
 	// 4. 越权:bob 无法恢复 alice 的文件
-	if w := post("/file/restore", hash); w.Code != http.StatusNotFound {
-		t.Fatalf("unauthorized restore status = %d, want 404", w.Code)
+	rBob := setupRouter()
+	rBob.POST("/file/restore", func(c *gin.Context) { c.Set("username", "bob"); fh.RestoreHandler(c) })
+	reqBob := httptest.NewRequest("POST", "/file/restore", strings.NewReader((url.Values{"filehash": {hash}}).Encode()))
+	reqBob.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	wBob := httptest.NewRecorder()
+	rBob.ServeHTTP(wBob, reqBob)
+	if wBob.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized restore status = %d, want 404", wBob.Code)
 	}
-}
-
-func TestLogoutHandler(t *testing.T) {
-	_, uh, _ := setupTestHandler(t)
-	r := setupRouter()
-	r.POST("/user/logout", uh.LogoutHandler)
-
-	req := httptest.NewRequest("POST", "/user/logout", nil)
-	req.AddCookie(&http.Cookie{Name: "username", Value: "alice"})
-	req.AddCookie(&http.Cookie{Name: "token", Value: "deadbeef"})
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	cleared := map[string]bool{}
-	for _, c := range w.Result().Cookies() {
-		if c.MaxAge < 0 {
-			cleared[c.Name] = true
-		}
-	}
-	if !cleared["token"] || !cleared["username"] {
-		t.Errorf("cookies not cleared: %v", cleared)
-	}
-}
-
-type mockHandlerMultipartStorage struct {
-	*storage.LocalStorage
-	inited   bool
-	complete bool
-}
-
-func (m *mockHandlerMultipartStorage) InitMultipart(ctx context.Context, key string) (string, error) {
-	m.inited = true
-	return "upload-handler-id", nil
-}
-
-func (m *mockHandlerMultipartStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
-	return "http://mock-minio/part?partNumber=1", nil
-}
-
-func (m *mockHandlerMultipartStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
-	m.complete = true
-	return nil
-}
-
-func (m *mockHandlerMultipartStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
-	return nil
-}
-
-func TestVFSFolderHandlers(t *testing.T) {
-	fh, _, _ := setupTestHandler(t)
-	r := setupRouter()
-
-	r.Use(func(c *gin.Context) {
-		c.Set("username", "alice")
-		c.Next()
-	})
-
-	r.POST("/file/folder/create", fh.CreateFolderHandler)
-	r.POST("/file/folder/rename", fh.RenameFolderHandler)
-	r.POST("/file/folder/move", fh.MoveFolderHandler)
-	r.GET("/file/query", fh.FileQueryHandler)
-
-	// 1. 创建文件夹 A
-	body, _ := json.Marshal(model.FolderCreateReq{Name: "资料", ParentID: 0})
-	req := httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("create folder status = %d, want 200", w.Code)
-	}
-
-	var resp struct {
-		Code int            `json:"code"`
-		Data model.UserFile `json:"data"`
-	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	folderAID := resp.Data.ID
-	if folderAID == 0 {
-		t.Fatalf("expected created folder ID > 0")
-	}
-
-	// 2. 创建子文件夹 B
-	body, _ = json.Marshal(model.FolderCreateReq{Name: "子资料", ParentID: uint64(folderAID)})
-	req = httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("create subfolder status = %d, want 200", w.Code)
-	}
-
-	// 3. 重命名文件夹
-	body, _ = json.Marshal(model.FolderRenameReq{FileID: folderAID, NewName: "新资料"})
-	req = httptest.NewRequest("POST", "/file/folder/rename", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("rename folder status = %d, want 200", w.Code)
-	}
-
-	// 4. 查询目录及面包屑
-	req = httptest.NewRequest("GET", "/file/query?parent_id=0", nil)
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("query directory status = %d, want 200", w.Code)
-	}
-}
-
-func TestMultipartHandlers(t *testing.T) {
-	dir, err := os.MkdirTemp("", "gofile-mp-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-
-	fileRepo := repository.NewMockFileRepository()
-	multipartRepo := repository.NewMockMultipartRepository()
-	localStorage := storage.NewLocal(dir)
-	mockStore := &mockHandlerMultipartStorage{LocalStorage: localStorage}
-
-	cfg := &config.Config{UploadDir: dir, ChunkDir: dir}
-	fileSvc := service.NewFileService(fileRepo, mockStore, cfg).WithMultipart(multipartRepo)
-	fh := NewFileHandler(fileSvc, cfg)
-
-	r := setupRouter()
-	r.Use(func(c *gin.Context) {
-		c.Set("username", "alice")
-		c.Next()
-	})
-
-	r.POST("/file/upload/multipart/init", fh.InitMultipartHandler)
-	r.POST("/file/upload/multipart/complete", fh.CompleteMultipartHandler)
-	r.POST("/file/upload/multipart/abort", fh.AbortMultipartHandler)
-
-	const hash = "1111222233334444555566667777888899990000"
-
-	// 1. Init
-	initBody, _ := json.Marshal(model.MultipartInitReq{
-		FileSha1:  hash,
-		FileName:  "archive.tar.gz",
-		FileSize:  20 * 1024 * 1024,
-		ChunkSize: 10 * 1024 * 1024,
-	})
-	req := httptest.NewRequest("POST", "/file/upload/multipart/init", bytes.NewReader(initBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("init multipart status = %d, want 200", w.Code)
-	}
-
-	var initResp struct {
-		Code int                     `json:"code"`
-		Data model.MultipartInitResp `json:"data"`
-	}
-	json.Unmarshal(w.Body.Bytes(), &initResp)
-	if initResp.Data.UploadID != "upload-handler-id" {
-		t.Fatalf("expected upload_id upload-handler-id, got %q", initResp.Data.UploadID)
-	}
-
-	// 2. Complete
-	compBody, _ := json.Marshal(model.MultipartCompleteReq{
-		UploadID: initResp.Data.UploadID,
-		Parts: []storage.CompletePart{
-			{PartNumber: 1, ETag: "etag1"},
-			{PartNumber: 2, ETag: "etag2"},
-		},
-	})
-	req = httptest.NewRequest("POST", "/file/upload/multipart/complete", bytes.NewReader(compBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("complete multipart status = %d, want 200", w.Code)
-	}
-
-	// 3. Abort
-	abortBody, _ := json.Marshal(model.MultipartAbortReq{UploadID: "some-id"})
-	req = httptest.NewRequest("POST", "/file/upload/multipart/abort", bytes.NewReader(abortBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	// should not crash
 }

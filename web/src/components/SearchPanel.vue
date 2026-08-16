@@ -1,46 +1,65 @@
-<script setup>
-import { ref, watch, onMounted } from 'vue'
-import { api } from '../api'
-import { fmtSize, fmtDate, canPreview } from '../utils'
+<script setup lang="ts">
+import { ref, watch, onMounted } from 'vue';
+import { api, type FileItem, type PagedList, type AIConfigData } from '../api';
+import { fmtSize, canPreview } from '../utils';
 
-const props = defineProps({ query: { type: String, default: '' } })
-const emit = defineEmits(['similar'])
+interface Props {
+  query?: string;
+}
 
-const q = ref(props.query)
-const results = ref([])
-const loading = ref(false)
-const msg = ref('')
-const aiMode = ref('') // '' 未知 | openai 真实 Provider | mock 演示模式
+const props = withDefaults(defineProps<Props>(), {
+  query: '',
+});
+
+const emit = defineEmits<{
+  (e: 'similar', query: string): void;
+}>();
+
+const q = ref<string>(props.query);
+const results = ref<FileItem[]>([]);
+const loading = ref<boolean>(false);
+const msg = ref<string>('');
+const aiMode = ref<string>(''); // '' 未知 | openai 真实 Provider | mock 演示模式
 
 onMounted(async () => {
   try {
-    const d = await api('/ai/config')
-    aiMode.value = d?.mode === 'openai' ? 'openai' : 'mock'
-  } catch { /* AI 未启用时保持未知 */ }
-})
+    const d = await api<AIConfigData>('/ai/config');
+    aiMode.value = d?.mode === 'openai' ? 'openai' : 'mock';
+  } catch {
+    /* AI 未启用时保持未知 */
+  }
+});
 
-async function search(text) {
-  const query = (text ?? q.value).trim()
-  if (!query) return
-  q.value = query
-  loading.value = true
-  msg.value = ''
+async function search(text?: string): Promise<void> {
+  const query = (text ?? q.value).trim();
+  if (!query) return;
+  q.value = query;
+  loading.value = true;
+  msg.value = '';
   try {
-    const d = await api('/file/ai/search?q=' + encodeURIComponent(query) + '&page=1&size=20')
-    results.value = d?.list || []
-    if (!results.value.length) msg.value = '没有找到相关文件，换个说法试试'
+    const d = await api<PagedList<FileItem>>('/file/ai/search?q=' + encodeURIComponent(query) + '&page=1&size=20');
+    results.value = d?.list || [];
+    if (!results.value.length) msg.value = '没有找到相关文件，换个说法试试';
   } catch (e) {
-    results.value = []
-    msg.value = /Unexpected|Failed to fetch|404/.test(e.message)
+    results.value = [];
+    msg.value = /Unexpected|Failed to fetch|404/.test((e as Error).message)
       ? 'AI 搜索未启用，请在服务端设置 AI_ENABLED=true 后重试'
-      : e.message
-  } finally { loading.value = false }
+      : (e as Error).message;
+  } finally {
+    loading.value = false;
+  }
 }
 
 // App 侧(相似推荐等)传入新查询时自动触发
-watch(() => props.query, (v) => { if (v) search(v) }, { immediate: false })
+watch(
+  () => props.query,
+  (v) => {
+    if (v) search(v);
+  },
+  { immediate: false }
+);
 
-if (props.query) search(props.query)
+if (props.query) search(props.query);
 </script>
 
 <template>

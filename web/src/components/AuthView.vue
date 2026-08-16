@@ -1,47 +1,77 @@
-<script setup>
-import { ref } from 'vue'
-import { apiPost, session } from '../api'
-import { toast } from '../toast'
+<script setup lang="ts">
+import { ref } from 'vue';
+import { apiPost, session, type UserInfo } from '../api';
+import { toast } from '../toast';
 
-const emit = defineEmits(['authed'])
+const emit = defineEmits<{
+  (e: 'authed'): void;
+}>();
 
-const tab = ref('login')
-const user = ref('')
-const pwd = ref('')
-const pwd2 = ref('')
-const loading = ref(false)
-const msg = ref('')
-const msgType = ref('error')
-const showPwd = ref(false)
+const tab = ref<'login' | 'register'>('login');
+const user = ref<string>('');
+const pwd = ref<string>('');
+const pwd2 = ref<string>('');
+const loading = ref<boolean>(false);
+const msg = ref<string>('');
+const msgType = ref<'error' | 'success'>('error');
+const showPwd = ref<boolean>(false);
 
-function clearMsg() { msg.value = '' }
-
-async function doLogin() {
-  if (!user.value.trim() || !pwd.value) { msg.value = '请输入用户名和密码'; msgType.value = 'error'; return }
-  loading.value = true
-  msg.value = ''
-  try {
-    const d = await apiPost('/user/signin', { username: user.value.trim(), password: pwd.value })
-    session.username = d.Username || user.value.trim()
-    toast('欢迎回来，' + session.username, 'ok')
-    emit('authed')
-  } catch (e) { msg.value = e.message; msgType.value = 'error' } finally { loading.value = false }
+function clearMsg(): void {
+  msg.value = '';
 }
 
-async function doRegister() {
-  const name = user.value.trim()
-  if (name.length < 3) { msg.value = '用户名至少 3 位'; msgType.value = 'error'; return }
-  if (pwd.value.length < 5) { msg.value = '密码至少 5 位'; msgType.value = 'error'; return }
-  if (pwd.value !== pwd2.value) { msg.value = '两次输入的密码不一致'; msgType.value = 'error'; return }
-  loading.value = true
-  msg.value = ''
+async function doLogin(): Promise<void> {
+  if (!user.value.trim() || !pwd.value) {
+    msg.value = '请输入用户名和密码';
+    msgType.value = 'error';
+    return;
+  }
+  loading.value = true;
+  msg.value = '';
   try {
-    await apiPost('/user/signup', { username: name, password: pwd.value })
-    toast('注册成功，请登录', 'ok')
-    tab.value = 'login'
-    pwd.value = ''
-    pwd2.value = ''
-  } catch (e) { msg.value = e.message; msgType.value = 'error' } finally { loading.value = false }
+    const d = await apiPost<UserInfo>('/user/signin', { username: user.value.trim(), password: pwd.value });
+    session.username = d.Username || d.username || user.value.trim();
+    toast('欢迎回来，' + session.username, 'ok');
+    emit('authed');
+  } catch (e) {
+    msg.value = (e as Error).message;
+    msgType.value = 'error';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function doRegister(): Promise<void> {
+  const name = user.value.trim();
+  if (name.length < 3) {
+    msg.value = '用户名至少 3 位';
+    msgType.value = 'error';
+    return;
+  }
+  if (pwd.value.length < 5) {
+    msg.value = '密码至少 5 位';
+    msgType.value = 'error';
+    return;
+  }
+  if (pwd.value !== pwd2.value) {
+    msg.value = '两次输入的密码不一致';
+    msgType.value = 'error';
+    return;
+  }
+  loading.value = true;
+  msg.value = '';
+  try {
+    await apiPost<void>('/user/signup', { username: name, password: pwd.value });
+    toast('注册成功，请登录', 'ok');
+    tab.value = 'login';
+    pwd.value = '';
+    pwd2.value = '';
+  } catch (e) {
+    msg.value = (e as Error).message;
+    msgType.value = 'error';
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 

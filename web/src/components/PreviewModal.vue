@@ -1,37 +1,59 @@
-<script setup>
-import { ref, computed } from 'vue'
-import { extOf, fmtSize } from '../utils'
+<script setup lang="ts">
+import { ref, computed } from 'vue';
+import { extOf, fmtSize } from '../utils';
+import type { FileItem } from '../api';
 
-const props = defineProps({ file: { type: Object, required: true } })
-const emit = defineEmits(['close'])
+type PreviewKind = 'image' | 'video' | 'audio' | 'pdf' | 'text';
 
-const text = ref('')
-const textLoading = ref(false)
+interface Props {
+  file: FileItem;
+}
 
-const ext = computed(() => extOf(props.file.filename))
-const kind = computed(() => {
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext.value)) return 'image'
-  if (['mp4', 'webm', 'mov'].includes(ext.value)) return 'video'
-  if (['mp3', 'wav', 'ogg', 'flac'].includes(ext.value)) return 'audio'
-  if (ext.value === 'pdf') return 'pdf'
-  return 'text'
-})
+const props = defineProps<Props>();
+const emit = defineEmits<{
+  (e: 'close'): void;
+}>();
 
-const src = computed(() => '/file/preview?filehash=' + encodeURIComponent(props.file.filehash))
+const text = ref<string>('');
+const textLoading = ref<boolean>(false);
+
+const ext = computed<string>(() => extOf(props.file.filename));
+const kind = computed<PreviewKind>(() => {
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext.value)) return 'image';
+  if (['mp4', 'webm', 'mov'].includes(ext.value)) return 'video';
+  if (['mp3', 'wav', 'ogg', 'flac'].includes(ext.value)) return 'audio';
+  if (ext.value === 'pdf') return 'pdf';
+  return 'text';
+});
+
+const src = computed<string>(() => '/file/preview?filehash=' + encodeURIComponent(props.file.filehash));
 
 // 文本类型异步加载
 if (kind.value === 'text') {
-  textLoading.value = true
+  textLoading.value = true;
   fetch(src.value, { credentials: 'include' })
     .then((r) => (r.status === 401 ? Promise.reject(new Error('未登录')) : r.text()))
-    .then((t) => { text.value = t })
-    .catch((e) => { text.value = '加载失败：' + e.message })
-    .finally(() => { textLoading.value = false })
+    .then((t) => {
+      text.value = t;
+    })
+    .catch((e) => {
+      text.value = '加载失败：' + (e as Error).message;
+    })
+    .finally(() => {
+      textLoading.value = false;
+    });
 }
 
-const icon = computed(() => ({
-  image: '🖼', video: '🎥', audio: '🎵', pdf: '📄', text: '📝',
-}[kind.value]))
+const icon = computed<string>(() => {
+  const map: Record<PreviewKind, string> = {
+    image: '🖼',
+    video: '🎥',
+    audio: '🎵',
+    pdf: '📄',
+    text: '📝',
+  };
+  return map[kind.value] || '📄';
+});
 </script>
 
 <template>

@@ -1,11 +1,24 @@
-<script setup>
-import { fmtSize, fmtDate, fileKind, kindIcon, kindColor, canPreview } from '../utils'
-import UploadZone from './UploadZone.vue'
+<script setup lang="ts">
+import { fmtSize, fmtDate, fileKind, kindIcon, kindColor, canPreview } from '../utils';
+import type { FileItem } from '../api';
+import UploadZone from './UploadZone.vue';
 
-defineProps({
-  files: { type: Array, default: () => [] },
-})
-const emit = defineEmits(['changed', 'preview', 'rename', 'delete', 'share', 'similar'])
+interface Props {
+  files?: FileItem[];
+}
+
+withDefaults(defineProps<Props>(), {
+  files: () => [],
+});
+
+const emit = defineEmits<{
+  (e: 'changed'): void;
+  (e: 'preview', file: FileItem): void;
+  (e: 'rename', file: FileItem): void;
+  (e: 'delete', file: FileItem): void;
+  (e: 'share', file: FileItem): void;
+  (e: 'similar', query: string): void;
+}>();
 </script>
 
 <template>

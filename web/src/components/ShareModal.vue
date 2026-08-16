@@ -1,35 +1,51 @@
-<script setup>
-import { ref } from 'vue'
-import { apiPost } from '../api'
-import { toast } from '../toast'
+<script setup lang="ts">
+import { ref } from 'vue';
+import { apiPost, type FileItem } from '../api';
+import { toast } from '../toast';
 
-const props = defineProps({ file: { type: Object, required: true } })
-const emit = defineEmits(['close'])
-
-const days = ref(7)
-const pwd = ref('')
-const url = ref('')
-const creating = ref(false)
-
-async function create() {
-  creating.value = true
-  try {
-    const fd = new FormData()
-    fd.append('filehash', props.file.filehash)
-    fd.append('days', String(days.value))
-    if (pwd.value) fd.append('password', pwd.value)
-    const d = await apiPost('/file/share', fd)
-    // 有提取码时链接附带 pwd,接收者可直接打开
-    url.value = location.origin + d.url + (pwd.value ? '?pwd=' + encodeURIComponent(pwd.value) : '')
-    toast('分享成功', 'ok')
-  } catch (e) { toast(e.message, 'err') } finally { creating.value = false }
+interface Props {
+  file: FileItem;
 }
 
-async function copy() {
+const props = defineProps<Props>();
+const emit = defineEmits<{
+  (e: 'close'): void;
+}>();
+
+const days = ref<number>(7);
+const pwd = ref<string>('');
+const url = ref<string>('');
+const creating = ref<boolean>(false);
+
+async function create(): Promise<void> {
+  creating.value = true;
   try {
-    await navigator.clipboard.writeText(url.value)
-    toast('链接已复制', 'ok')
-  } catch { toast('复制失败，请手动选择复制', 'warn') }
+    const fd = new FormData();
+    fd.append('filehash', props.file.filehash);
+    fd.append('days', String(days.value));
+    if (pwd.value) fd.append('password', pwd.value);
+    const d = await apiPost<{ url: string }>('/file/share', fd);
+    // 有提取码时链接附带 pwd,接收者可直接打开
+    url.value = location.origin + d.url + (pwd.value ? '?pwd=' + encodeURIComponent(pwd.value) : '');
+    toast('分享成功', 'ok');
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  } finally {
+    creating.value = false;
+  }
+}
+
+async function copy(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(url.value);
+    toast('链接已复制', 'ok');
+  } catch {
+    toast('复制失败，请手动选择复制', 'warn');
+  }
+}
+
+function onInputClick(e: MouseEvent): void {
+  (e.target as HTMLInputElement | null)?.select();
 }
 </script>
 
@@ -46,7 +62,7 @@ async function copy() {
         <input v-model="pwd" placeholder="可选，建议 8 位以上" maxlength="32">
       </div>
       <div v-if="url" class="share-result">
-        <input :value="url" readonly @click="$event.target.select()">
+        <input :value="url" readonly @click="onInputClick">
         <button class="btn btn-primary btn-sm" @click="copy">复制</button>
       </div>
       <div class="modal-ft">

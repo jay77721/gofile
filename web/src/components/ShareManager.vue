@@ -1,36 +1,54 @@
-<script setup>
-import { ref } from 'vue'
-import { apiPost } from '../api'
-import { toast } from '../toast'
-import { fmtDate } from '../utils'
+<script setup lang="ts">
+import { ref } from 'vue';
+import { apiPost, type ShareItem } from '../api';
+import { toast } from '../toast';
+import { fmtDate } from '../utils';
 
-const props = defineProps({ shares: { type: Array, default: () => [] } })
-const emit = defineEmits(['changed'])
-
-const revokeTarget = ref(null)
-
-function shareURL(s) { return location.origin + '/share/' + s.ShareToken }
-
-async function copy(s) {
-  try {
-    await navigator.clipboard.writeText(shareURL(s))
-    toast(s.HasPassword ? '链接已复制（该分享设有提取码，请另行告知对方）' : '链接已复制', 'ok')
-  } catch { toast('复制失败，请手动复制', 'warn') }
+interface Props {
+  shares?: ShareItem[];
 }
 
-function open(s) {
-  if (s.HasPassword) { toast('该分享设有提取码，请使用创建时的链接或告知提取码', 'warn'); return }
-  window.open(shareURL(s), '_blank')
+withDefaults(defineProps<Props>(), {
+  shares: () => [],
+});
+
+const emit = defineEmits<{
+  (e: 'changed'): void;
+}>();
+
+const revokeTarget = ref<ShareItem | null>(null);
+
+function shareURL(s: ShareItem): string {
+  return location.origin + '/share/' + s.ShareToken;
 }
 
-async function revoke() {
-  if (!revokeTarget.value) return
+async function copy(s: ShareItem): Promise<void> {
   try {
-    await apiPost('/file/share/revoke', { share_token: revokeTarget.value.ShareToken })
-    toast('已撤销', 'ok')
-    emit('changed')
-  } catch (e) { toast(e.message, 'err') }
-  revokeTarget.value = null
+    await navigator.clipboard.writeText(shareURL(s));
+    toast(s.HasPassword ? '链接已复制（该分享设有提取码，请另行告知对方）' : '链接已复制', 'ok');
+  } catch {
+    toast('复制失败，请手动复制', 'warn');
+  }
+}
+
+function open(s: ShareItem): void {
+  if (s.HasPassword) {
+    toast('该分享设有提取码，请使用创建时的链接或告知提取码', 'warn');
+    return;
+  }
+  window.open(shareURL(s), '_blank');
+}
+
+async function revoke(): Promise<void> {
+  if (!revokeTarget.value) return;
+  try {
+    await apiPost('/file/share/revoke', { share_token: revokeTarget.value.ShareToken });
+    toast('已撤销', 'ok');
+    emit('changed');
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  }
+  revokeTarget.value = null;
 }
 </script>
 

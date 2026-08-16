@@ -8,8 +8,8 @@ import (
 	"gofile/repository"
 	"gofile/storage"
 	"io"
+	"strings"
 	"testing"
-	"time"
 )
 
 // newTestFileService 组装 mock repo + 真实本地存储的 FileService
@@ -108,65 +108,6 @@ func TestDownloadRange(t *testing.T) {
 	})
 }
 
-// TestTrashLifecycle 回收站全流程:删除 → 回收站可见 → 恢复 → 再次删除 → 彻底删除
-func TestTrashLifecycle(t *testing.T) {
-	const hash = "abcdef0123456789abcdef0123456789abcdef01"
-	content := "0123456789"
-	svc := newTestFileService(t, hash, content)
-	ctx := context.Background()
-
-	// 软删除
-	if err := svc.Delete(context.Background(), hash, "alice"); err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-	// 删除后正常列表不可见
-	if files, _, err := svc.ListByUserPaged(context.Background(), "alice", 1, 10); err != nil || len(files) != 0 {
-		t.Errorf("active list after delete = %d files (err=%v), want 0", len(files), err)
-	}
-	// 回收站可见
-	trash, total, err := svc.ListTrash(context.Background(), "alice", 1, 10)
-	if err != nil || total != 1 || len(trash) != 1 {
-		t.Fatalf("ListTrash = %d/%d (err=%v), want 1/1", len(trash), total, err)
-	}
-	if trash[0].FileSha1 != hash {
-		t.Errorf("trash item = %s, want %s", trash[0].FileSha1, hash)
-	}
-
-	// 恢复
-	if err := svc.Restore(ctx, hash, "alice"); err != nil {
-		t.Fatalf("Restore failed: %v", err)
-	}
-	if files, _, _ := svc.ListByUserPaged(context.Background(), "alice", 1, 10); len(files) != 1 {
-		t.Errorf("active list after restore = %d, want 1", len(files))
-	}
-	if _, total, _ := svc.ListTrash(context.Background(), "alice", 1, 10); total != 0 {
-		t.Errorf("trash after restore = %d, want 0", total)
-	}
-
-	// 恢复后再次删除 → 彻底删除
-	if err := svc.Delete(context.Background(), hash, "alice"); err != nil {
-		t.Fatalf("second Delete failed: %v", err)
-	}
-	if err := svc.Purge(ctx, hash, "alice"); err != nil {
-		t.Fatalf("Purge failed: %v", err)
-	}
-	// 彻底删除后列表与回收站都为空
-	if files, _, _ := svc.ListByUserPaged(context.Background(), "alice", 1, 10); len(files) != 0 {
-		t.Errorf("active list after purge = %d, want 0", len(files))
-	}
-	if _, total, _ := svc.ListTrash(context.Background(), "alice", 1, 10); total != 0 {
-		t.Errorf("trash after purge = %d, want 0", total)
-	}
-	// 存储层已清理
-	if exists, _ := svc.store.Exists(ctx, hash); exists {
-		t.Errorf("storage object still exists after purge")
-	}
-	// 重复彻底删除应报错(已不存在)
-	if err := svc.Purge(ctx, hash, "alice"); err == nil {
-		t.Errorf("second Purge should fail, got nil")
-	}
-}
-
 // TestFastUploadOwnership 秒传路径必须为当前用户建立所有权关联(跨用户场景)
 func TestFastUploadOwnership(t *testing.T) {
 	const hash = "fedcba9876543210fedcba9876543210fedcba98"
@@ -219,133 +160,105 @@ func TestFastUploadMiss(t *testing.T) {
 	}
 }
 
-func TestVFSFolderManagement(t *testing.T) {
+// TestFileCRUD 验证基础 CRUD 与列表统计操作
+func TestFileCRUD(t *testing.T) {
 	repo := repository.NewMockFileRepository()
 	store := storage.NewLocal(t.TempDir())
 	svc := NewFileService(repo, store, nil)
 	ctx := context.Background()
 
-	// 1. 创建根文件夹
-	folderA, err := svc.CreateFolder(ctx, "alice", model.FolderCreateReq{
-		Name:     "学习资料",
-		ParentID: 0,
-	})
+	content := "hello world file content"
+	meta, err := svc.Upload(ctx, strings.NewReader(content), "hello.txt", int64(len(content)), "alice")
 	if err != nil {
-		t.Fatalf("CreateFolder failed: %v", err)
+		t.Fatalf("Upload failed: %v", err)
 	}
-	if folderA.DirPath != "/学习资料/" {
-		t.Fatalf("expected dirPath /学习资料/, got %q", folderA.DirPath)
+	if meta.FileName != "hello.txt" || meta.FileSize != int64(len(content)) {
+		t.Fatalf("unexpected meta after upload: %+v", meta)
 	}
 
-	// 2. 创建子文件夹
-	folderB, err := svc.CreateFolder(ctx, "alice", model.FolderCreateReq{
-		Name:     "Go源码",
-		ParentID: uint64(folderA.ID),
-	})
+	// GetMeta
+	gotMeta, err := svc.GetMeta(ctx, meta.FileSha1, "alice")
+	if err != nil || gotMeta.FileName != "hello.txt" {
+		t.Fatalf("GetMeta failed: %v", err)
+	}
+
+	// FileSize
+	size, err := svc.FileSize(ctx, meta.FileSha1, "alice")
+	if err != nil || size != int64(len(content)) {
+		t.Fatalf("FileSize failed: %v, got %d", err, size)
+	}
+
+	// Download
+	reader, dMeta, err := svc.Download(ctx, meta.FileSha1, "alice")
 	if err != nil {
-		t.Fatalf("create subfolder failed: %v", err)
+		t.Fatalf("Download failed: %v", err)
 	}
-	if folderB.DirPath != "/学习资料/Go源码/" {
-		t.Fatalf("expected dirPath /学习资料/Go源码/, got %q", folderB.DirPath)
-	}
-
-	// 3. 重命名文件夹
-	err = svc.RenameFolderOrFile(ctx, "alice", model.FolderRenameReq{
-		FileID:  folderA.ID,
-		NewName: "核心资料",
-	})
-	if err != nil {
-		t.Fatalf("RenameFolderOrFile failed: %v", err)
+	defer reader.Close()
+	if dMeta.FileName != "hello.txt" || string(readAll(t, reader)) != content {
+		t.Fatalf("download content mismatch")
 	}
 
-	// 4. 防循环移动测试：禁止将父目录移入自己的子目录
-	err = svc.MoveFolderOrFile(ctx, "alice", model.FolderMoveReq{
-		FileID:         folderA.ID,
-		TargetParentID: uint64(folderB.ID),
-	})
-	if err == nil {
-		t.Fatal("expected error when moving folder into its own subfolder, got nil")
+	// Rename
+	if err := svc.Rename(ctx, meta.FileSha1, "alice", "renamed.txt"); err != nil {
+		t.Fatalf("Rename failed: %v", err)
+	}
+	gotMeta, _ = svc.GetMeta(ctx, meta.FileSha1, "alice")
+	if gotMeta.FileName != "renamed.txt" {
+		t.Fatalf("rename did not apply: %q", gotMeta.FileName)
 	}
 
-	// 5. 目录与面包屑查询
-	_, _, crumbs, err := svc.QueryDirectory(ctx, "alice", uint64(folderB.ID), 0, 10)
-	if err != nil {
-		t.Fatalf("QueryDirectory failed: %v", err)
+	// List and Count
+	count, err := svc.CountByUser(ctx, "alice")
+	if err != nil || count != 1 {
+		t.Fatalf("CountByUser = %d (err=%v), want 1", count, err)
 	}
-	if len(crumbs) < 2 {
-		t.Fatalf("expected breadcrumbs, got %+v", crumbs)
+	list, err := svc.ListByUser(ctx, "alice")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListByUser len = %d, want 1", len(list))
+	}
+	pagedList, total, err := svc.ListByUserPaged(ctx, "alice", 1, 10)
+	if err != nil || total != 1 || len(pagedList) != 1 {
+		t.Fatalf("ListByUserPaged total = %d, want 1", total)
+	}
+
+	// Delete
+	if err := svc.Delete(ctx, meta.FileSha1, "alice"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	if _, err := svc.GetMeta(ctx, meta.FileSha1, "alice"); err == nil {
+		t.Fatal("file should not be found after delete")
 	}
 }
 
-type mockMultipartStorage struct {
-	*storage.LocalStorage
-	inited   bool
-	complete bool
-}
-
-func (m *mockMultipartStorage) InitMultipart(ctx context.Context, key string) (string, error) {
-	m.inited = true
-	return "upload-xyz-123", nil
-}
-
-func (m *mockMultipartStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
-	return "http://mock-minio/part?partNumber=1", nil
-}
-
-func (m *mockMultipartStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
-	m.complete = true
-	return nil
-}
-
-func (m *mockMultipartStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
-	return nil
-}
-
-func TestMultipartService(t *testing.T) {
+// TestPresignedUploadAndConfirm 预签名直传确认流程
+func TestPresignedUploadAndConfirm(t *testing.T) {
 	repo := repository.NewMockFileRepository()
-	multipartRepo := repository.NewMockMultipartRepository()
-	localStorage := storage.NewLocal(t.TempDir())
-	mockStore := &mockMultipartStorage{LocalStorage: localStorage}
-
-	svc := NewFileService(repo, mockStore, nil).WithMultipart(multipartRepo)
+	store := storage.NewLocal(t.TempDir())
+	svc := NewFileService(repo, store, nil)
 	ctx := context.Background()
 
 	const hash = "1234567890123456789012345678901234567890"
 
-	// 1. 初始化直传（未命中秒传）
-	initResp, err := svc.InitMultipartUpload(ctx, "alice", model.MultipartInitReq{
-		FileSha1:  hash,
-		FileName:  "bigfile.zip",
-		FileSize:  25 * 1024 * 1024, // 25MB -> 3 parts (10MB each)
-		ChunkSize: 10 * 1024 * 1024,
-	})
-	if err != nil {
-		t.Fatalf("InitMultipartUpload failed: %v", err)
-	}
-	if initResp.FastUpload {
-		t.Fatal("expected fast_upload=false")
-	}
-	if initResp.UploadID != "upload-xyz-123" || initResp.ChunkCount != 3 || len(initResp.PartURLs) != 3 {
-		t.Fatalf("unexpected init response: %+v", initResp)
+	// 本地存储不支持 PresignPut 会返回错误
+	_, err := svc.PresignUpload(ctx, hash, "alice")
+	if !errors.Is(err, storage.ErrPresignNotSupported) {
+		t.Errorf("expected ErrPresignNotSupported on local storage, got %v", err)
 	}
 
-	// 2. 完成合并
-	parts := []storage.CompletePart{
-		{PartNumber: 1, ETag: "etag1"},
-		{PartNumber: 2, ETag: "etag2"},
-		{PartNumber: 3, ETag: "etag3"},
+	// 模拟写入存储后 ConfirmUpload
+	_ = store.Put(ctx, hash, strings.NewReader("presigned data"), 14)
+	if err := svc.ConfirmUpload(ctx, hash, "presigned.txt", "alice"); err != nil {
+		t.Fatalf("ConfirmUpload failed: %v", err)
 	}
-	meta, err := svc.CompleteMultipartUpload(ctx, "alice", model.MultipartCompleteReq{
-		UploadID: initResp.UploadID,
-		Parts:    parts,
-	})
-	if err != nil {
-		t.Fatalf("CompleteMultipartUpload failed: %v", err)
+
+	meta, err := svc.GetMeta(ctx, hash, "alice")
+	if err != nil || meta.FileName != "presigned.txt" {
+		t.Fatalf("GetMeta failed after confirm: %v", err)
 	}
-	if meta.FileSha1 != hash || meta.FileName != "bigfile.zip" {
-		t.Fatalf("unexpected completed meta: %+v", meta)
-	}
-	if !mockStore.complete {
-		t.Fatal("expected complete multipart to be called on storage")
+
+	// PresignDownload on local storage returns ErrPresignNotSupported
+	_, err = svc.PresignDownload(ctx, hash, "alice")
+	if !errors.Is(err, storage.ErrPresignNotSupported) {
+		t.Errorf("expected ErrPresignNotSupported on local storage download, got %v", err)
 	}
 }

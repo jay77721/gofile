@@ -1,22 +1,43 @@
-<script setup>
-import { computed } from 'vue'
-import { apiPost, session } from '../api'
+<script setup lang="ts">
+import { computed } from 'vue';
+import { apiPost, session } from '../api';
 
-const props = defineProps({ view: { type: String, default: 'files' } })
-const emit = defineEmits(['navigate', 'logout', 'settings'])
+interface Props {
+  view?: string;
+}
 
-const navs = [
+withDefaults(defineProps<Props>(), {
+  view: 'files',
+});
+
+const emit = defineEmits<{
+  (e: 'navigate', key: string): void;
+  (e: 'logout'): void;
+  (e: 'settings'): void;
+}>();
+
+interface NavItem {
+  key: string;
+  label: string;
+  icon: string;
+}
+
+const navs: NavItem[] = [
   { key: 'files', label: '我的文件', icon: 'M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
   { key: 'search', label: 'AI 搜索', icon: 'M21 21l-4.35-4.35M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z' },
   { key: 'trash', label: '回收站', icon: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z' },
   { key: 'shares', label: '我的分享', icon: 'M10 14a5 5 0 0 0 7.07 0l3.54-3.54a5 5 0 0 0-7.07-7.07L11.8 4.91M14 10a5 5 0 0 0-7.07 0L3.39 13.54a5 5 0 0 0 7.07 7.07l1.74-1.74' },
-]
+];
 
-const avatar = computed(() => (session.username || '?').charAt(0).toUpperCase())
+const avatar = computed<string>(() => (session.username || '?').charAt(0).toUpperCase());
 
-async function doLogout() {
-  try { await apiPost('/user/logout', {}) } catch { /* 幂等,失败也继续清本地状态 */ }
-  emit('logout')
+async function doLogout(): Promise<void> {
+  try {
+    await apiPost('/user/logout', {});
+  } catch {
+    /* 幂等,失败也继续清本地状态 */
+  }
+  emit('logout');
 }
 </script>
 

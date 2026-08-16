@@ -1,26 +1,38 @@
-<script setup>
-import { ref } from 'vue'
-import { apiPost } from '../api'
-import { toast } from '../toast'
+<script setup lang="ts">
+import { ref } from 'vue';
+import { apiPost, type FileItem } from '../api';
+import { toast } from '../toast';
 
-const props = defineProps({
-  file: { type: Object, required: true },
+interface Props {
+  file: FileItem;
   // delete = 软删除(进回收站);purge = 彻底删除
-  kind: { type: String, default: 'delete' },
-})
-const emit = defineEmits(['close', 'done'])
+  kind?: 'delete' | 'purge' | string;
+}
 
-const loading = ref(false)
+const props = withDefaults(defineProps<Props>(), {
+  kind: 'delete',
+});
 
-const isPurge = props.kind === 'purge'
+const emit = defineEmits<{
+  (e: 'close'): void;
+  (e: 'done'): void;
+}>();
 
-async function confirm() {
-  loading.value = true
+const loading = ref<boolean>(false);
+
+const isPurge = props.kind === 'purge';
+
+async function confirm(): Promise<void> {
+  loading.value = true;
   try {
-    await apiPost(isPurge ? '/file/purge' : '/file/delete', { filehash: props.file.filehash })
-    toast(isPurge ? '已彻底删除' : '已移入回收站', 'ok')
-    emit('done')
-  } catch (e) { toast(e.message, 'err') } finally { loading.value = false }
+    await apiPost(isPurge ? '/file/purge' : '/file/delete', { filehash: props.file.filehash });
+    toast(isPurge ? '已彻底删除' : '已移入回收站', 'ok');
+    emit('done');
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 

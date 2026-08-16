@@ -1,79 +1,91 @@
-<script setup>
+<script setup lang="ts">
 // AI 设置:自定义 OpenAI 协议 baseURL + API key(每用户,保存后即刻生效)
-import { ref, onMounted } from 'vue'
-import { api, apiJSON } from '../api'
-import { toast } from '../toast'
+import { ref, onMounted } from 'vue';
+import { api, apiJSON, type AIConfigData, type AITestResult } from '../api';
+import { toast } from '../toast';
 
-const emit = defineEmits(['close', 'saved'])
+const emit = defineEmits<{
+  (e: 'close'): void;
+  (e: 'saved'): void;
+}>();
 
-const loading = ref(false)
-const testing = ref(false)
-const saving = ref(false)
+const testing = ref<boolean>(false);
+const saving = ref<boolean>(false);
 
-const configured = ref(false)
-const baseURL = ref('')
-const apiKey = ref('')       // 输入框:空 = 保留旧 key
-const apiKeyMask = ref('')   // 已保存 key 的掩码(仅展示)
-const hasKey = ref(false)
-const model = ref('')
-const embedModel = ref('')
+const configured = ref<boolean>(false);
+const baseURL = ref<string>('');
+const apiKey = ref<string>(''); // 输入框:空 = 保留旧 key
+const apiKeyMask = ref<string>(''); // 已保存 key 的掩码(仅展示)
+const hasKey = ref<boolean>(false);
+const model = ref<string>('');
+const embedModel = ref<string>('');
 
-const testResult = ref(null) // { ok, chat_ok, embed_ok, dim, dim_mismatch, error }
+const testResult = ref<AITestResult | null>(null); // { ok, chat_ok, embed_ok, dim, dim_mismatch, error }
 
-async function load() {
+async function load(): Promise<void> {
   try {
-    const d = await api('/ai/config')
-    configured.value = !!d.configured
-    baseURL.value = d.base_url || ''
-    model.value = d.model || ''
-    embedModel.value = d.embed_model || ''
-    hasKey.value = !!d.has_key
-    apiKeyMask.value = d.api_key_mask || ''
-    apiKey.value = ''
-    testResult.value = null
-  } catch (e) { toast(e.message, 'err') }
+    const d = await api<AIConfigData>('/ai/config');
+    configured.value = !!d.configured;
+    baseURL.value = d.base_url || '';
+    model.value = d.model || '';
+    embedModel.value = d.embed_model || '';
+    hasKey.value = !!d.has_key;
+    apiKeyMask.value = d.api_key_mask || '';
+    apiKey.value = '';
+    testResult.value = null;
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  }
 }
 
-onMounted(load)
+onMounted(load);
 
-async function testConn() {
-  testing.value = true
-  testResult.value = null
+async function testConn(): Promise<void> {
+  testing.value = true;
+  testResult.value = null;
   try {
-    testResult.value = await apiJSON('/ai/config/test', 'POST', {
+    testResult.value = await apiJSON<AITestResult>('/ai/config/test', 'POST', {
       base_url: baseURL.value.trim(),
       api_key: apiKey.value.trim() || (hasKey.value ? 'sk-keep-existing' : ''),
       model: model.value.trim(),
       embed_model: embedModel.value.trim(),
-    })
-  } catch (e) { toast(e.message, 'err') }
-  finally { testing.value = false }
+    });
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  } finally {
+    testing.value = false;
+  }
 }
 
-async function save() {
-  saving.value = true
+async function save(): Promise<void> {
+  saving.value = true;
   try {
-    await apiJSON('/ai/config', 'POST', {
+    await apiJSON<void>('/ai/config', 'POST', {
       base_url: baseURL.value.trim(),
       api_key: apiKey.value.trim(), // 空 = 保留旧 key
       model: model.value.trim(),
       embed_model: embedModel.value.trim(),
-    })
-    toast('已保存，配置即刻生效')
-    emit('saved')
-    await load()
-  } catch (e) { toast(e.message, 'err') }
-  finally { saving.value = false }
+    });
+    toast('已保存，配置即刻生效');
+    emit('saved');
+    await load();
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  } finally {
+    saving.value = false;
+  }
 }
 
-async function clearConfig() {
-  if (!confirm('清除后回退系统默认配置（未配置时为演示模式），确定？')) return
+async function clearConfig(): Promise<void> {
+  if (!confirm('清除后回退系统默认配置（未配置时为演示模式），确定？')) return;
   try {
-    await apiJSON('/ai/config', 'DELETE')
-    toast('已清除')
-    emit('saved')
-    await load()
-  } catch (e) { toast(e.message, 'err') }
+    await apiJSON<void>('/ai/config', 'DELETE');
+    toast('已清除');
+    emit('saved');
+    await load();
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  }
 }
 </script>
 

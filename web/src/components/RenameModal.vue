@@ -1,33 +1,43 @@
-<script setup>
-import { ref, nextTick, onMounted } from 'vue'
-import { apiPost } from '../api'
-import { toast } from '../toast'
+<script setup lang="ts">
+import { ref, nextTick, onMounted } from 'vue';
+import { apiPost, type FileItem } from '../api';
+import { toast } from '../toast';
 
-const props = defineProps({ file: { type: Object, required: true } })
-const emit = defineEmits(['close', 'done'])
+interface Props {
+  file: FileItem;
+}
 
-const name = ref('')
-const loading = ref(false)
+const props = defineProps<Props>();
+const emit = defineEmits<{
+  (e: 'close'): void;
+  (e: 'done'): void;
+}>();
+
+const name = ref<string>('');
+const loading = ref<boolean>(false);
+const inputEl = ref<HTMLInputElement | null>(null);
 
 onMounted(() => {
-  const idx = props.file.filename.lastIndexOf('.')
-  name.value = idx > 0 ? props.file.filename.slice(0, idx) : props.file.filename
-  nextTick(() => inputEl.value?.focus())
-})
+  const idx = props.file.filename.lastIndexOf('.');
+  name.value = idx > 0 ? props.file.filename.slice(0, idx) : props.file.filename;
+  nextTick(() => inputEl.value?.focus());
+});
 
-const inputEl = ref(null)
-
-async function confirm() {
-  const base = name.value.trim()
-  if (!base) return
-  const idx = props.file.filename.lastIndexOf('.')
-  const full = base + (idx > 0 ? props.file.filename.slice(idx) : '')
-  loading.value = true
+async function confirm(): Promise<void> {
+  const base = name.value.trim();
+  if (!base) return;
+  const idx = props.file.filename.lastIndexOf('.');
+  const full = base + (idx > 0 ? props.file.filename.slice(idx) : '');
+  loading.value = true;
   try {
-    await apiPost('/file/update', { op: '0', filehash: props.file.filehash, filename: full })
-    toast('已重命名', 'ok')
-    emit('done')
-  } catch (e) { toast(e.message, 'err') } finally { loading.value = false }
+    await apiPost('/file/update', { op: '0', filehash: props.file.filehash, filename: full });
+    toast('已重命名', 'ok');
+    emit('done');
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 

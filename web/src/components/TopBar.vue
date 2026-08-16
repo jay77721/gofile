@@ -1,15 +1,17 @@
-<script setup>
-import { ref } from 'vue'
+<script setup lang="ts">
+import { ref } from 'vue';
 
-const emit = defineEmits(['search'])
+const emit = defineEmits<{
+  (e: 'search', text: string): void;
+}>();
 
-const q = ref('')
+const q = ref<string>('');
 
-function submit() {
-  const text = q.value.trim()
-  if (!text) return
-  emit('search', text)
-  q.value = ''
+function submit(): void {
+  const text = q.value.trim();
+  if (!text) return;
+  emit('search', text);
+  q.value = '';
 }
 </script>
 

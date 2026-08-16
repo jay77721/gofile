@@ -1,74 +1,98 @@
-<script setup>
-import { ref, onMounted } from 'vue'
-import { api, session } from './api'
-import { toast } from './toast'
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { api, session, type FileItem, type ShareItem, type UserInfo, type PagedList } from './api';
+import { toast } from './toast';
 
-import Sidebar from './components/Sidebar.vue'
-import TopBar from './components/TopBar.vue'
-import AuthView from './components/AuthView.vue'
-import FileListView from './components/FileListView.vue'
-import TrashView from './components/TrashView.vue'
-import SearchPanel from './components/SearchPanel.vue'
-import ShareManager from './components/ShareManager.vue'
-import PreviewModal from './components/PreviewModal.vue'
-import RenameModal from './components/RenameModal.vue'
-import ConfirmModal from './components/ConfirmModal.vue'
-import ShareModal from './components/ShareModal.vue'
-import AISettingsModal from './components/AISettingsModal.vue'
-import ToastHost from './components/Toast.vue'
+import Sidebar from './components/Sidebar.vue';
+import TopBar from './components/TopBar.vue';
+import AuthView from './components/AuthView.vue';
+import FileListView from './components/FileListView.vue';
+import TrashView from './components/TrashView.vue';
+import SearchPanel from './components/SearchPanel.vue';
+import ShareManager from './components/ShareManager.vue';
+import PreviewModal from './components/PreviewModal.vue';
+import RenameModal from './components/RenameModal.vue';
+import ConfirmModal from './components/ConfirmModal.vue';
+import ShareModal from './components/ShareModal.vue';
+import AISettingsModal from './components/AISettingsModal.vue';
+import ToastHost from './components/Toast.vue';
 
 // ---- 视图状态机:files | trash | search | shares ----
-const authed = ref(false)
-const view = ref('files')
+const authed = ref<boolean>(false);
+const view = ref<string>('files');
 
 // ---- 数据 ----
-const files = ref([])
-const trash = ref([])
-const shares = ref([])
+const files = ref<FileItem[]>([]);
+const trash = ref<FileItem[]>([]);
+const shares = ref<ShareItem[]>([]);
 
 // ---- 全局操作目标 ----
-const previewTarget = ref(null)
-const renameTarget = ref(null)
-const deleteTarget = ref(null)
-const shareTarget = ref(null)
-const aiSettingsOpen = ref(false)
+const previewTarget = ref<FileItem | null>(null);
+const renameTarget = ref<FileItem | null>(null);
+const deleteTarget = ref<FileItem | null>(null);
+const shareTarget = ref<FileItem | null>(null);
+const aiSettingsOpen = ref<boolean>(false);
 
 // ---- 搜索 ----
-const searchQuery = ref('')
+const searchQuery = ref<string>('');
 
-async function loadFiles() {
-  try { files.value = (await api('/file/query')) || [] } catch (e) { toast(e.message, 'err') }
+async function loadFiles(): Promise<void> {
+  try {
+    const d = await api<FileItem[]>('/file/query');
+    files.value = d || [];
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  }
 }
-async function loadTrash() {
-  try { const d = await api('/file/trash?page=1&size=100'); trash.value = d?.list || [] } catch (e) { toast(e.message, 'err') }
+async function loadTrash(): Promise<void> {
+  try {
+    const d = await api<PagedList<FileItem>>('/file/trash?page=1&size=100');
+    trash.value = d?.list || [];
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  }
 }
-async function loadShares() {
-  try { shares.value = (await api('/file/share/list')) || [] } catch (e) { toast(e.message, 'err') }
+async function loadShares(): Promise<void> {
+  try {
+    const d = await api<ShareItem[]>('/file/share/list');
+    shares.value = d || [];
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  }
 }
 
-function switchView(v) {
-  view.value = v
-  if (v === 'trash') loadTrash()
-  if (v === 'shares') loadShares()
+function switchView(v: string): void {
+  view.value = v;
+  if (v === 'trash') loadTrash();
+  if (v === 'shares') loadShares();
 }
-function doSearch(q) {
-  searchQuery.value = q
-  view.value = 'search'
+function doSearch(q: string): void {
+  searchQuery.value = q;
+  view.value = 'search';
 }
 
 // ---- 子组件事件 ----
-function onFilesChanged() { loadFiles() }
-function onTrashChanged() { loadTrash(); loadFiles() }
-function onSharesChanged() { loadShares() }
+function onFilesChanged(): void {
+  loadFiles();
+}
+function onTrashChanged(): void {
+  loadTrash();
+  loadFiles();
+}
+function onSharesChanged(): void {
+  loadShares();
+}
 
 onMounted(async () => {
   try {
-    const u = await api('/user/info')
-    session.username = u.Username || u.username || ''
-    authed.value = true
-    loadFiles()
-  } catch { /* 未登录,停留在 AuthView */ }
-})
+    const u = await api<UserInfo>('/user/info');
+    session.username = u.Username || u.username || '';
+    authed.value = true;
+    loadFiles();
+  } catch {
+    /* 未登录,停留在 AuthView */
+  }
+});
 </script>
 
 <template>

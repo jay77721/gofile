@@ -1,21 +1,32 @@
-<script setup>
-import { ref } from 'vue'
-import { api, apiPost } from '../api'
-import { toast } from '../toast'
-import { fmtSize, fmtDate } from '../utils'
-import ConfirmModal from './ConfirmModal.vue'
+<script setup lang="ts">
+import { ref } from 'vue';
+import { apiPost, type FileItem } from '../api';
+import { toast } from '../toast';
+import { fmtSize, fmtDate } from '../utils';
+import ConfirmModal from './ConfirmModal.vue';
 
-const props = defineProps({ trash: { type: Array, default: () => [] } })
-const emit = defineEmits(['changed'])
+interface Props {
+  trash?: FileItem[];
+}
 
-const purgeTarget = ref(null)
+withDefaults(defineProps<Props>(), {
+  trash: () => [],
+});
 
-async function restore(f) {
+const emit = defineEmits<{
+  (e: 'changed'): void;
+}>();
+
+const purgeTarget = ref<FileItem | null>(null);
+
+async function restore(f: FileItem): Promise<void> {
   try {
-    await apiPost('/file/restore', { filehash: f.filehash })
-    toast('已恢复', 'ok')
-    emit('changed')
-  } catch (e) { toast(e.message, 'err') }
+    await apiPost('/file/restore', { filehash: f.filehash });
+    toast('已恢复', 'ok');
+    emit('changed');
+  } catch (e) {
+    toast((e as Error).message, 'err');
+  }
 }
 </script>
 
