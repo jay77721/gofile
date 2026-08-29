@@ -1,0 +1,265 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	hashutil "gofile/internal/common/hash"
+	"gofile/internal/domain"
+	"gofile/internal/infrastructure/persistence/repository"
+	"gofile/internal/infrastructure/storage"
+	"io"
+	"strings"
+	"testing"
+)
+
+// newTestFileService 组装 mock repo + 真实本地存储的 FileService
+func newTestFileService(t *testing.T, hash, content string) *FileService {
+	t.Helper()
+	repo := repository.NewMockFileRepository()
+	if err := repo.Create(context.Background(), model.File{FileSha1: hash, FileName: "a.txt", FileSize: int64(len(content))}); err != nil {
+		t.Fatalf("repo.Create failed: %v", err)
+	}
+	if err := repo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
+		t.Fatalf("repo.CreateUserFile failed: %v", err)
+	}
+
+	store := storage.NewLocal(t.TempDir())
+	ctx := context.Background()
+	if err := store.Put(ctx, hash, bytes.NewReader([]byte(content)), int64(len(content))); err != nil {
+		t.Fatalf("store.Put failed: %v", err)
+	}
+	return NewFileService(repo, store, nil)
+}
+
+func readAll(t *testing.T, r io.Reader) []byte {
+	t.Helper()
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	return buf
+}
+
+func TestDownloadRange(t *testing.T) {
+	const hash = "abcdef0123456789abcdef0123456789abcdef01"
+	content := "0123456789" // 10 字节
+	svc := newTestFileService(t, hash, content)
+	ctx := context.Background()
+
+	t.Run("closed range", func(t *testing.T) {
+		r, _, total, actualLen, err := svc.DownloadRange(ctx, hash, "alice", 2, 4)
+		if err != nil {
+			t.Fatalf("DownloadRange failed: %v", err)
+		}
+		defer r.Close()
+		if total != 10 || actualLen != 4 {
+			t.Errorf("total/len = %d/%d, want 10/4", total, actualLen)
+		}
+		if got := string(readAll(t, r)); got != "2345" {
+			t.Errorf("body = %q, want %q", got, "2345")
+		}
+	})
+
+	t.Run("open range fills to EOF", func(t *testing.T) {
+		r, _, total, actualLen, err := svc.DownloadRange(ctx, hash, "alice", 7, -1)
+		if err != nil {
+			t.Fatalf("DownloadRange failed: %v", err)
+		}
+		defer r.Close()
+		if total != 10 || actualLen != 3 {
+			t.Errorf("total/len = %d/%d, want 10/3", total, actualLen)
+		}
+		if got := string(readAll(t, r)); got != "789" {
+			t.Errorf("body = %q, want %q", got, "789")
+		}
+	})
+
+	t.Run("overlong length is clamped", func(t *testing.T) {
+		r, _, _, actualLen, err := svc.DownloadRange(ctx, hash, "alice", 5, 1000)
+		if err != nil {
+			t.Fatalf("DownloadRange failed: %v", err)
+		}
+		defer r.Close()
+		if actualLen != 5 {
+			t.Errorf("len = %d, want 5 (clamped)", actualLen)
+		}
+		if got := string(readAll(t, r)); got != "56789" {
+			t.Errorf("body = %q, want %q", got, "56789")
+		}
+	})
+
+	t.Run("offset beyond EOF returns ErrRangeOutOfBounds", func(t *testing.T) {
+		r, _, total, _, err := svc.DownloadRange(ctx, hash, "alice", 10, 1)
+		if r != nil {
+			r.Close()
+		}
+		if !errors.Is(err, ErrRangeOutOfBounds) {
+			t.Errorf("err = %v, want ErrRangeOutOfBounds", err)
+		}
+		if total != 10 {
+			t.Errorf("total = %d, want 10 (用于 416 Content-Range)", total)
+		}
+	})
+
+	t.Run("no permission", func(t *testing.T) {
+		if _, _, _, _, err := svc.DownloadRange(ctx, hash, "bob", 0, 5); err == nil {
+			t.Errorf("expected error for unauthorized user, got nil")
+		}
+	})
+}
+
+// TestFastUploadOwnership 秒传路径必须为当前用户建立所有权关联(跨用户场景)
+func TestFastUploadOwnership(t *testing.T) {
+	const hash = "fedcba9876543210fedcba9876543210fedcba98"
+	content := "shared file content"
+	svc := newTestFileService(t, hash, content)
+	ctx := context.Background()
+
+	// 用户 bob 秒传 alice 已上传的文件(存储层已存在,bob 无关联)
+	exists, err := svc.FastUpload(ctx, hash, "bob")
+	if err != nil {
+		t.Fatalf("FastUpload failed: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected exists=true")
+	}
+
+	// bob 现在拥有该文件:可查询、可下载
+	meta, err := svc.GetMeta(context.Background(), hash, "bob")
+	if err != nil {
+		t.Fatalf("bob should own file after fast upload: %v", err)
+	}
+	if meta.FileName != "a.txt" {
+		t.Fatalf("expected filename inherited from global record, got %q", meta.FileName)
+	}
+	rc, _, err := svc.Download(ctx, hash, "bob")
+	if err != nil {
+		t.Fatalf("bob download failed: %v", err)
+	}
+	rc.Close()
+
+	// 幂等:重复秒传不报错
+	if _, err := svc.FastUpload(ctx, hash, "bob"); err != nil {
+		t.Fatalf("second fast upload should be idempotent: %v", err)
+	}
+}
+
+// TestFastUploadMiss 存储层不存在时返回 false,不建关联
+func TestFastUploadMiss(t *testing.T) {
+	const hash = "0000000000000000000000000000000000000000"
+	svc := newTestFileService(t, "abcdef0123456789abcdef0123456789abcdef01", "x")
+	exists, err := svc.FastUpload(context.Background(), hash, "bob")
+	if err != nil {
+		t.Fatalf("FastUpload should not error on miss, got %v", err)
+	}
+	if exists {
+		t.Fatal("expected exists=false for missing file")
+	}
+	if _, err := svc.GetMeta(context.Background(), hash, "bob"); err == nil {
+		t.Fatal("bob should not own a file that was never uploaded")
+	}
+}
+
+// TestFileCRUD 验证基础 CRUD 与列表统计操作
+func TestFileCRUD(t *testing.T) {
+	repo := repository.NewMockFileRepository()
+	store := storage.NewLocal(t.TempDir())
+	svc := NewFileService(repo, store, nil)
+	ctx := context.Background()
+
+	content := "hello world file content"
+	meta, err := svc.Upload(ctx, strings.NewReader(content), "hello.txt", int64(len(content)), "alice")
+	if err != nil {
+		t.Fatalf("Upload failed: %v", err)
+	}
+	if meta.FileName != "hello.txt" || meta.FileSize != int64(len(content)) {
+		t.Fatalf("unexpected meta after upload: %+v", meta)
+	}
+
+	// GetMeta
+	gotMeta, err := svc.GetMeta(ctx, meta.FileSha1, "alice")
+	if err != nil || gotMeta.FileName != "hello.txt" {
+		t.Fatalf("GetMeta failed: %v", err)
+	}
+
+	// FileSize
+	size, err := svc.FileSize(ctx, meta.FileSha1, "alice")
+	if err != nil || size != int64(len(content)) {
+		t.Fatalf("FileSize failed: %v, got %d", err, size)
+	}
+
+	// Download
+	reader, dMeta, err := svc.Download(ctx, meta.FileSha1, "alice")
+	if err != nil {
+		t.Fatalf("Download failed: %v", err)
+	}
+	defer reader.Close()
+	if dMeta.FileName != "hello.txt" || string(readAll(t, reader)) != content {
+		t.Fatalf("download content mismatch")
+	}
+
+	// Rename
+	if err := svc.Rename(ctx, meta.FileSha1, "alice", "renamed.txt"); err != nil {
+		t.Fatalf("Rename failed: %v", err)
+	}
+	gotMeta, _ = svc.GetMeta(ctx, meta.FileSha1, "alice")
+	if gotMeta.FileName != "renamed.txt" {
+		t.Fatalf("rename did not apply: %q", gotMeta.FileName)
+	}
+
+	// List and Count
+	count, err := svc.CountByUser(ctx, "alice")
+	if err != nil || count != 1 {
+		t.Fatalf("CountByUser = %d (err=%v), want 1", count, err)
+	}
+	list, err := svc.ListByUser(ctx, "alice")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListByUser len = %d, want 1", len(list))
+	}
+	pagedList, total, err := svc.ListByUserPaged(ctx, "alice", 1, 10)
+	if err != nil || total != 1 || len(pagedList) != 1 {
+		t.Fatalf("ListByUserPaged total = %d, want 1", total)
+	}
+
+	// Delete
+	if err := svc.Delete(ctx, meta.FileSha1, "alice"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	if _, err := svc.GetMeta(ctx, meta.FileSha1, "alice"); err == nil {
+		t.Fatal("file should not be found after delete")
+	}
+}
+
+// TestPresignedUploadAndConfirm 预签名直传确认流程
+func TestPresignedUploadAndConfirm(t *testing.T) {
+	repo := repository.NewMockFileRepository()
+	store := storage.NewLocal(t.TempDir())
+	svc := NewFileService(repo, store, nil)
+	ctx := context.Background()
+
+	hash := hashutil.Sha1([]byte("presigned data"))
+
+	// 本地存储不支持 PresignPut 会返回错误
+	_, err := svc.PresignUpload(ctx, hash, "alice")
+	if !errors.Is(err, storage.ErrPresignNotSupported) {
+		t.Errorf("expected ErrPresignNotSupported on local storage, got %v", err)
+	}
+
+	// 模拟写入存储后 ConfirmUpload
+	_ = store.Put(ctx, hash, strings.NewReader("presigned data"), 14)
+	if err := svc.ConfirmUpload(ctx, hash, "presigned.txt", "alice"); err != nil {
+		t.Fatalf("ConfirmUpload failed: %v", err)
+	}
+
+	meta, err := svc.GetMeta(ctx, hash, "alice")
+	if err != nil || meta.FileName != "presigned.txt" {
+		t.Fatalf("GetMeta failed after confirm: %v", err)
+	}
+
+	// PresignDownload on local storage returns ErrPresignNotSupported
+	_, err = svc.PresignDownload(ctx, hash, "alice")
+	if !errors.Is(err, storage.ErrPresignNotSupported) {
+		t.Errorf("expected ErrPresignNotSupported on local storage download, got %v", err)
+	}
+}
