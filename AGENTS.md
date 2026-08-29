@@ -1,147 +1,268 @@
 # AGENTS.md
 
-> AI Assistant & Agent Developer Guide (Single Source of Truth)
+This file is the repository-local guide for coding agents working on gofile.
+Higher-level instructions supplied by the user or execution environment take
+precedence. Keep this file aligned with the actual repository; do not document
+planned features as if they were implemented.
 
-## 1. Project Overview & Tech Stack
+## 1. Project at a glance
 
-- **Description:** gofile is a lightweight, high-performance self-hosted cloud storage service with AI semantic search.
-- **Backend:** Go 1.25, Gin 1.12, GORM 1.31 + MySQL (migrations managed via `golang-migrate`)
-- **Storage:** `internal/infrastructure/storage.Storage` interface — MinIO (S3) prioritized, local disk fallback (atomic write)
-- **Cache & Locks:** go-redis v9 (fast-upload cache, distributed locks, rate limiting)
-- **Async Queue:** `hibiken/asynq` (M3 distributed task scheduling; in-memory chan fallback)
-- **AI & Search:** Typesense (hybrid full-text + vector KNN search), LLM Provider (mock/openai/anthropic)
-- **Frontend:** Vue 3 + Vite + TypeScript (`web/`, build output in `web/dist`)
+gofile is a self-hosted, multi-user cloud-file service written in Go. The
+backend provides file upload/download/preview, SHA-1 based physical
+deduplication, virtual folders, recycle-bin lifecycle, sharing, S3 multipart
+upload, AI metadata generation, semantic search, and Prometheus observability.
 
----
+| Area | Implementation |
+|---|---|
+| HTTP | Go 1.25, Gin 1.12 |
+| Persistence | GORM 1.31, MySQL 8, golang-migrate |
+| Object storage | MinIO/S3 with local-disk fallback |
+| Cache and coordination | go-redis v9: dedup cache, locks, rate limiting |
+| Async processing | Asynq over Redis, with an in-process channel fallback |
+| AI/search | Mock, OpenAI-compatible, or Anthropic provider; Typesense hybrid search |
+| Frontend | Vue 3, TypeScript, Vite, Vitest under web/ |
+| Delivery | Multi-stage Docker build, Compose, GitHub Actions |
 
-## 2. Essential Commands
+The supported Go entrypoint is cmd/gofile. There is intentionally no root
+main.go.
 
-### Build & Run
-```bash
-# 1. Frontend Build (Required: /static route serves web/dist)
-cd web && npm ci && npm run build && cd ..
+## 2. Repository layout
 
-# 2. Run Backend (Auto-migrates MySQL schema on start)
-cp .env.example .env
-go run ./cmd/gofile         # Or: go build -o gofile ./cmd/gofile && ./gofile
+    cmd/gofile/                         process entrypoint and signal handling
+    internal/
+      app/                              composition root and lifecycle ownership
+      application/service/              application use cases
+      common/                           hash, crypto, URL and chunk primitives
+      config/                           environment configuration
+      domain/                           domain models and invariants
+      infrastructure/
+        ai/                             providers, extraction and Typesense adapter
+        cache/redis/                    Redis cache, locks and rate limiting
+        persistence/mysql/              SQL connection and migrations
+        persistence/repository/         MySQL/GORM repositories
+        queue/asynq/                    Asynq client, server and task handler
+        storage/                        MinIO/S3 and local storage adapters
+      job/                              cancellable periodic/compensation jobs
+      observability/metrics/            Prometheus metrics and request IDs
+      port/                             application-owned dependency contracts
+      transport/http/                   router, middleware and HTTP handlers
+    docker/                             Dockerfile, Compose and monitoring config
+    docs/                               generated/API documentation
+    migrations/                         versioned database migrations
+    web/                                frontend source and build configuration
 
-# 3. Docker Compose
-docker compose -f docker/docker-compose.yml up -d
-```
+## 3. Commands from the repository root
 
-### Test & Verification (MUST pass before every commit)
-```bash
-# Run all tests with race detector
-go test -race ./...
+### Backend
 
-# Benchmark hash and local-storage paths
-go test ./internal/common/hash -bench . -benchmem -run '^$'
-go test ./internal/infrastructure/storage -bench . -benchmem -run '^$'
-```
+    # Load local configuration if needed
+    cp .env.example .env                 # PowerShell: Copy-Item .env.example .env
 
----
+    # Run the service; startup performs database migration
+    go run ./cmd/gofile
 
-## 3. Core Architecture & Invariants (DO NOT BREAK)
+    # Build the service binary
+    go build -o ./bin/gofile-server ./cmd/gofile
 
-The Go layout uses `cmd/gofile` for the process entrypoint and `internal/` for
-application code. `internal/app` is the composition root; keep the dependency
-direction inward: `internal/transport/http -> internal/application/service ->
-internal/port <- internal/infrastructure`.
+MYSQL_DSN must point to a reachable MySQL instance. Redis, MinIO, Typesense,
+AI, and Asynq are optional according to configuration; the application is
+expected to degrade gracefully when optional dependencies are unavailable.
 
-The main package boundaries are:
+### Frontend
 
-- `internal/domain`: domain models and invariants.
-- `internal/application/service`: application use cases.
-- `internal/transport/http`: router, middleware and HTTP handlers.
-- `internal/infrastructure`: MySQL/Repository, storage, Redis, queue and AI adapters.
-- `internal/job`: background job lifecycle.
-- `internal/common`: shared hash, crypto, URL and chunk primitives.
-- `internal/observability/metrics`: Prometheus and request tracing.
+    npm --prefix web ci
+    npm --prefix web run build
 
-1. **Strict 3-Tier Layered Architecture & Dependency Injection**:
-   - `internal/transport/http → internal/application/service → internal/port`, with concrete adapters under `internal/infrastructure`.
-   - All components instantiated via constructors (`NewXxxService(...)`). **No package-level global variables.**
-   - Optional components (Redis, AI, Typesense, Asynq) must be nil-safe with automatic graceful degradation.
+The HTTP server serves web/dist from /static. Build the frontend before running
+the backend when the checked-out tree does not contain generated assets.
 
-2. **File Ownership Model (Core Invariant)**:
-   - `tbl_file` deduplicates globally by SHA1; `tbl_user_file` tracks user ownership and VFS tree paths.
-   - **EVERY** file operation must verify ownership via `fileRepo.GetByHash(filehash, username)`. Return `1003 Forbidden` on unauthorized access.
+### Verification
 
-3. **Storage & Data Integrity**:
-   - **S3 Multipart Direct Upload**: Clients stream chunks directly to MinIO; server triggers atomic merge on MinIO (zero local disk I/O).
-   - If database insertion fails after storage upload, **MUST** trigger compensatory rollback (`store.Delete(ctx, key)`).
+Run the focused checks relevant to the change, then the complete gate before a
+commit:
 
-4. **VFS (Virtual File System)**:
-   - Uses Materialized Path (`dir_path`, e.g. `/Go/Sources/`) for high-performance subtree queries.
-   - Circular Move Prevention: Moving a folder into its own descendant folder is strictly prohibited.
-   - Folder rename/move updates child paths atomically using SQL `CONCAT` + `SUBSTRING`.
+    go test -count=1 ./...
+    go test -race ./...
+    go vet ./...
+    go build -o ./bin/gofile-server ./cmd/gofile
 
-5. **Asynq Task Scheduling (M3)**:
-   - `ASYNQ_ENABLED=true` persists AI tasks to Redis with worker pool, MaxRetry=3 backoff, and dead-letter queue.
-   - TaskID format is `username:filehash` (idempotent deduplication).
-   - Seamlessly falls back to internal memory channel when Redis is unavailable.
+    # Optional performance checks
+    go test ./internal/common/hash -bench . -benchmem -run '^$'
+    go test ./internal/infrastructure/storage -bench . -benchmem -run '^$'
 
----
+### Docker
 
-## 4. Development & Coding Conventions
+    docker compose -f docker/docker-compose.yml config
+    docker compose -f docker/docker-compose.yml up -d
+    docker compose -f docker/docker-compose.yml ps
+    docker compose -f docker/docker-compose.yml logs -f app
 
-### Git Commit Convention (STRICT: English Only)
-**All Git commit messages MUST be written strictly in English using Conventional Commits**:
-- `feat(scope): add new feature` (e.g. `feat(queue): implement asynq worker pool`)
-- `fix(scope): fix bug` (e.g. `fix(application): trigger ai enqueue on fast upload`)
-- `docs: update documentation` (e.g. `docs: update AGENTS.md template`)
-- `refactor(scope): refactor code without behavior changes`
-- `test(scope): add or update unit/integration tests`
-- `chore/build/ci: build, dependencies, or CI updates`
+    # Build from the repository root; the Dockerfile is under docker/
+    docker build -f docker/Dockerfile -t gofile:local .
 
-### Code Cleanliness & Zero-Redundancy (Keep It Simple)
-- **Idiomatic Go**: Keep code flat, explicit, and direct. Avoid over-engineering and unnecessary wrapper structs.
-- **Single Source of Truth (DRY)**: Never duplicate business logic, validation, or queries across layers.
-- **Explicit Error Handling**: Always check errors explicitly. Use `slog.*Context` with structured metadata (automatically includes `request_id`).
+The image build target is ./cmd/gofile. If the build environment cannot reach
+proxy.golang.org, pass a reachable module proxy, for example:
 
-### Unified Error Codes & Response Format
-- JSON Format: `gin.H{"code": 0|errorCode, "msg": "...", "data": ...}` (`code = 0` on success).
-- Handlers MUST use `respondError(c, httpStatus, code, msg)`.
-- Error codes: `1001` Params / `1002` Unauthorized / `1003` Forbidden / `1004` NotFound / `1005` UserExists / `1006` InvalidCreds / `1007` UploadFailed / `1008` MergeFailed / `1009` StorageError / `1010` TooManyRequests / `1011` SearchFailed / `1099` InternalError.
+    docker build -f docker/Dockerfile \
+      --build-arg GOPROXY=https://goproxy.cn,direct \
+      -t gofile:local .
 
----
+## 4. Architecture and dependency rules
 
-## 5. Boundaries & Prohibitions (What NOT to do)
+The composition root is internal/app. The intended dependency direction is:
 
-- ❌ **DO NOT** modify historical migration files (`migrations/*.sql`) already committed. Add new numbered migrations instead.
-- ❌ **DO NOT** edit auto-generated Swagger artifacts (`docs/docs.go`, `docs/swagger.*`). Run `swag init` instead.
-- ❌ **DO NOT** write user upload files directly to root or untracked temporary paths. Use configured storage providers.
-- ❌ **DO NOT** commit secrets, private keys, or plain credentials. Use environment variables.
+    cmd/gofile
+        -> internal/app
+            -> transport/http, application/service, infrastructure, job
 
----
+    transport/http -> application/service -> port -> domain
+    infrastructure  -> port and domain
+    job             -> port/domain and the concrete AI processor where required
 
-## 6. Key API Endpoints Reference
+Rules:
 
-- **Auth (`/user`)**: `POST /signup`, `POST /signin`, `POST /logout`, `GET /info`
-- **File Core (`/file`)**: `POST /upload`, `GET /meta`, `GET /query` (supports `parent_id` & paging), `GET /download` (Range 206), `POST /update`, `POST /delete`
-- **Recycle Bin (`/file`)**: `GET /trash`, `POST /restore`, `POST /purge`
-- **S3 Multipart (`/file/upload/multipart`)**: `POST /init`, `POST /complete`, `POST /abort`
-- **VFS Folder (`/file/folder`)**: `POST /create`, `POST /rename`, `POST /move`
-- **AI Features (`/file/ai` & `/ai/config`)**: `GET /search`, `GET /similar`, `GET /duplicates`, `GET|POST|DELETE /ai/config`, `POST /ai/config/test`
-- **Share (`/file/share` & `/share/:token`)**: `POST /share`, `GET /share/list`, `POST /share/revoke`, `GET /share/:token?pwd=`
+1. Keep business use cases in internal/application/service; handlers should
+   translate HTTP input/output and must not contain SQL or storage workflows.
+2. New service dependencies must be expressed in internal/port. Concrete
+   repository, Redis, MinIO, Typesense, and Asynq types belong in infrastructure
+   or the composition root.
+3. Existing AI query parsing/provider construction is a compatibility seam in
+   the AI services. Do not add more concrete infrastructure dependencies there;
+   extract a port or application-owned adapter when expanding that area.
+4. internal/app owns construction and shutdown. Constructors should receive
+   dependencies explicitly; do not introduce new mutable package globals.
+5. Optional dependencies must be nil-safe and must not make the core upload,
+   download, metadata, or authentication path unavailable.
+6. Keep domain packages independent of Gin, GORM, Redis, MinIO, Typesense, and
+   other infrastructure libraries.
 
----
+## 5. Non-negotiable business invariants
 
-## 7. Known Issues & Roadmap Status
+### Ownership and deduplication
 
-### Completed
-- [x] P0: Bug fixes + GORM migration
-- [x] P1: Redis fast-upload cache, distributed locks, rate limiting
-- [x] P2: S3 Presigned direct upload & download URLs
-- [x] P3: HTTP Range 206 resumable download & pagination
-- [x] P4: Prometheus metrics & slog request_id tracing
-- [x] P6: Typesense hybrid AI search, NLP query parser, auto-tagging
-- [x] M1: S3 Multipart direct upload & server-side merge (`c9d150f`)
-- [x] M2: VFS tree directory with Materialized Path & circular move checks (`c9d150f`)
-- [x] M3: Asynq distributed task scheduling with dual-path fallback (`50d7309`)
+- tbl_file is the global physical-file record, keyed by SHA-1.
+- tbl_user_file stores the user-facing name, ownership, VFS parent/path, and
+  soft-delete state.
+- Every user file operation must verify the user relationship, normally through
+  fileRepo.GetByHash(ctx, filehash, username) or an equivalent scoped query.
+- Never let a file hash alone bypass ownership checks. Unauthorized access maps
+  to business code 1003.
 
-### Known Issues & Next Milestones
-- 🟡 `web/dist` is not committed: run `npm run build` in `web/` before running server.
-- ⏳ M4: Drive RAG Q&A (document chunking + SSE stream chat).
-- ⏳ M5: WebDAV protocol support (`golang.org/x/net/webdav`).
-- ⏳ P5.2: Unit test coverage push to ≥80%.
+### Storage and consistency
+
+- The database is the metadata source of truth; object storage and Typesense are
+  external/derived systems.
+- If metadata persistence fails after an object upload, perform compensating
+  storage deletion where the workflow permits it.
+- Local storage publishes through a temporary file followed by an atomic rename.
+- S3 multipart uploads validate the upload session, part ordering, ETags/parts,
+  final size, and final SHA-1 before metadata is completed.
+- Do not put upload data in the repository, root temporary paths, or untracked
+  ad-hoc directories. Use configured storage/chunk directories.
+
+### VFS and deletion
+
+- VFS paths use materialized dir_path values for subtree queries.
+- Folder moves must reject self-descendant/circular moves and preserve user
+  ownership and status constraints.
+- Soft delete changes the user relationship state. Physical deletion is allowed
+  only after checking that no active user references remain.
+- Background cleanup must be cancellable and must not close dependencies before
+  all workers have stopped.
+
+### Async AI processing
+
+- AI work is asynchronous and must not block the successful upload response.
+- Asynq is the durable/cross-instance path when enabled; the in-process channel
+  is the explicit fallback and may lose queued work on process restart.
+- Tasks are idempotent by user/file identity and use bounded retry/compensation
+  behavior. Errors must be logged with structured context.
+- AI/Typesense failure falls back to the non-AI file path or LIKE search where
+  that behavior already exists.
+
+## 6. HTTP contract
+
+Successful responses use {"code": 0, "msg": "...", "data": ...}. Handlers
+should use respondError(c, httpStatus, code, msg) for failures. HTTP status
+and business code are intentionally separate.
+
+| Code | Meaning |
+|---:|---|
+| 1001 | Invalid parameters |
+| 1002 | Unauthorized/not logged in |
+| 1003 | Forbidden/not owner |
+| 1004 | Resource not found |
+| 1005 | User already exists |
+| 1006 | Invalid credentials |
+| 1007 | Upload failed |
+| 1008 | Merge failed |
+| 1009 | Storage operation failed |
+| 1010 | Rate limited |
+| 1011 | Search failed |
+| 1099 | Internal error |
+
+Main endpoint groups:
+
+- /user: signup, signin, logout, info
+- /file: upload, metadata, query, download, preview, update, delete
+- /file/trash: list, restore, purge
+- /file/upload/chunk and /file/upload/multipart/*: resumable and S3 uploads
+- /file/folder: create, rename, move
+- /file/share and /share/:token: create, list, revoke, public download
+- /file/ai and /ai/config: semantic search, recommendations, duplicates, and
+  user provider configuration
+- /healthz and /metrics: health and Prometheus endpoints
+
+## 7. Change workflow
+
+1. Start with git status --short and inspect the relevant package/tests.
+   Preserve unrelated user changes, including untracked files.
+2. Define the owning package and keep the write scope narrow. Do not move or
+   delete files merely to make a diff look cleaner.
+3. Use apply_patch for source/document edits. Run gofmt on changed Go files.
+4. Add or update tests for behavior, error paths, cancellation, ownership, and
+   concurrency when relevant. Prefer injected fakes over external services in
+   unit tests.
+5. Run focused tests, then the full verification gate in section 3. A change is
+   not ready if it only passes a package-local test while the repository does
+   not build.
+6. Review git diff --check, the staged diff, and the final status before
+   committing. If the user asks for GitHub delivery, push each validated,
+   coherent stage; never push secrets or unrelated work.
+
+## 8. Boundaries and prohibitions
+
+- Do not rewrite committed migration files under migrations/; add the next
+  numbered migration instead.
+- Do not hand-edit generated Swagger files under docs/; regenerate them with
+  the project's Swagger command when required.
+- Never commit .env, credentials, API keys, private keys, generated uploads,
+  chunks, or build artifacts.
+- Do not use destructive Git commands such as reset --hard or checkout -- to
+  discard work. Ask before removing material outside the explicitly requested
+  scope.
+- Keep changes backwards-compatible at the HTTP/API and port boundaries unless
+  the task explicitly requests a breaking change.
+- Do not claim RAG chat, WebDAV, or other roadmap items are implemented until
+  code, tests, and deployment support actually exist.
+
+## 9. Current status and roadmap
+
+Implemented in the current main branch:
+
+- Modular Go layout with cmd/gofile entrypoint and internal/ boundaries.
+- Port-based application service dependencies and constructor-based wiring.
+- SHA-1 fast upload/deduplication, resumable chunks, S3 multipart, Range 206,
+  VFS operations, recycle bin, sharing, and ownership isolation.
+- Redis cache/locks/rate limiting with graceful fallback behavior.
+- AI extraction, provider selection, Typesense hybrid search, and asynchronous
+  task processing.
+- Explicit resource lifecycle for MySQL, HTTP, AI, Asynq, cache, and background
+  cleanup jobs.
+- Docker/Compose deployment and CI build paths using ./cmd/gofile.
+
+Not implemented; treat as future work only:
+
+- RAG document Q&A with chunk retrieval and SSE streaming.
+- WebDAV protocol support.
+- A repository-wide coverage target of 80% or higher.
