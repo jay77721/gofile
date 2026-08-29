@@ -9,7 +9,7 @@ func TestValidatePublicURL(t *testing.T) {
 		private bool // allowPrivate
 		wantErr bool
 	}{
-		// 注:公网用例用 IP 字面量,避免离线环境 DNS 超时
+		// Note: public cases use IP literals to avoid DNS timeout in offline environments
 		{"public https ok", "https://8.8.8.8/v1", false, false},
 		{"public http ok", "http://8.8.8.8", false, false},
 		{"public with port ok", "https://8.8.8.8:8443/v1/", false, false},

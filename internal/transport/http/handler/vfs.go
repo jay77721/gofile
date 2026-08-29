@@ -8,16 +8,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CreateFolderReq 创建文件夹请求 DTO
+// CreateFolderReq DTO for creating a folder
 type CreateFolderReq = model.FolderCreateReq
 
-// RenameFolderReq 重命名文件夹或文件请求 DTO
+// RenameFolderReq DTO for renaming a folder or file
 type RenameFolderReq = model.FolderRenameReq
 
-// MoveFolderReq 移动文件或文件夹请求 DTO
+// MoveFolderReq DTO for moving a file or folder
 type MoveFolderReq = model.FolderMoveReq
 
-// CreateFolderHandler 创建文件夹
+// CreateFolderHandler Create folder
 func (h *FileHandler) CreateFolderHandler(c *gin.Context) {
 	var req CreateFolderReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -36,7 +36,7 @@ func (h *FileHandler) CreateFolderHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "创建成功", "data": uf})
 }
 
-// RenameFolderHandler 重命名文件或文件夹
+// RenameFolderHandler rename a file or folder
 func (h *FileHandler) RenameFolderHandler(c *gin.Context) {
 	var req RenameFolderReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -54,7 +54,7 @@ func (h *FileHandler) RenameFolderHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "重命名成功", "data": nil})
 }
 
-// MoveFolderHandler 移动文件或文件夹
+// MoveFolderHandler move a file or folder
 func (h *FileHandler) MoveFolderHandler(c *gin.Context) {
 	var req MoveFolderReq
 	if err := c.ShouldBindJSON(&req); err != nil {

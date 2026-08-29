@@ -10,7 +10,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // dev 模式下代理后端 API,与生产同源一致
+      // Proxy backend API in dev mode, consistent with production same-origin
       '/user': 'http://localhost:8080',
       '/file': 'http://localhost:8080',
       '/share': 'http://localhost:8080',

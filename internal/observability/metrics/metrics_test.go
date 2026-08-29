@@ -10,10 +10,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// 每个测试使用唯一的 path 标签，避免跨测试累加导致断言漂移。
+// Each test uses a unique path label to avoid cross-test accumulation causing assertion drift.
 
 func TestMetricsMiddleware_RecordsCounter(t *testing.T) {
-	Register() // 幂等，确保指标已注册
+	Register() // Idempotent, ensure metrics are registered
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(MetricsMiddleware())
@@ -36,7 +36,7 @@ func TestMetricsMiddleware_UnknownPath(t *testing.T) {
 	r.Use(MetricsMiddleware())
 	r.GET("/ok", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
-	// 请求未注册路由 → 404，FullPath 为空 → path 标签回退 "unknown"
+	// Request to unregistered route → 404，FullPath is empty → path label falls back to "unknown"
 	req := httptest.NewRequest("GET", "/no-such-route", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -63,7 +63,7 @@ func TestMetricsHandler(t *testing.T) {
 		t.Errorf("content-type = %q, want text/plain", ct)
 	}
 	body := w.Body.String()
-	// 默认注册表附带 go 运行时指标
+	// Default registry includes Go runtime metrics
 	if !strings.Contains(body, "go_goroutines") {
 		t.Error("metrics body missing go_goroutines")
 	}

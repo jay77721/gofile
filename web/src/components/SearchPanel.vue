@@ -19,14 +19,14 @@ const q = ref<string>(props.query);
 const results = ref<FileItem[]>([]);
 const loading = ref<boolean>(false);
 const msg = ref<string>('');
-const aiMode = ref<string>(''); // '' 未知 | openai 真实 Provider | mock 演示模式
+const aiMode = ref<string>(''); // '' unknown | openai real Provider | mock demo mode
 
 onMounted(async () => {
   try {
     const d = await api<AIConfigData>('/ai/config');
     aiMode.value = d?.mode === 'openai' ? 'openai' : 'mock';
   } catch {
-    /* AI 未启用时保持未知 */
+    /* Keep as unknown when AI is not enabled */
   }
 });
 
@@ -50,7 +50,7 @@ async function search(text?: string): Promise<void> {
   }
 }
 
-// App 侧(相似推荐等)传入新查询时自动触发
+// App side (similar recommendations etc.)Automatically triggers when a new query is passed
 watch(
   () => props.query,
   (v) => {

@@ -35,7 +35,7 @@ async function doLogout(): Promise<void> {
   try {
     await apiPost('/user/logout', {});
   } catch {
-    /* 幂等,失败也继续清本地状态 */
+    /* Idempotent; even on failure, continue clearing local state */
   }
   emit('logout');
 }

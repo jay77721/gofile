@@ -67,8 +67,8 @@ func Open(dsn string) (*Connection, error) {
 		dsn,
 		func(dsn string) (*gorm.DB, error) {
 			return gorm.Open(mysql.Open(dsn), &gorm.Config{
-				SkipDefaultTransaction: true, // 单表操作不自动包装事务
-				PrepareStmt:            true, // 缓存预编译，提升性能
+				SkipDefaultTransaction: true, // Single-table operations are not automatically wrapped in a transaction
+				PrepareStmt:            true, // Cache prepared statements for better performance
 				Logger:                 logger.Default.LogMode(logger.Warn),
 			})
 		},

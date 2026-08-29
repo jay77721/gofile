@@ -1,4 +1,4 @@
-// 全局 toast 状态与触发器
+// Global toast state and trigger
 import { reactive } from 'vue';
 
 export type ToastType = 'ok' | 'err' | 'warn' | 'info';

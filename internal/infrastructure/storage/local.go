@@ -12,35 +12,35 @@ import (
 	"gofile/internal/port"
 )
 
-// LocalStorage 本地文件系统存储实现
+// LocalStorage is a local filesystem storage implementation
 type LocalStorage struct {
 	uploadDir string
 }
 
-// NewLocal 创建本地存储实例
+// NewLocal creates a local storage instance
 func NewLocal(uploadDir string) *LocalStorage {
 	os.MkdirAll(uploadDir, 0755)
 	return &LocalStorage{uploadDir: uploadDir}
 }
 
-// Put 将文件写入本地磁盘（原子写：先写临时文件，成功后 rename，避免中断留下半截文件）
+// Put writes a file to local disk (atomic write: write to temp file first, then rename on success to avoid leaving a partial file on interruption)
 func (s *LocalStorage) Put(ctx context.Context, key string, reader io.Reader, size int64) error {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
 
-	// 确保目录存在
+	// Ensure directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create dir failed: %w", err)
 	}
 
-	// 写临时文件（同目录保证 rename 原子性）
+	// Write temp file (same directory ensures atomic rename)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temp file failed: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer func() {
-		// 成功 rename 后 tmpName 已不存在，Remove 报错被忽略
+		// After successful rename, tmpName no longer exists and Remove errors are ignored
 		tmp.Close()
 		os.Remove(tmpName)
 	}()
@@ -55,7 +55,7 @@ func (s *LocalStorage) Put(ctx context.Context, key string, reader io.Reader, si
 		return fmt.Errorf("close temp file failed: %w", err)
 	}
 
-	// 原子替换：中断只会留下临时文件，不会产生"半截"目标文件
+	// Atomic replacement: interruption will only leave a temp file, not a partial target file
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename file failed: %w", err)
 	}
@@ -64,7 +64,7 @@ func (s *LocalStorage) Put(ctx context.Context, key string, reader io.Reader, si
 	return nil
 }
 
-// Get 从本地磁盘读取文件
+// Get reads a file from local disk
 func (s *LocalStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
 	file, err := os.Open(path)
@@ -74,19 +74,19 @@ func (s *LocalStorage) Get(ctx context.Context, key string) (io.ReadCloser, erro
 	return file, nil
 }
 
-// GetRange 按字节区间读取本地文件（io.SectionReader 支持零拷贝区间读取）
+// GetRange reads a local file by byte range (io.SectionReader supports zero-copy range reading)
 func (s *LocalStorage) GetRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file failed: %w", err)
 	}
-	// SectionReader: 零拷贝区间读取，读取 [offset, offset+length) 范围
-	// 用自定义 ReadCloser 包装：NopCloser 不会关闭底层 fd，会导致文件句柄泄漏
+	// SectionReader: zero-copy range reading, reads [offset, offset+length)
+	// Wrap with custom ReadCloser: NopCloser would not close the underlying fd and would leak file handles
 	return &sectionReadCloser{SectionReader: io.NewSectionReader(file, offset, length), f: file}, nil
 }
 
-// sectionReadCloser 组合 SectionReader 与底层文件，Close 时释放 fd
+// sectionReadCloser combines SectionReader with the underlying file, releasing fd on Close
 type sectionReadCloser struct {
 	*io.SectionReader
 	f *os.File
@@ -94,7 +94,7 @@ type sectionReadCloser struct {
 
 func (s *sectionReadCloser) Close() error { return s.f.Close() }
 
-// FileSize 获取本地文件大小
+// FileSize retrieves the local file size
 func (s *LocalStorage) FileSize(ctx context.Context, key string) (int64, error) {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
 	info, err := os.Stat(path)
@@ -104,7 +104,7 @@ func (s *LocalStorage) FileSize(ctx context.Context, key string) (int64, error) 
 	return info.Size(), nil
 }
 
-// Exists 检查文件是否存在于本地磁盘
+// Exists checks whether a file exists on local disk
 func (s *LocalStorage) Exists(ctx context.Context, key string) (bool, error) {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
 	_, err := os.Stat(path)
@@ -117,7 +117,7 @@ func (s *LocalStorage) Exists(ctx context.Context, key string) (bool, error) {
 	return true, nil
 }
 
-// Delete 从本地磁盘删除文件
+// Delete deletes a file from local disk
 func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 	path := filepath.Join(s.uploadDir, filepath.Base(key))
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -126,32 +126,32 @@ func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// PresignPut 本地存储不支持预签名上传，返回 ErrPresignNotSupported
+// PresignPut is not supported for local storage, returns ErrPresignNotSupported
 func (s *LocalStorage) PresignPut(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	return "", ErrPresignNotSupported
 }
 
-// PresignGet 本地存储不支持预签名下载，返回 ErrPresignNotSupported
+// PresignGet is not supported for local storage, returns ErrPresignNotSupported
 func (s *LocalStorage) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	return "", ErrPresignNotSupported
 }
 
-// InitMultipart 本地存储不支持 S3 预签名分片直传
+// InitMultipart is not supported for local storage (S3 presigned multipart upload)
 func (s *LocalStorage) InitMultipart(ctx context.Context, key string) (string, error) {
 	return "", ErrPresignNotSupported
 }
 
-// PresignPartPut 本地存储不支持 S3 预签名分片直传
+// PresignPartPut is not supported for local storage (S3 presigned multipart upload)
 func (s *LocalStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
 	return "", ErrPresignNotSupported
 }
 
-// CompleteMultipart 本地存储不支持 S3 分片合并
+// CompleteMultipart is not supported for local storage (S3 multipart completion)
 func (s *LocalStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []port.CompletePart) error {
 	return ErrPresignNotSupported
 }
 
-// AbortMultipart 本地存储不支持 S3 分片取消
+// AbortMultipart is not supported for local storage (S3 multipart abort)
 func (s *LocalStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
 	return ErrPresignNotSupported
 }

@@ -17,23 +17,23 @@ import ShareModal from './components/ShareModal.vue';
 import AISettingsModal from './components/AISettingsModal.vue';
 import ToastHost from './components/Toast.vue';
 
-// ---- 视图状态机:files | trash | search | shares ----
+// ---- View state machine: files | trash | search | shares ----
 const authed = ref<boolean>(false);
 const view = ref<string>('files');
 
-// ---- 数据 ----
+// ---- Data ----
 const files = ref<FileItem[]>([]);
 const trash = ref<FileItem[]>([]);
 const shares = ref<ShareItem[]>([]);
 
-// ---- 全局操作目标 ----
+// ---- Global action targets ----
 const previewTarget = ref<FileItem | null>(null);
 const renameTarget = ref<FileItem | null>(null);
 const deleteTarget = ref<FileItem | null>(null);
 const shareTarget = ref<FileItem | null>(null);
 const aiSettingsOpen = ref<boolean>(false);
 
-// ---- 搜索 ----
+// ---- Search ----
 const searchQuery = ref<string>('');
 
 async function loadFiles(): Promise<void> {
@@ -71,7 +71,7 @@ function doSearch(q: string): void {
   view.value = 'search';
 }
 
-// ---- 子组件事件 ----
+// ---- Child component events ----
 function onFilesChanged(): void {
   loadFiles();
 }
@@ -90,7 +90,7 @@ onMounted(async () => {
     authed.value = true;
     loadFiles();
   } catch {
-    /* 未登录,停留在 AuthView */
+    /* Not logged in, stay on AuthView */
   }
 });
 </script>
@@ -120,7 +120,7 @@ onMounted(async () => {
       </main>
     </div>
 
-    <!-- 全局弹窗 -->
+    <!-- Global modals -->
     <PreviewModal v-if="previewTarget" :file="previewTarget" @close="previewTarget = null" />
     <RenameModal v-if="renameTarget" :file="renameTarget" @close="renameTarget = null" @done="renameTarget = null; onFilesChanged()" />
     <ConfirmModal

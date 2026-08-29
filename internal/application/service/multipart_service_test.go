@@ -73,7 +73,7 @@ func TestS3Multipart_InitUpload(t *testing.T) {
 			t.Fatal("expected storage.InitMultipart to be called")
 		}
 
-		// 检查 repository 记录已创建
+		// Verify repository record was created
 		record, err := multipartRepo.GetByUploadID(ctx, resp.UploadID, "alice")
 		if err != nil || record.Status != model.MultipartStatusUploading {
 			t.Fatalf("unexpected multipart record: %+v, err: %v", record, err)
@@ -106,7 +106,7 @@ func TestS3Multipart_InitUpload(t *testing.T) {
 
 	t.Run("fast upload hit path", func(t *testing.T) {
 		const existingHash = "4444444444444444444444444444444444444444"
-		// 先在全局仓储与存储中存入该文件
+		// First store the file in global repository and storage
 		_ = repo.Create(ctx, model.File{FileSha1: existingHash, FileSize: 16})
 		_ = mockStore.Put(ctx, existingHash, strings.NewReader("existing content"), 16)
 
@@ -122,7 +122,7 @@ func TestS3Multipart_InitUpload(t *testing.T) {
 			t.Fatal("expected fast_upload=true for existing file")
 		}
 
-		// 检查 Bob 的 UserFile 已建立
+		// Verify Bob's UserFile has been created
 		userFile, err := repo.GetByHash(ctx, existingHash, "bob")
 		if err != nil || userFile.FileName != "existing.txt" {
 			t.Fatalf("bob userfile not found or wrong name: %v", err)
@@ -145,7 +145,7 @@ func TestS3Multipart_InitUpload(t *testing.T) {
 			t.Fatal("expected valid upload ID")
 		}
 
-		// 无效 parentID 报错
+		// Invalid parentID returns error
 		_, err = svc.InitMultipartUpload(ctx, "alice", model.MultipartInitReq{
 			FileSha1: "6666666666666666666666666666666666666666",
 			FileName: "target.bin",
@@ -211,7 +211,7 @@ func TestS3Multipart_CompleteUpload(t *testing.T) {
 			t.Fatal("expected CompleteMultipart to be called on storage")
 		}
 
-		// 检查分片会话状态已更新为 Completed (2)
+		// Verify multipart session status updated to Completed (2)
 		record, err := multipartRepo.GetByUploadID(ctx, initResp.UploadID, "alice")
 		if err != nil || record.Status != model.MultipartStatusCompleted {
 			t.Fatalf("expected status completed, got record: %+v", record)
@@ -306,12 +306,12 @@ func TestTraditionalChunk_UploadAndMerge(t *testing.T) {
 			t.Fatalf("UploadChunk 2 failed: %v", err)
 		}
 
-		// 重复上传 chunk 0 幂等
+		// Duplicate upload of chunk 0 is idempotent
 		if err := svc.UploadChunk(ctx, hash, 0, bytes.NewReader(chunk0), "alice"); err != nil {
 			t.Fatalf("UploadChunk 0 duplicate failed: %v", err)
 		}
 
-		// 查询已上传分片列表
+		// Query uploaded chunk list
 		chunks, err := svc.GetChunkStatus(hash, "alice")
 		if err != nil {
 			t.Fatalf("GetChunkStatus failed: %v", err)
@@ -338,13 +338,13 @@ func TestTraditionalChunk_UploadAndMerge(t *testing.T) {
 			t.Fatalf("unexpected meta after merge: %+v, want size %d", meta, expectedSize)
 		}
 
-		// 验证存储层文件存在
+		// Verify storage file exists
 		exists, err := store.Exists(ctx, hash)
 		if err != nil || !exists {
 			t.Fatalf("storage file does not exist after merge: %v", err)
 		}
 
-		// 验证用户拥有该文件
+		// Verify user owns the merged file
 		fMeta, err := svc.GetMeta(ctx, hash, "alice")
 		if err != nil || fMeta.FileName != "merged.txt" {
 			t.Fatalf("user does not own merged file: %v", err)

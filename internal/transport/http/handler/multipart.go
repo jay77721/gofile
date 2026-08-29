@@ -11,15 +11,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// MultipartCompleteReq 合并分片请求 DTO
+// MultipartCompleteReq DTO for merging chunks
 type MultipartCompleteReq = model.MultipartCompleteReq
 
-// MultipartAbortReq 取消分片请求 DTO
+// MultipartAbortReq DTO for aborting multipart upload
 type MultipartAbortReq = model.MultipartAbortReq
 
-// ---- S3 Multipart 分片直传 Handlers ----
+// ---- S3 Multipart direct upload handlers ----
 
-// MultipartInitHandler 初始化 S3 分片直传
+// MultipartInitHandler initialize S3 multipart direct upload
 func (h *FileHandler) MultipartInitHandler(c *gin.Context) {
 	var req model.MultipartInitReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -51,12 +51,12 @@ func (h *FileHandler) MultipartInitHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": resp})
 }
 
-// InitMultipartHandler 兼容别名
+// InitMultipartHandler compatibility alias
 func (h *FileHandler) InitMultipartHandler(c *gin.Context) {
 	h.MultipartInitHandler(c)
 }
 
-// MultipartCompleteHandler 完成分片上传并由存储层合并
+// MultipartCompleteHandler complete multipart upload and merge via storage layer
 func (h *FileHandler) MultipartCompleteHandler(c *gin.Context) {
 	var req MultipartCompleteReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -75,12 +75,12 @@ func (h *FileHandler) MultipartCompleteHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传并合并成功", "data": meta})
 }
 
-// CompleteMultipartHandler 兼容别名
+// CompleteMultipartHandler compatibility alias
 func (h *FileHandler) CompleteMultipartHandler(c *gin.Context) {
 	h.MultipartCompleteHandler(c)
 }
 
-// MultipartAbortHandler 取消分片上传会话
+// MultipartAbortHandler abort the multipart upload session
 func (h *FileHandler) MultipartAbortHandler(c *gin.Context) {
 	var req MultipartAbortReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -98,14 +98,14 @@ func (h *FileHandler) MultipartAbortHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已取消", "data": nil})
 }
 
-// AbortMultipartHandler 兼容别名
+// AbortMultipartHandler compatibility alias
 func (h *FileHandler) AbortMultipartHandler(c *gin.Context) {
 	h.MultipartAbortHandler(c)
 }
 
-// ---- 传统分片上传 Handlers ----
+// ---- Legacy chunked upload handlers ----
 
-// UploadChunkHandler 分块上传（用户隔离）
+// UploadChunkHandler chunked upload (per-user isolated)
 func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	r := c.Request
 	r.Body = http.MaxBytesReader(c.Writer, r.Body, MaxUploadSize)
@@ -118,7 +118,7 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 		return
 	}
 
-	// 校验 hash 格式，防止路径穿越
+	// Validate hash format to prevent path traversal
 	if !isValidHash(fileHash) {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
@@ -140,7 +140,7 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	username := c.GetString("username")
 	if err := h.fileSvc.UploadChunk(c.Request.Context(), fileHash, chunkIndex, file, username); err != nil {
 		slog.ErrorContext(c.Request.Context(), "upload chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex, "username", username)
-		// 已上传的情况不算错误
+		// Already uploaded is not considered an error
 		respondError(c, http.StatusInternalServerError, CodeUploadFailed, "chunk upload failed")
 		return
 	}
@@ -148,7 +148,7 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk upload success", "data": nil})
 }
 
-// ChunkStatusHandler 断点续传状态查询（用户隔离）
+// ChunkStatusHandler query resumable upload status (per-user isolated)
 func (h *FileHandler) ChunkStatusHandler(c *gin.Context) {
 	fileHash := c.Query("filehash")
 	if fileHash == "" {
@@ -156,7 +156,7 @@ func (h *FileHandler) ChunkStatusHandler(c *gin.Context) {
 		return
 	}
 
-	// 校验 hash 格式，防止路径穿越
+	// Validate hash format to prevent path traversal
 	if !isValidHash(fileHash) {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
@@ -171,12 +171,12 @@ func (h *FileHandler) ChunkStatusHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": chunks})
 }
 
-// UploadStatusHandler 兼容别名
+// UploadStatusHandler compatibility alias
 func (h *FileHandler) UploadStatusHandler(c *gin.Context) {
 	h.ChunkStatusHandler(c)
 }
 
-// MergeHandler 分块合并
+// MergeHandler merge chunks
 func (h *FileHandler) MergeHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
 	fileName := c.PostForm("filename")
@@ -195,16 +195,16 @@ func (h *FileHandler) MergeHandler(c *gin.Context) {
 		return
 	}
 
-	// 校验 hash 格式，防止路径穿越
+	// Validate hash format to prevent path traversal
 	if !isValidHash(fileHash) {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效的 filehash 格式")
 		return
 	}
 
-	// 路径穿越防护
+	// Path traversal protection
 	fileName = filepath.Base(fileName)
 
-	// 危险文件类型黑名单（防存储型 XSS / 恶意文件分发）
+	// Dangerous file type blocklist (prevent stored XSS / malicious distribution)
 	if isDangerousExtension(fileName) {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
 		return
@@ -220,7 +220,7 @@ func (h *FileHandler) MergeHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "merge success", "data": gin.H{"filehash": fMeta.FileSha1}})
 }
 
-// MergeChunkHandler 兼容别名
+// MergeChunkHandler compatibility alias
 func (h *FileHandler) MergeChunkHandler(c *gin.Context) {
 	h.MergeHandler(c)
 }

@@ -15,7 +15,7 @@ import (
 	"gofile/internal/port"
 )
 
-// --- 内存 mock：AITaskRepository ---
+// --- In-memory mock: AITaskRepository ---
 
 type mockAITaskRepo struct {
 	mu    sync.Mutex
@@ -35,7 +35,7 @@ func (m *mockAITaskRepo) CreateTask(ctx context.Context, task *model.AITask) err
 	defer m.mu.Unlock()
 	k := taskKey(task.FileSha1, task.Username)
 	if _, ok := m.tasks[k]; ok {
-		return nil // 幂等
+		return nil // Idempotent
 	}
 	cp := *task
 	m.tasks[k] = &cp
@@ -105,7 +105,7 @@ func (m *mockAITaskRepo) CleanupExpired(ctx context.Context, before time.Time) e
 	return nil
 }
 
-// --- 内存 mock：FileRepository（最小实现，只覆盖 processor 用到的方法） ---
+// --- In-memory mock: FileRepository (minimal implementation, only covers methods used by processor) ---
 
 type mockFileRepoForProc struct {
 	mu    sync.Mutex
@@ -135,7 +135,7 @@ func (m *mockFileRepoForProc) GetGlobalFile(ctx context.Context, filehash string
 	return model.File{}, errors.New("not found")
 }
 
-// 以下方法仅为满足 repository.FileRepository 接口，processor 不调用
+// Following methods only satisfy repository.FileRepository interface, not called by processor
 func (m *mockFileRepoForProc) Create(ctx context.Context, f model.File) error { return nil }
 func (m *mockFileRepoForProc) CreateUserFile(ctx context.Context, uf model.UserFile) error {
 	return nil
@@ -200,7 +200,7 @@ func (m *mockFileRepoForProc) GetBreadcrumbs(ctx context.Context, username strin
 	return nil, nil
 }
 
-// storage mock（最小实现，满足 port.Storage 接口）
+// storage mock (minimal implementation, satisfies port.Storage interface)
 type mockStorage struct {
 	content []byte
 }
@@ -245,7 +245,7 @@ func (m mockStorage) AbortMultipart(ctx context.Context, key, uploadID string) e
 	return nil
 }
 
-// --- 测试 ---
+// --- Tests ---
 
 func newTestProcessor(provider port.Provider, indexer port.Indexer, fr repository.FileRepository, ar *mockAITaskRepo, st port.Storage) *Processor {
 	cfg := &config.Config{AIWorkers: 1}
@@ -264,13 +264,13 @@ func TestProcessor_Idempotent(t *testing.T) {
 	p := newTestProcessor(provider, indexer, fileRepo, aiRepo, store)
 	p.Start()
 
-	// 入队一次
+	// Enqueue once
 	p.Enqueue(context.Background(), "hash1", "test.txt", "alice")
 
-	// 等待处理完成
+	// Wait for processing to complete
 	time.Sleep(500 * time.Millisecond)
 
-	// 任务应为 done
+	// Task should be done
 	task, err := aiRepo.GetTask(context.Background(), "hash1", "alice")
 	if err != nil {
 		t.Fatalf("task not found: %v", err)
@@ -278,26 +278,26 @@ func TestProcessor_Idempotent(t *testing.T) {
 	if task.Status != 2 {
 		t.Errorf("task status should be done(2), got %d", task.Status)
 	}
-	// 全局 summary 应被写入
+	// Global summary should be written
 	if f, ok := fileRepo.files["hash1"]; !ok || f.Summary == "" {
 		t.Errorf("global summary should be saved, got %+v", f)
 	}
-	// 索引应有文档
+	// Index should have document
 	if _, ok := idx.docs["alice:hash1"]; !ok {
 		t.Error("indexer should have doc alice:hash1")
 	}
 
-	// 再次入队（已 done）→ 应跳过，不重复处理
+	// Re-enqueue (already done) -> should skip, no reprocessing
 	p.Enqueue(context.Background(), "hash1", "test.txt", "alice")
 	time.Sleep(300 * time.Millisecond)
-	// 状态仍为 done，且未新增文档（mock indexer 只有一个）
+	// Status remains done, and no new document added (mock indexer has only one)
 	if len(idx.docs) != 1 {
 		t.Errorf("should not re-process done task, doc count=%d", len(idx.docs))
 	}
 }
 
 func TestProcessor_FailAndRequeue(t *testing.T) {
-	// 让 provider.Analyze 失败
+	// Make provider.Analyze fail
 	failProvider := &failAnalyzeProvider{dim: 16}
 	indexer := NewMockIndexer()
 	aiRepo := newMockAITaskRepo()
@@ -318,7 +318,7 @@ func TestProcessor_FailAndRequeue(t *testing.T) {
 		t.Errorf("retry_count should be >=1, got %d", task.RetryCount)
 	}
 
-	// RequeueFailed 应重新入队
+	// RequeueFailed should re-enqueue
 	p.RequeueFailed(context.Background())
 	time.Sleep(500 * time.Millisecond)
 	task2, _ := aiRepo.GetTask(context.Background(), "hash2", "bob")
@@ -328,13 +328,13 @@ func TestProcessor_FailAndRequeue(t *testing.T) {
 }
 
 func TestProcessor_FastDedupSkipsLLM(t *testing.T) {
-	// 全局 summary 已存在 → 应跳过 Analyze
+	// Global summary already exists -> should skip Analyze
 	callCount := 0
 	provider := &countingProvider{MockProvider: NewMockProvider(16).(*MockProvider), counter: &callCount}
 	indexer := NewMockIndexer()
 	aiRepo := newMockAITaskRepo()
 	fileRepo := newMockFileRepoForProc()
-	// 预先写入全局 summary（模拟秒传命中：A 已分析过）
+	// Pre-write global summary (simulating fast-dedup hit: A already analyzed)
 	fileRepo.files["hash3"] = model.File{FileSha1: "hash3", Summary: "pre-existing summary", Tags: "文档"}
 	store := mockStorage{}
 
@@ -353,7 +353,7 @@ func TestProcessor_FastDedupSkipsLLM(t *testing.T) {
 	}
 }
 
-// failAnalyzeProvider 总是让 Analyze 失败
+// failAnalyzeProvider always makes Analyze fail
 type failAnalyzeProvider struct {
 	dim int
 }
@@ -367,7 +367,7 @@ func (p *failAnalyzeProvider) Embed(ctx context.Context, text string) ([]float32
 }
 func (p *failAnalyzeProvider) Dimension() int { return p.dim }
 
-// countingProvider 包装 MockProvider，计数 Analyze 调用
+// countingProvider wraps MockProvider, counts Analyze calls
 type countingProvider struct {
 	*MockProvider
 	counter *int

@@ -10,18 +10,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// TestObservabilityChain 端到端验证可观测性链路：
-// RequestID → Metrics → Recovery 全链请求后，/metrics 中能看到该路由的指标行。
+// TestObservabilityChain verify the observability chain end-to-end:
+// RequestID → Metrics → Recovery After a full-chain request via RequestID -> Metrics -> Recovery, the route's metric line should appear in /metrics.
 func TestObservabilityChain(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	// 与 main.go 一致的中间件顺序
+	// Same middleware order as main.go
 	r.Use(metrics.RequestIDMiddleware())
 	r.Use(metrics.MetricsMiddleware())
 	r.Use(gin.Recovery())
 	r.GET("/healthz", HealthCheckHandler)
 
-	// 真实请求：验证 X-Request-ID 头
+	// Real request: verify X-Request-ID header
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -33,7 +33,7 @@ func TestObservabilityChain(t *testing.T) {
 		t.Error("missing X-Request-ID response header")
 	}
 
-	// 抓取 /metrics，断言该路由的指标行已记录
+	// Fetch /metrics and assert the route's metric line is recorded
 	req2 := httptest.NewRequest("GET", "/metrics", nil)
 	w2 := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(w2, req2)

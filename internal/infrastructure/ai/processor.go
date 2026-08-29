@@ -16,13 +16,13 @@ import (
 )
 
 const (
-	// maxRetry 单任务最大重试次数
+	// maxRetry is the maximum number of retries per task
 	maxRetry = 3
-	// queueCapacity 任务队列缓冲容量（降级内存队列）
+	// queueCapacity is the buffer capacity of the task queue (fallback in-memory queue)
 	queueCapacity = 100
 )
 
-// taskItem 内部队列项（降级内存 chan 使用）
+// taskItem is an internal queue item (used for fallback in-memory chan)
 type taskItem struct {
 	Ctx      context.Context
 	Filehash string
@@ -30,13 +30,13 @@ type taskItem struct {
 	Username string
 }
 
-// Processor 异步 AI 分析编排器（worker pool + 任务状态机）
+// Processor is an async AI analysis orchestrator (worker pool + task state machine)
 //
-// 消费流程：extract → analyze → embed → save → upsert。
-// 秒传命中（全局 summary 已存在）跳过 LLM 调用，零成本建文档。
-// 失败任务 retry_count < maxRetry 时由 RequeueFailed 补偿。
+// Consumption flow: extract -> analyze -> embed -> save -> upsert.
+// Fast-dedup hit (global summary already exists) skips LLM calls and builds the document at zero cost.
+// Failed tasks with retry_count < maxRetry are compensated by RequeueFailed.
 //
-// 入队优先级：Asynq（Redis 持久化，跨实例）→ 进程内 chan（降级）
+// Enqueue priority: Asynq (Redis-persisted, cross-instance) -> in-process chan (fallback)
 type Processor struct {
 	provider port.Provider
 	indexer  port.Indexer
@@ -45,12 +45,12 @@ type Processor struct {
 	store    port.Storage
 	cfg      *config.Config
 
-	// resolve 按用户名解析生效 Provider(用户自定义配置优先),nil 时使用默认 provider
+	// resolve resolves the effective Provider by username (user custom config takes precedence), falls back to default provider when nil
 	resolve func(ctx context.Context, username string) port.Provider
 
-	// taskEnqueuer Asynq 客户端（可选，nil 时回退到进程内 chan）
+	// taskEnqueuer is the Asynq client (optional, falls back to in-process chan when nil)
 	taskEnqueuer port.TaskEnqueuer
-	// workers 内部 goroutine 数（启动时固定）
+	// workers is the number of internal goroutines (fixed at startup)
 	workers int
 
 	queue   chan taskItem
@@ -60,7 +60,7 @@ type Processor struct {
 	wg      sync.WaitGroup
 }
 
-// NewProcessor 创建异步编排器
+// NewProcessor creates an async orchestrator
 func NewProcessor(provider port.Provider, indexer port.Indexer, fileRepo port.FileRepository, aiRepo port.AITaskRepository, store port.Storage, cfg *config.Config) *Processor {
 	workers := cfg.AIWorkers
 	if workers <= 0 {
@@ -79,19 +79,19 @@ func NewProcessor(provider port.Provider, indexer port.Indexer, fileRepo port.Fi
 	}
 }
 
-// WithResolver 注入按用户解析 Provider 的函数(用户级 AI 配置)
+// WithResolver injects the function to resolve Provider per user (user-level AI config)
 func (p *Processor) WithResolver(fn func(ctx context.Context, username string) port.Provider) *Processor {
 	p.resolve = fn
 	return p
 }
 
-// WithTaskEnqueuer 注入 Asynq 客户端（可选，nil 时回退内存 chan）
+// WithTaskEnqueuer injects the Asynq client (optional, falls back to in-memory chan when nil)
 func (p *Processor) WithTaskEnqueuer(e port.TaskEnqueuer) *Processor {
 	p.taskEnqueuer = e
 	return p
 }
 
-// providerFor 解析任务所属用户生效的 Provider,解析不到时回退默认
+// providerFor resolves the effective Provider for the task's user, falling back to default when not found
 func (p *Processor) providerFor(ctx context.Context, username string) port.Provider {
 	if p.resolve != nil {
 		if prov := p.resolve(ctx, username); prov != nil {
@@ -101,7 +101,7 @@ func (p *Processor) providerFor(ctx context.Context, username string) port.Provi
 	return p.provider
 }
 
-// Start 启动内部 worker pool（降级 chan 路径；Asynq 启用时这些 worker 大多空转）
+// Start launches the internal worker pool (fallback chan path; workers mostly idle when Asynq is enabled)
 func (p *Processor) Start() {
 	slog.Info("ai processor started", "workers", p.workers)
 	for i := 0; i < p.workers; i++ {
@@ -110,9 +110,9 @@ func (p *Processor) Start() {
 	}
 }
 
-// Stop 优雅停止：标记停止 → 广播 done → worker 排空剩余任务后全部退出。
-// 关键不变量：绝不 close(p.queue)，因此 Stop 后并发 Enqueue 向 queue 发送不会 panic。
-// 注意：Processor 不可重用，Stop 后 done channel 已关闭，再次 Start 将立即退出。
+// Stop gracefully stops: mark as stopped -> broadcast done -> workers drain remaining tasks and exit.
+// Key invariant: never close(p.queue), so concurrent Enqueue after Stop will not panic when sending to the queue.
+// Note: Processor is not reusable; done channel is closed after Stop, and a subsequent Start will exit immediately.
 func (p *Processor) Stop() {
 	p.mu.Lock()
 	if p.stopped {
@@ -125,13 +125,13 @@ func (p *Processor) Stop() {
 	p.wg.Wait()
 }
 
-// Enqueue 投递 AI 分析任务（非阻塞，不阻断上传主链路）
-// 优先级：Asynq（Redis 持久化 + 跨实例 + 内置重试）→ 进程内 chan（Redis 不可用降级）
+// Enqueue dispatches an AI analysis task (non-blocking, does not block the main upload path)
+// Priority: Asynq (Redis-persisted + cross-instance + built-in retry) -> in-process chan (fallback when Redis unavailable)
 func (p *Processor) Enqueue(ctx context.Context, filehash, filename, username string) error {
 	if p == nil {
 		return nil
 	}
-	// 优先走 Asynq 持久化路径（Asynq 路径不受进程内队列生命周期影响）
+	// Prefer the Asynq persistent path (Asynq path is not affected by the in-process queue lifecycle)
 	if p.taskEnqueuer != nil {
 		if err := p.taskEnqueuer.Enqueue(ctx, filehash, filename, username); err != nil {
 			slog.WarnContext(ctx, "asynq enqueue failed, fallback to chan",
@@ -140,8 +140,8 @@ func (p *Processor) Enqueue(ctx context.Context, filehash, filename, username st
 			return nil
 		}
 	}
-	// 进程内降级路径：需在持锁期间原子检查 stopped 并尝试入队，
-	// 避免 Stop 并发 close(done) 与入队之间的竞态；select 非阻塞，持锁时间可控。
+	// In-process fallback path: must atomically check stopped and attempt enqueue while holding the lock,
+	// to avoid race between Stop's concurrent close(done) and enqueue; select is non-blocking and lock hold time is controllable.
 	p.mu.Lock()
 	if p.stopped {
 		p.mu.Unlock()
@@ -158,7 +158,7 @@ func (p *Processor) Enqueue(ctx context.Context, filehash, filename, username st
 	return nil
 }
 
-// RequeueFailed 补偿：扫 status=failed && retry_count<maxRetry 的任务重新入队
+// RequeueFailed compensation: re-enqueues tasks with status=failed && retry_count<maxRetry
 func (p *Processor) RequeueFailed(ctx context.Context) int {
 	if p == nil || p.aiRepo == nil {
 		return 0
@@ -184,7 +184,7 @@ func (p *Processor) worker() {
 		case item := <-p.queue:
 			p.process(item)
 		case <-p.done:
-			// 排空剩余任务后退出
+			// Drain remaining tasks and exit
 			for {
 				select {
 				case item := <-p.queue:
@@ -197,9 +197,9 @@ func (p *Processor) worker() {
 	}
 }
 
-// ProcessOne 单任务消费（幂等锚点 = UNIQUE(file_sha1, username)）
-// 供 Asynq handler（task.AITaskProcessor）和内部 worker 共同调用
-// 返回 error 时 Asynq 按 MaxRetry 自动重试
+// ProcessOne consumes a single task (idempotency anchor = UNIQUE(file_sha1, username))
+// Called by both the Asynq handler (task.AITaskProcessor) and internal workers
+// When an error is returned, Asynq automatically retries according to MaxRetry
 func (p *Processor) ProcessOne(ctx context.Context, filehash, filename, username string) error {
 	item := taskItem{Ctx: ctx, Filehash: filehash, Filename: filename, Username: username}
 
@@ -221,7 +221,7 @@ func (p *Processor) ProcessOne(ctx context.Context, filehash, filename, username
 	return nil
 }
 
-// process 内部 worker 调用入口（chan 降级路径）
+// process is the entry point for internal workers (chan fallback path)
 func (p *Processor) process(item taskItem) {
 	ctx := item.Ctx
 	if ctx == nil {
@@ -230,7 +230,7 @@ func (p *Processor) process(item taskItem) {
 	_ = p.ProcessOne(ctx, item.Filehash, item.Filename, item.Username)
 }
 
-// isAlreadyDone 检查任务是否已完成（幂等跳过）
+// isAlreadyDone checks whether the task is already completed (skip idempotently)
 func (p *Processor) isAlreadyDone(ctx context.Context, filehash, username string) bool {
 	existing, err := p.aiRepo.GetTask(ctx, filehash, username)
 	if err == nil && existing != nil && existing.Status == 2 {
@@ -240,7 +240,7 @@ func (p *Processor) isAlreadyDone(ctx context.Context, filehash, username string
 	return false
 }
 
-// registerTask 创建并标记任务为处理中
+// registerTask creates and marks the task as processing
 func (p *Processor) registerTask(ctx context.Context, filehash, username string) {
 	if err := p.aiRepo.CreateTask(ctx, &model.AITask{FileSha1: filehash, Username: username}); err != nil {
 		slog.WarnContext(ctx, "create ai task failed", "error", err, "filehash", filehash)
@@ -248,12 +248,12 @@ func (p *Processor) registerTask(ctx context.Context, filehash, username string)
 	_ = p.aiRepo.MarkProcessing(ctx, filehash, username)
 }
 
-// analyze 执行文本提取与 LLM 分析（秒传命中时跳过 LLM）
+// analyze performs text extraction and LLM analysis (skips LLM on fast-dedup hit)
 func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string, tags []string, filename string, err error) {
 	filename = item.Filename
 	filehash, username := item.Filehash, item.Username
 
-	// 秒传检测：全局 summary 已存在则零成本复用
+	// Fast-dedup check: reuse at zero cost if global summary already exists
 	global, gErr := p.fileRepo.GetGlobalFile(ctx, filehash)
 	if gErr == nil && global.Summary != "" {
 		slog.InfoContext(ctx, "ai task: fast-dedup, skip LLM", "filehash", filehash, "username", username)
@@ -263,7 +263,7 @@ func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string,
 		return global.Summary, splitTags(global.Tags), filename, nil
 	}
 
-	// 完整分析管线：提取文本 → LLM 分析 → 写全局 summary
+	// Full analysis pipeline: extract text -> LLM analysis -> write global summary
 	text, err := p.extractText(ctx, filehash, filename)
 	if err != nil {
 		return "", nil, "", fmt.Errorf("extract failed: %w", err)
@@ -279,7 +279,7 @@ func (p *Processor) analyze(ctx context.Context, item taskItem) (summary string,
 	return analysis.Summary, analysis.Tags, filename, nil
 }
 
-// indexDocument 构建向量并写入检索引擎
+// indexDocument builds the vector and writes to the search engine
 func (p *Processor) indexDocument(ctx context.Context, filehash, username, filename, summary string, tags []string) error {
 	vector, err := p.providerFor(ctx, username).Embed(ctx, filename+" "+summary+" "+joinTags(tags))
 	if err != nil {
@@ -301,7 +301,7 @@ func (p *Processor) indexDocument(ctx context.Context, filehash, username, filen
 	return nil
 }
 
-// complete 标记任务完成并记录指标
+// complete marks the task as completed and records metrics
 func (p *Processor) complete(ctx context.Context, filehash, username, summary string) {
 	if err := p.aiRepo.MarkDone(ctx, filehash, username); err != nil {
 		slog.WarnContext(ctx, "mark ai task done failed", "error", err, "filehash", filehash)
@@ -310,7 +310,7 @@ func (p *Processor) complete(ctx context.Context, filehash, username, summary st
 	slog.InfoContext(ctx, "ai task done", "filehash", filehash, "username", username, "summaryLen", len(summary))
 }
 
-// extractText 提取文本（包装 ai.Extract）
+// extractText extracts text (wraps ai.Extract)
 func (p *Processor) extractText(ctx context.Context, filehash, filename string) (string, error) {
 	if p.store == nil {
 		return "", errors.New("store is nil")
@@ -322,7 +322,7 @@ func (p *Processor) extractText(ctx context.Context, filehash, filename string) 
 	return ex.Text, nil
 }
 
-// fail 标记失败（retry_count+1），由 RequeueFailed 补偿
+// fail marks as failed (retry_count+1), compensated by RequeueFailed
 func (p *Processor) fail(ctx context.Context, filehash, username, errMsg string) {
 	slog.ErrorContext(ctx, "ai task failed", "filehash", filehash, "username", username, "error", errMsg)
 	metrics.RecordAITask("failed")
@@ -331,7 +331,7 @@ func (p *Processor) fail(ctx context.Context, filehash, username, errMsg string)
 	}
 }
 
-// splitTags 逗号分隔字符串 → 切片
+// splitTags converts a comma-separated string to a slice
 func splitTags(s string) []string {
 	if s == "" {
 		return nil
@@ -347,7 +347,7 @@ func splitTags(s string) []string {
 	return out
 }
 
-// joinTags 切片 → 逗号分隔字符串
+// joinTags converts a slice to a comma-separated string
 func joinTags(tags []string) string {
 	return strings.Join(tags, ",")
 }

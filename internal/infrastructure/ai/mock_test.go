@@ -18,11 +18,11 @@ func TestMockProvider_Analyze(t *testing.T) {
 	if a == nil {
 		t.Fatal("Analyze returned nil")
 	}
-	// summary 包含文件名
+	// summary contains file name
 	if a.Summary == "" {
 		t.Error("summary should not be empty")
 	}
-	// pdf 应带"文档"标签
+	// pdf should have "文档" tag
 	foundDoc := false
 	for _, tag := range a.Tags {
 		if tag == "文档" {
@@ -40,7 +40,7 @@ func TestMockProvider_Analyze_EmptyContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 空内容时 summary 应为文件名
+	// For empty content, summary should be filename
 	if a.Summary != "photo.png" {
 		t.Errorf("empty content summary should be filename, got %q", a.Summary)
 	}
@@ -65,7 +65,7 @@ func TestMockProvider_Analyze_LongContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// summary 应截断到 200 字符
+	// summary should be truncated to 200 characters
 	if len(a.Summary) > 250 {
 		t.Errorf("summary should be truncated, got len %d", len(a.Summary))
 	}
@@ -162,7 +162,7 @@ func TestMockProvider_Dimension(t *testing.T) {
 	if p.Dimension() != 256 {
 		t.Errorf("Dimension should be 256, got %d", p.Dimension())
 	}
-	// 默认值
+	// Default value
 	p2 := NewMockProvider(0)
 	if p2.Dimension() != 128 {
 		t.Errorf("default Dimension should be 128, got %d", p2.Dimension())

@@ -8,13 +8,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// ctxKey 私有 context key 类型，防止外部注入同名 key
+// ctxKey private context key type to prevent external injection of the same key
 type ctxKey struct{}
 
-// RequestIDKey 暴露给外部（如测试）从 context 读取 request_id
+// RequestIDKey exposed for external callers (e.g., tests) to read request_id from context
 var RequestIDKey = ctxKey{}
 
-// FromContext 从 context 读取 request_id，不存在时返回空字符串
+// FromContext read request_id from context, return empty string if not found
 func FromContext(ctx context.Context) string {
 	if id, ok := ctx.Value(RequestIDKey).(string); ok {
 		return id
@@ -22,9 +22,9 @@ func FromContext(ctx context.Context) string {
 	return ""
 }
 
-// RequestIDMiddleware 为每个请求生成 UUID：
-//  1. 写入请求 context，供 service 层日志通过 slog.InfoContext(ctx) 串联
-//  2. 写入响应头 X-Request-ID，供客户端/日志系统对账
+// RequestIDMiddleware generate a UUID for each request:
+//  1. Write to request context for service-layer logs to correlate via slog.InfoContext(ctx)
+//  2. Write to response header X-Request-ID for client/log reconciliation
 func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := uuid.New().String()
@@ -34,25 +34,25 @@ func RequestIDMiddleware() gin.HandlerFunc {
 	}
 }
 
-// ContextHandler 包装 slog.Handler，在 Handle 内从 context 提取 request_id 附加到每条记录。
+// ContextHandler wrap slog.Handler and attach request_id extracted from context to each record in Handle.
 //
-// 关键设计：从 Handle 的 ctx 读取，而不是用 slog.With 在 base handler 上打标签——
-// 否则后台 goroutine（chunk cleanup / GC）的日志会被错误打上上一个请求的 request_id。
+// Key design: read from Handle's ctx instead of tagging the base handler with slog.With —
+// otherwise background goroutines (chunk cleanup / GC) would be incorrectly tagged with the previous request's request_id.
 type ContextHandler struct {
 	next slog.Handler
 }
 
-// NewContextHandler 创建 request_id 增强的 slog handler
+// NewContextHandler create a request_id-enhanced slog handler
 func NewContextHandler(next slog.Handler) *ContextHandler {
 	return &ContextHandler{next: next}
 }
 
-// Enabled 委托给底层 handler
+// Enabled delegate to the underlying handler
 func (h *ContextHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.next.Enabled(ctx, level)
 }
 
-// Handle 从 ctx 提取 request_id 附加到记录后交给底层 handler
+// Handle extract request_id from ctx and attach it to the record before delegating to the underlying handler
 func (h *ContextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := FromContext(ctx); id != "" {
 		r.AddAttrs(slog.String("request_id", id))
@@ -60,12 +60,12 @@ func (h *ContextHandler) Handle(ctx context.Context, r slog.Record) error {
 	return h.next.Handle(ctx, r)
 }
 
-// WithAttrs 委托给底层 handler
+// WithAttrs delegate to the underlying handler
 func (h *ContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &ContextHandler{next: h.next.WithAttrs(attrs)}
 }
 
-// WithGroup 委托给底层 handler
+// WithGroup delegate to the underlying handler
 func (h *ContextHandler) WithGroup(name string) slog.Handler {
 	return &ContextHandler{next: h.next.WithGroup(name)}
 }

@@ -26,21 +26,21 @@ func setupDownloadTestHandler(t *testing.T) (*FileHandler, string, string, strin
 
 	ctx := context.Background()
 
-	// 1. 创建普通文本文件 (10 bytes)
+	// 1. Create plain text file (10 bytes)
 	const textHash = "abcdef0123456789abcdef0123456789abcdef01"
 	textContent := []byte("0123456789")
 	_ = fileRepo.Create(ctx, model.File{FileSha1: textHash, FileName: "test.txt", FileSize: int64(len(textContent))})
 	_ = fileRepo.CreateUserFile(ctx, model.UserFile{Username: "alice", FileSha1: textHash, FileName: "test.txt", Status: model.UserFileStatusActive})
 	_ = store.Put(ctx, textHash, bytes.NewReader(textContent), int64(len(textContent)))
 
-	// 2. 创建 PNG 图片文件
+	// 2. Create PNG image file
 	const imgHash = "1111222233334444555566667777888899990000"
 	imgContent := []byte("\x89PNG\r\n\x1a\nimage-data")
 	_ = fileRepo.Create(ctx, model.File{FileSha1: imgHash, FileName: "avatar.png", FileSize: int64(len(imgContent))})
 	_ = fileRepo.CreateUserFile(ctx, model.UserFile{Username: "alice", FileSha1: imgHash, FileName: "avatar.png", Status: model.UserFileStatusActive})
 	_ = store.Put(ctx, imgHash, bytes.NewReader(imgContent), int64(len(imgContent)))
 
-	// 3. 创建未知格式二进制文件
+	// 3. Create binary file with unknown format
 	const binHash = "2222333344445555666677778888999900001111"
 	binContent := []byte("plain text inside unknown ext")
 	_ = fileRepo.Create(ctx, model.File{FileSha1: binHash, FileName: "data.bin", FileSize: int64(len(binContent))})
@@ -150,7 +150,7 @@ func TestDownloadHandler_FullAndRange(t *testing.T) {
 	})
 
 	t.Run("download error cases", func(t *testing.T) {
-		// 缺少 filehash
+		// Missing filehash
 		req := httptest.NewRequest("GET", "/file/download", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -158,7 +158,7 @@ func TestDownloadHandler_FullAndRange(t *testing.T) {
 			t.Errorf("missing filehash status = %d, want 400", w.Code)
 		}
 
-		// 文件不存在
+		// File not found
 		req = httptest.NewRequest("GET", "/file/download?filehash=0000000000000000000000000000000000000000", nil)
 		w = httptest.NewRecorder()
 		r.ServeHTTP(w, req)

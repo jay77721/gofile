@@ -25,7 +25,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 		c.String(http.StatusOK, id)
 	})
 
-	// 第一个请求：header 设置 + context 往返一致 + UUID 格式
+	// First request: header set + context round-trip consistency + UUID format
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -41,7 +41,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 		t.Errorf("context request_id %q != header %q", w.Body.String(), headerID)
 	}
 
-	// 第二个请求：request_id 必须不同
+	// Second request: request_id must differ
 	req2 := httptest.NewRequest("GET", "/", nil)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
@@ -56,7 +56,7 @@ func TestFromContext_Empty(t *testing.T) {
 	}
 }
 
-// TestContextHandler 验证 ContextHandler 只在 context 携带 request_id 时附加
+// TestContextHandler verify ContextHandler only attaches when context carries request_id
 func TestContextHandler(t *testing.T) {
 	var buf bytes.Buffer
 	base := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
@@ -64,21 +64,21 @@ func TestContextHandler(t *testing.T) {
 	slog.SetDefault(slog.New(NewContextHandler(base)))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
-	// 带 request_id 的 context → 输出必须包含
+	// Context with request_id → output must contain it
 	ctx := context.WithValue(context.Background(), RequestIDKey, "test-id-123")
 	slog.InfoContext(ctx, "with id")
 	if out := buf.String(); !strings.Contains(out, "test-id-123") {
 		t.Errorf("InfoContext with id: output should contain request_id, got %q", out)
 	}
 
-	// 背景 context → 不应附加 request_id
+	// Background context → should not attach request_id
 	buf.Reset()
 	slog.InfoContext(context.Background(), "no id")
 	if out := buf.String(); strings.Contains(out, "request_id") {
 		t.Errorf("InfoContext(background): unexpected request_id in %q", out)
 	}
 
-	// 裸 slog.Info → 不应附加 request_id
+	// Bare slog.Info → should not attach request_id
 	buf.Reset()
 	slog.Info("bare")
 	if out := buf.String(); strings.Contains(out, "request_id") {

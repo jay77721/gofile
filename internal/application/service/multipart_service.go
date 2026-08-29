@@ -22,12 +22,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// UploadChunk 上传分片（用户隔离）
+// UploadChunk uploads a chunk (isolated per user).
 func (s *FileService) UploadChunk(ctx context.Context, fileHash string, index int, file io.Reader, username string) error {
 	if index < 0 {
 		return fmt.Errorf("invalid chunk index: %d", index)
 	}
-	// 已上传过的分片直接返回
+	// return early if chunk already uploaded
 	if chunkutil.ChunkExists(s.cfg.ChunkDir, username, fileHash, index) {
 		return nil
 	}
@@ -64,7 +64,7 @@ func (s *FileService) UploadChunk(ctx context.Context, fileHash string, index in
 	return nil
 }
 
-// GetChunkStatus 获取已上传的分片索引列表（用户隔离）
+// GetChunkStatus gets the list of uploaded chunk indices (isolated per user).
 func (s *FileService) GetChunkStatus(fileHash, username string) ([]string, error) {
 	chunks, err := chunkutil.GetUploadedChunks(s.cfg.ChunkDir, username, fileHash)
 	if err != nil {
@@ -80,9 +80,9 @@ func (s *FileService) GetChunkStatus(fileHash, username string) ([]string, error
 	return chunks, nil
 }
 
-// MergeChunks 合并分片（用户隔离，UUID 临时文件防冲突）
+// MergeChunks merges chunks (isolated per user, UUID temp file to avoid conflicts).
 func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, username, totalStr string) (model.FileMeta, error) {
-	// 获取分布式锁（防止同一 hash 并发 merge）
+	// acquire distributed lock (prevent concurrent merge for same hash)
 	if s.cache != nil {
 		lockToken := uuid.New().String()
 		locked, lockErr := s.cache.AcquireLock(ctx, "gofile:lock:merge:"+fileHash, lockToken, 2*time.Minute)
@@ -106,7 +106,7 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 		return model.FileMeta{}, err
 	}
 
-	// 使用 UUID 防止并发 merge 临时文件冲突
+	// use UUID to prevent concurrent merge temp file conflicts
 	uuidSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
 	tmpPath := filepath.Join(s.cfg.ChunkDir, fileHash+"."+uuidSuffix+".tmp")
 	totalSize, actualHash, err := mergeChunksToTemp(chunkDir, files, tmpPath)
@@ -118,13 +118,13 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 		return model.FileMeta{}, fmt.Errorf("%w: expected %s, got %s", ErrFileFingerprintMismatch, fileHash, actualHash)
 	}
 
-	// 上传到存储层
+	// upload to storage layer
 	if err := saveMergedFile(ctx, s.store, fileHash, tmpPath, totalSize); err != nil {
 		slog.ErrorContext(ctx, "store merged file failed", "error", err)
 		return model.FileMeta{}, fmt.Errorf("store merged file failed: %w", err)
 	}
 
-	// 注册全局文件（幂等）
+	// register global file (idempotent)
 	if err := s.fileRepo.Create(ctx, model.File{FileSha1: fileHash, FileSize: totalSize, FileAddr: fileHash}); err != nil {
 		slog.WarnContext(ctx, "save global file meta failed, rolling back", "filehash", fileHash)
 		return model.FileMeta{}, errors.Join(
@@ -134,7 +134,7 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 		)
 	}
 
-	// 建立用户拥有关系
+	// create user ownership relation
 	if err := s.fileRepo.CreateUserFile(ctx, model.UserFile{Username: username, FileSha1: fileHash, FileName: fileName, Status: model.UserFileStatusActive}); err != nil {
 		slog.WarnContext(ctx, "save user file relation failed", "error", err, "filehash", fileHash)
 		return model.FileMeta{}, errors.Join(
@@ -147,19 +147,19 @@ func (s *FileService) MergeChunks(ctx context.Context, fileHash, fileName, usern
 		slog.WarnContext(ctx, "remove merged chunk directory failed", "path", chunkDir, "error", err)
 	}
 
-	// 记入 Redis 缓存
+	// mark in Redis cache
 	s.cacheMark(ctx, fileHash)
 
-	// 触发 AI 异步分析
+	// trigger async AI analysis
 	s.enqueue(ctx, fileHash, fileName, username)
 
-	// 业务指标：分片合并成功也计入上传字节
+	// business metric: merged chunks also count toward uploaded bytes
 	metrics.AddUploadBytes(totalSize)
 	slog.InfoContext(ctx, "chunks merged", "filehash", fileHash, "filename", fileName, "size", totalSize, "username", username)
 	return model.FileMeta{FileSha1: fileHash, FileName: fileName, FileSize: totalSize, Username: username}, nil
 }
 
-// readChunkDir 读取并排序 chunk 文件，校验分块数量
+// readChunkDir reads and sorts chunk files, validating chunk count.
 func readChunkDir(chunkDir, totalStr string) ([]os.DirEntry, error) {
 	files, err := os.ReadDir(chunkDir)
 	if err != nil {
@@ -200,7 +200,7 @@ func readChunkDir(chunkDir, totalStr string) ([]os.DirEntry, error) {
 	return files, nil
 }
 
-// mergeChunksToTemp 将分片合并到临时文件
+// mergeChunksToTemp merges chunks into a temp file.
 func mergeChunksToTemp(chunkDir string, files []os.DirEntry, tmpPath string) (int64, string, error) {
 	tmpFile, err := os.Create(tmpPath)
 	if err != nil {
@@ -231,7 +231,7 @@ func mergeChunksToTemp(chunkDir string, files []os.DirEntry, tmpPath string) (in
 	return totalSize, hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// saveMergedFile 将合并后的临时文件上传到存储层
+// saveMergedFile uploads the merged temp file to the storage layer.
 func saveMergedFile(ctx context.Context, store port.Storage, fileHash, tmpPath string, totalSize int64) error {
 	tmpReader, err := os.Open(tmpPath)
 	if err != nil {
@@ -244,9 +244,9 @@ func saveMergedFile(ctx context.Context, store port.Storage, fileHash, tmpPath s
 	return store.Put(ctx, fileHash, tmpReader, totalSize)
 }
 
-// ---- S3 Multipart 直传直合 ----
+// ---- S3 Multipart direct upload & server-side merge ----
 
-// InitMultipartUpload 初始化分片直传，包含秒传判定与批量预签名 URL 签发
+// InitMultipartUpload initializes direct multipart upload, including fast-dedup check and batch presigned URL issuance.
 func (s *FileService) InitMultipartUpload(ctx context.Context, username string, req model.MultipartInitReq) (model.MultipartInitResp, error) {
 	if s.multipartRepo == nil {
 		return model.MultipartInitResp{}, fmt.Errorf("multipart repository not configured")
@@ -261,7 +261,7 @@ func (s *FileService) InitMultipartUpload(ctx context.Context, username string, 
 		return model.MultipartInitResp{}, fmt.Errorf("file name is required")
 	}
 
-	// 默认分块大小 10MB，最小 5MB（除最后一个分块外）
+	// default chunk size 10MB, minimum 5MB (except last chunk)
 	chunkSize := req.ChunkSize
 	if chunkSize <= 0 {
 		chunkSize = 10 * 1024 * 1024
@@ -270,7 +270,7 @@ func (s *FileService) InitMultipartUpload(ctx context.Context, username string, 
 		chunkSize = 5 * 1024 * 1024
 	}
 
-	// 计算目标物化路径
+	// compute target materialized path
 	targetDirPath := "/"
 	if req.ParentID != 0 {
 		parent, err := s.fileRepo.GetUserFileByID(ctx, uint(req.ParentID), username)
@@ -280,7 +280,7 @@ func (s *FileService) InitMultipartUpload(ctx context.Context, username string, 
 		targetDirPath = parent.DirPath
 	}
 
-	// 1. 秒传判定：Redis 缓存 O(1) 过滤 + 存储层确认
+	// 1. fast-dedup check: Redis cache O(1) filter + storage layer confirmation
 	var isFastUpload bool
 	if s.cache != nil {
 		seen, cacheErr := s.cache.HashExists(ctx, req.FileSha1)
@@ -314,7 +314,7 @@ func (s *FileService) InitMultipartUpload(ctx context.Context, username string, 
 	}
 
 	if isFastUpload {
-		// 秒传命中：直接绑定用户关系并触发 AI 任务
+		// fast-dedup hit: bind user relation directly and trigger AI task
 		if err := s.fileRepo.CreateUserFile(ctx, model.UserFile{
 			Username: username,
 			ParentID: req.ParentID,
@@ -331,13 +331,13 @@ func (s *FileService) InitMultipartUpload(ctx context.Context, username string, 
 		return model.MultipartInitResp{FastUpload: true}, nil
 	}
 
-	// 2. 未命中秒传：调用 S3 初始化 Multipart Upload
+	// 2. fast-dedup miss: call S3 Init Multipart Upload
 	uploadID, err := s.store.InitMultipart(ctx, req.FileSha1)
 	if err != nil {
 		return model.MultipartInitResp{}, fmt.Errorf("init s3 multipart failed: %w", err)
 	}
 
-	// 计算分片总数
+	// calculate total chunk count
 	chunkCount := int((req.FileSize + int64(chunkSize) - 1) / int64(chunkSize))
 	if chunkCount <= 0 || chunkCount > 10000 {
 		return model.MultipartInitResp{}, errors.Join(fmt.Errorf("invalid chunk count: %d", chunkCount), s.store.AbortMultipart(ctx, req.FileSha1, uploadID))
@@ -351,7 +351,7 @@ func (s *FileService) InitMultipartUpload(ctx context.Context, username string, 
 		partURLs[i-1] = u
 	}
 
-	// 持久化分片任务记录
+	// persist multipart task record
 	record := model.MultipartUpload{
 		UploadID:   uploadID,
 		FileSha1:   req.FileSha1,
@@ -378,7 +378,7 @@ func (s *FileService) InitMultipartUpload(ctx context.Context, username string, 
 	}, nil
 }
 
-// CompleteMultipartUpload 完成分片上传并在存储层原子合并
+// CompleteMultipartUpload completes multipart upload and atomically merges in the storage layer.
 func validateCompleteParts(parts []port.CompletePart, expected int) error {
 	if expected <= 0 || len(parts) != expected {
 		return fmt.Errorf("chunk count mismatch: expected %d, got %d", expected, len(parts))
@@ -410,7 +410,7 @@ func (s *FileService) CompleteMultipartUpload(ctx context.Context, username stri
 		return model.FileMeta{}, err
 	}
 
-	// 1. 在存储层完成分片合并（零后端带宽与磁盘 I/O）
+	// 1. complete multipart merge in storage layer (zero backend bandwidth and disk I/O)
 	if err := s.store.CompleteMultipart(ctx, mu.FileSha1, mu.UploadID, req.Parts); err != nil {
 		slog.ErrorContext(ctx, "s3 complete multipart failed", "upload_id", mu.UploadID, "error", err)
 		abortErr := s.store.AbortMultipart(ctx, mu.FileSha1, mu.UploadID)
@@ -439,7 +439,7 @@ func (s *FileService) CompleteMultipartUpload(ctx context.Context, username stri
 		)
 	}
 
-	// 2. 注册全局文件
+	// 2. register global file
 	if err := s.fileRepo.Create(ctx, model.File{
 		FileSha1: mu.FileSha1,
 		FileName: mu.FileName,
@@ -450,7 +450,7 @@ func (s *FileService) CompleteMultipartUpload(ctx context.Context, username stri
 		return model.FileMeta{}, errors.Join(fmt.Errorf("save file meta failed: %w", err), s.deleteStoredFile(ctx, mu.FileSha1, false))
 	}
 
-	// 计算物化路径
+	// compute materialized path
 	targetDirPath := "/"
 	if mu.ParentID != 0 {
 		if parent, err := s.fileRepo.GetUserFileByID(ctx, uint(mu.ParentID), username); err == nil {
@@ -458,7 +458,7 @@ func (s *FileService) CompleteMultipartUpload(ctx context.Context, username stri
 		}
 	}
 
-	// 3. 建立用户关联关系
+	// 3. create user association
 	if err := s.fileRepo.CreateUserFile(ctx, model.UserFile{
 		Username: username,
 		ParentID: mu.ParentID,
@@ -471,12 +471,12 @@ func (s *FileService) CompleteMultipartUpload(ctx context.Context, username stri
 		return model.FileMeta{}, errors.Join(fmt.Errorf("create user file relation failed: %w", err), s.deleteStoredFile(ctx, mu.FileSha1, true))
 	}
 
-	// 4. 更新分片元数据状态
+	// 4. update multipart metadata status
 	if err := s.multipartRepo.UpdateStatus(ctx, mu.UploadID, username, model.MultipartStatusCompleted); err != nil {
 		return model.FileMeta{}, fmt.Errorf("update multipart status failed: %w", err)
 	}
 
-	// 5. 缓存标记 + 投递 AI 分析任务
+	// 5. cache mark + dispatch AI analysis task
 	s.cacheMark(ctx, mu.FileSha1)
 	s.enqueue(ctx, mu.FileSha1, mu.FileName, username)
 	metrics.AddUploadBytes(mu.FileSize)
@@ -492,7 +492,7 @@ func (s *FileService) CompleteMultipartUpload(ctx context.Context, username stri
 	}, nil
 }
 
-// AbortMultipartUpload 取消并清理 S3 分片会话
+// AbortMultipartUpload cancels and cleans up the S3 multipart session.
 func (s *FileService) AbortMultipartUpload(ctx context.Context, username, uploadID string) error {
 	if s.multipartRepo == nil {
 		return fmt.Errorf("multipart repository not configured")

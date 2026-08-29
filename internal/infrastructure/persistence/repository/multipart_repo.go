@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// MultipartRepository 分片直传元数据仓储接口
+// MultipartRepository is the multipart direct-upload metadata repository interface
 type MultipartRepository interface {
 	Create(ctx context.Context, mu model.MultipartUpload) error
 	GetByUploadID(ctx context.Context, uploadID, username string) (model.MultipartUpload, error)
@@ -23,7 +23,7 @@ type mysqlMultipartRepo struct {
 	db *gorm.DB
 }
 
-// NewMultipartRepository 创建 GORM 分片直传仓库
+// NewMultipartRepository creates a GORM multipart direct-upload repository
 func NewMultipartRepository(db *gorm.DB) MultipartRepository {
 	return &mysqlMultipartRepo{db: db}
 }
@@ -74,13 +74,13 @@ func (r *mysqlMultipartRepo) Delete(ctx context.Context, uploadID string) error 
 	return nil
 }
 
-// MockMultipartRepository 内存 Mock 分片直传仓储
+// MockMultipartRepository is an in-memory mock multipart direct-upload repository
 type MockMultipartRepository struct {
 	mu      sync.RWMutex
 	records map[string]model.MultipartUpload
 }
 
-// NewMockMultipartRepository 创建内存 Mock 分片仓储
+// NewMockMultipartRepository creates an in-memory mock multipart repository
 func NewMockMultipartRepository() *MockMultipartRepository {
 	return &MockMultipartRepository{
 		records: make(map[string]model.MultipartUpload),

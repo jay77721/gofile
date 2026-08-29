@@ -119,7 +119,7 @@ func TestVFS_RenameFolderOrFile(t *testing.T) {
 	svc := NewFileService(repo, store, nil)
 	ctx := context.Background()
 
-	// 1. 创建文件夹树 /Media/Photos/
+	// 1. Create folder tree /Media/Photos/
 	media, err := svc.CreateFolder(ctx, "alice", model.FolderCreateReq{Name: "Media", ParentID: 0})
 	if err != nil {
 		t.Fatalf("create Media failed: %v", err)
@@ -129,7 +129,7 @@ func TestVFS_RenameFolderOrFile(t *testing.T) {
 		t.Fatalf("create Photos failed: %v", err)
 	}
 
-	// 2. 创建子文件
+	// 2. Create child file
 	if err := repo.CreateUserFile(ctx, model.UserFile{
 		Username: "alice",
 		ParentID: uint64(photos.ID),
@@ -151,13 +151,13 @@ func TestVFS_RenameFolderOrFile(t *testing.T) {
 			t.Fatalf("RenameFolderOrFile failed: %v", err)
 		}
 
-		// 验证根文件夹新路径
+		// Verify new path of root folder
 		updatedMedia, err := repo.GetUserFileByID(ctx, media.ID, "alice")
 		if err != nil || updatedMedia.DirPath != "/Assets/" || updatedMedia.FileName != "Assets" {
 			t.Fatalf("updated media = %+v, want DirPath /Assets/, name Assets", updatedMedia)
 		}
 
-		// 验证子文件夹前缀自动更新
+		// Verify child folder prefix auto-updated
 		updatedPhotos, err := repo.GetUserFileByID(ctx, photos.ID, "alice")
 		if err != nil || updatedPhotos.DirPath != "/Assets/Photos/" {
 			t.Fatalf("updated photos = %+v, want DirPath /Assets/Photos/", updatedPhotos)
@@ -223,7 +223,7 @@ func TestVFS_MoveFolderOrFile_And_CyclePrevention(t *testing.T) {
 	svc := NewFileService(repo, store, nil)
 	ctx := context.Background()
 
-	// 结构初始化：
+	// Initialize structure:
 	// /A/
 	// /A/B/
 	// /A/B/C/
@@ -287,13 +287,13 @@ func TestVFS_MoveFolderOrFile_And_CyclePrevention(t *testing.T) {
 			t.Fatalf("valid move failed: %v", err)
 		}
 
-		// 验证 B 的新路径为 /Target/B/ 且 ParentID 为 target.ID
+		// Verify new path of B is /Target/B/ and ParentID is target.ID
 		updatedB, err := repo.GetUserFileByID(ctx, folderB.ID, "alice")
 		if err != nil || updatedB.DirPath != "/Target/B/" || updatedB.ParentID != uint64(target.ID) {
 			t.Fatalf("updated B = %+v, want DirPath /Target/B/, ParentID %d", updatedB, target.ID)
 		}
 
-		// 验证 B 的子目录 C 前缀自动更新为 /Target/B/C/
+		// Verify prefix of B's child C auto-updated to /Target/B/C/
 		updatedC, err := repo.GetUserFileByID(ctx, folderC.ID, "alice")
 		if err != nil || updatedC.DirPath != "/Target/B/C/" {
 			t.Fatalf("updated C = %+v, want DirPath /Target/B/C/", updatedC)
@@ -317,11 +317,11 @@ func TestVFS_QueryDirectory_And_Breadcrumbs(t *testing.T) {
 	svc := NewFileService(repo, store, nil)
 	ctx := context.Background()
 
-	// 1. 创建 /RootFolder/SubFolder/
+	// 1. Create /RootFolder/SubFolder/
 	rootFolder, _ := svc.CreateFolder(ctx, "alice", model.FolderCreateReq{Name: "RootFolder", ParentID: 0})
 	subFolder, _ := svc.CreateFolder(ctx, "alice", model.FolderCreateReq{Name: "SubFolder", ParentID: uint64(rootFolder.ID)})
 
-	// 2. 在 rootFolder 与 subFolder 下添加文件
+	// 2. Add files under rootFolder and subFolder
 	_ = repo.Create(ctx, model.File{FileSha1: "hash1", FileSize: 100})
 	_ = repo.Create(ctx, model.File{FileSha1: "hash2", FileSize: 200})
 	_ = repo.CreateUserFile(ctx, model.UserFile{
@@ -365,7 +365,7 @@ func TestVFS_QueryDirectory_And_Breadcrumbs(t *testing.T) {
 			t.Errorf("files = %+v, total = %d, want doc2.pdf", files, total)
 		}
 
-		// 面包屑应为: 全部文件(/) -> RootFolder(/RootFolder/) -> SubFolder(/RootFolder/SubFolder/)
+		// Breadcrumbs should be: All Files (/) -> RootFolder(/RootFolder/) -> SubFolder(/RootFolder/SubFolder/)
 		if len(crumbs) != 3 {
 			t.Fatalf("expected 3 breadcrumbs, got %d: %+v", len(crumbs), crumbs)
 		}

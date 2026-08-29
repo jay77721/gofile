@@ -9,12 +9,12 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-// Client Asynq 生产者封装，投递 AI 分析任务到 Redis 持久化队列
+// Client is an Asynq producer wrapper that dispatches AI analysis tasks to a Redis-persisted queue
 type Client struct {
 	c *asynq.Client
 }
 
-// NewClient 创建 Asynq 生产者客户端
+// NewClient creates an Asynq producer client
 func NewClient(redisAddr, redisPassword string, redisDB int) *Client {
 	return &Client{
 		c: asynq.NewClient(asynq.RedisClientOpt{
@@ -25,8 +25,8 @@ func NewClient(redisAddr, redisPassword string, redisDB int) *Client {
 	}
 }
 
-// Enqueue 投递 AI 分析任务（非阻塞，由 ai.Processor 在 Asynq 不可用时降级到内存 chan）
-// 实现 port.TaskEnqueuer 接口
+// Enqueue dispatches an AI analysis task (non-blocking, falls back to in-memory chan via ai.Processor when Asynq is unavailable)
+// Implements the port.TaskEnqueuer interface
 func (c *Client) Enqueue(ctx context.Context, filehash, filename, username string) error {
 	payload, err := json.Marshal(AIAnalyzePayload{
 		Filehash: filehash,
@@ -41,12 +41,12 @@ func (c *Client) Enqueue(ctx context.Context, filehash, filename, username strin
 		asynq.MaxRetry(maxRetry),
 		asynq.Timeout(defaultTimeout),
 		asynq.Queue("ai"),
-		// Retention: 任务完成后保留 24h，供 Asynq Inspector 查看
+		// Retention: keep task for 24h after completion for Asynq Inspector
 		asynq.Retention(24*time.Hour),
 	)
 
 	_, err = c.c.EnqueueContext(ctx, t,
-		// 已在队列/处理中时不重复投递（幂等）
+		// Do not re-enqueue if already queued/processing (idempotent)
 		asynq.TaskID(username+":"+filehash),
 	)
 	if err != nil && err != asynq.ErrTaskIDConflict {
@@ -55,7 +55,7 @@ func (c *Client) Enqueue(ctx context.Context, filehash, filename, username strin
 	return nil
 }
 
-// Close 关闭客户端连接
+// Close closes the client connection
 func (c *Client) Close() error {
 	return c.c.Close()
 }

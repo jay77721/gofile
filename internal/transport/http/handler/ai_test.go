@@ -29,7 +29,7 @@ func TestAIHandler_SearchHandler_MissingQ(t *testing.T) {
 
 func TestAIHandler_SearchHandler_OK(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	// 注入 mock provider，使 Embed 走确定性向量（indexer 为 nil 时走 fallbackLike）
+	// Inject mock provider so Embed uses deterministic vectors (fallback to Like search when indexer is nil)
 	provider := ai.NewMockProvider(16)
 	repo := repository.NewMockFileRepository()
 	h := NewAIHandler(service.NewAIService(nil, provider, repo))
@@ -82,7 +82,7 @@ func TestAIHandler_DuplicatesHandler_MissingFilehash(t *testing.T) {
 	}
 }
 
-// withAuth 注入测试用的 username（模拟 AuthMiddleware 行为）
+// withAuth inject test username (simulates AuthMiddleware behavior)
 func withAuth(h gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set("username", "testuser")

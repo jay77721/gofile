@@ -51,7 +51,7 @@ func TestVFS_CreateFolderHandler(t *testing.T) {
 	})
 
 	t.Run("create subfolder success", func(t *testing.T) {
-		// 先创建根目录
+		// Create root directory first
 		body, _ := json.Marshal(model.FolderCreateReq{Name: "Projects", ParentID: 0})
 		req := httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -64,7 +64,7 @@ func TestVFS_CreateFolderHandler(t *testing.T) {
 		_ = json.Unmarshal(w.Body.Bytes(), &rootResp)
 		rootID := rootResp.Data.ID
 
-		// 创建子目录
+		// Create subdirectory
 		subBody, _ := json.Marshal(model.FolderCreateReq{Name: "Backend", ParentID: uint64(rootID)})
 		subReq := httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(subBody))
 		subReq.Header.Set("Content-Type", "application/json")
@@ -116,7 +116,7 @@ func TestVFS_RenameFolderHandler(t *testing.T) {
 	fh, _, _ := setupTestHandler(t)
 	r := setupVFSAuthRouter(fh, "alice")
 
-	// 1. 创建文件夹
+	// 1. Create folder
 	body, _ := json.Marshal(model.FolderCreateReq{Name: "OldName", ParentID: 0})
 	req := httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -147,7 +147,7 @@ func TestVFS_RenameFolderHandler(t *testing.T) {
 	})
 
 	t.Run("invalid rename params return 400", func(t *testing.T) {
-		// 空名称
+		// Empty name
 		renameBody, _ := json.Marshal(model.FolderRenameReq{FileID: folderID, NewName: ""})
 		renameReq := httptest.NewRequest("POST", "/file/folder/rename", bytes.NewReader(renameBody))
 		renameReq.Header.Set("Content-Type", "application/json")
@@ -157,7 +157,7 @@ func TestVFS_RenameFolderHandler(t *testing.T) {
 			t.Errorf("status = %d, want 400", renameW.Code)
 		}
 
-		// 非法字符
+		// Illegal characters
 		renameBody, _ = json.Marshal(model.FolderRenameReq{FileID: folderID, NewName: "bad/name"})
 		renameReq = httptest.NewRequest("POST", "/file/folder/rename", bytes.NewReader(renameBody))
 		renameReq.Header.Set("Content-Type", "application/json")
@@ -167,7 +167,7 @@ func TestVFS_RenameFolderHandler(t *testing.T) {
 			t.Errorf("status = %d, want 400", renameW.Code)
 		}
 
-		// 不存在的 file_id
+		// Non-existent file_id
 		renameBody, _ = json.Marshal(model.FolderRenameReq{FileID: 99999, NewName: "valid"})
 		renameReq = httptest.NewRequest("POST", "/file/folder/rename", bytes.NewReader(renameBody))
 		renameReq.Header.Set("Content-Type", "application/json")
@@ -183,7 +183,7 @@ func TestVFS_MoveFolderHandler(t *testing.T) {
 	fh, _, _ := setupTestHandler(t)
 	r := setupVFSAuthRouter(fh, "alice")
 
-	// 初始化文件夹结构：/FolderA/FolderB/ 与 /FolderTarget/
+	// Initialize folder structure: /FolderA/FolderB/ and /FolderTarget/
 	bodyA, _ := json.Marshal(model.FolderCreateReq{Name: "FolderA", ParentID: 0})
 	reqA := httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(bodyA))
 	reqA.Header.Set("Content-Type", "application/json")
@@ -258,14 +258,14 @@ func TestVFS_DirectoryQueryHandler(t *testing.T) {
 	fh, _, _ := setupTestHandler(t)
 	r := setupVFSAuthRouter(fh, "alice")
 
-	// 1. 创建 /RootDocs/
+	// 1. Create /RootDocs/
 	body, _ := json.Marshal(model.FolderCreateReq{Name: "RootDocs", ParentID: 0})
 	req := httptest.NewRequest("POST", "/file/folder/create", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	// 2. 查询根目录 parent_id=0
+	// 2. Query root directory parent_id=0
 	queryReq := httptest.NewRequest("GET", "/file/query?parent_id=0&page=1&size=20", nil)
 	queryW := httptest.NewRecorder()
 	r.ServeHTTP(queryW, queryReq)

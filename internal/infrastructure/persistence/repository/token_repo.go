@@ -9,22 +9,22 @@ import (
 	"gorm.io/gorm"
 )
 
-// TokenRepository 用户 token 数据访问接口
+// TokenRepository is the user token data access interface
 type TokenRepository interface {
-	// Upsert 创建或更新 token
+	// Upsert creates or updates a token
 	Upsert(ctx context.Context, username, token string, expiredAt time.Time) (bool, error)
-	// Get 获取用户 token
+	// Get retrieves a user token
 	Get(ctx context.Context, username string) (model.Token, error)
-	// Delete 删除用户 token（登出）
+	// Delete deletes a user token (logout)
 	Delete(ctx context.Context, username string) error
 }
 
-// mysqlTokenRepo GORM 实现的 TokenRepository
+// mysqlTokenRepo is the GORM implementation of TokenRepository
 type mysqlTokenRepo struct {
 	db *gorm.DB
 }
 
-// NewTokenRepository 创建 GORM token 仓库
+// NewTokenRepository creates a GORM token repository
 func NewTokenRepository(db *gorm.DB) TokenRepository {
 	return &mysqlTokenRepo{db: db}
 }
@@ -36,7 +36,7 @@ func (r *mysqlTokenRepo) Upsert(ctx context.Context, username, token string, exp
 		UpdateAt:  time.Now(),
 		ExpiredAt: expiredAt,
 	}
-	// 使用 Save 实现 upsert（主键存在则更新，不存在则创建）
+	// Use Save to implement upsert (update if primary key exists, create otherwise)
 	if err := r.db.WithContext(ctx).Save(&t).Error; err != nil {
 		return false, fmt.Errorf("upsert token failed: %w", err)
 	}
@@ -59,14 +59,14 @@ func (r *mysqlTokenRepo) Delete(ctx context.Context, username string) error {
 	return nil
 }
 
-// ---- Mock 实现 ----
+// ---- Mock implementation ----
 
-// mockTokenRepo 内存 mock token 仓库
+// mockTokenRepo is an in-memory mock token repository
 type mockTokenRepo struct {
 	tokens map[string]model.Token
 }
 
-// NewMockTokenRepository 创建 mock token 仓库
+// NewMockTokenRepository creates a mock token repository
 func NewMockTokenRepository() TokenRepository {
 	return &mockTokenRepo{tokens: make(map[string]model.Token)}
 }
@@ -93,6 +93,6 @@ func (m *mockTokenRepo) Delete(ctx context.Context, username string) error {
 	return nil
 }
 
-// 确保编译时检查接口实现
+// Ensure interface implementation is checked at compile time
 var _ TokenRepository = (*mysqlTokenRepo)(nil)
 var _ TokenRepository = (*mockTokenRepo)(nil)

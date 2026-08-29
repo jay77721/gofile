@@ -25,7 +25,7 @@ async function create(): Promise<void> {
     fd.append('days', String(days.value));
     if (pwd.value) fd.append('password', pwd.value);
     const d = await apiPost<{ url: string }>('/file/share', fd);
-    // 有提取码时链接附带 pwd,接收者可直接打开
+    // When an access code is set, the link includes pwd so the recipient can open it directly
     url.value = location.origin + d.url + (pwd.value ? '?pwd=' + encodeURIComponent(pwd.value) : '');
     toast('分享成功', 'ok');
   } catch (e) {

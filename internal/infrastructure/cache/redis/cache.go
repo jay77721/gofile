@@ -8,12 +8,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Client 封装 go-redis 客户端
+// Client wraps the go-redis client
 type Client struct {
 	rdb *redis.Client
 }
 
-// New 创建 Redis 客户端，连接失败返回 err
+// New creates a Redis client, returns err on connection failure
 func New(addr, password string, db int) (*Client, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr,
@@ -31,17 +31,17 @@ func New(addr, password string, db int) (*Client, error) {
 	return &Client{rdb: rdb}, nil
 }
 
-// Ping 健康检查
+// Ping performs a health check
 func (c *Client) Ping(ctx context.Context) error {
 	return c.rdb.Ping(ctx).Err()
 }
 
-// Close 关闭连接池
+// Close closes the connection pool
 func (c *Client) Close() error {
 	return c.rdb.Close()
 }
 
-// Rdb 返回底层 redis.Client，供 ratelimit 等模块直接使用 Lua 脚本
+// Rdb returns the underlying redis.Client for direct Lua script usage by modules such as rate limiting
 func (c *Client) Rdb() *redis.Client {
 	return c.rdb
 }

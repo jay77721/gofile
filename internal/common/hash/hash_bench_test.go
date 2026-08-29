@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// 压测基准:文件哈希计算(上传/秒传主路径)
-// 运行: go test ./util/ -bench Benchmark -benchmem
+// Benchmark: file hash computation (upload/fast-dedup hot path)
+// Run: go test ./util/ -bench Benchmark -benchmem
 
 func BenchmarkSha1_1MB(b *testing.B) {
 	data := bytes.Repeat([]byte("gofile-bench-"), 1<<20/12)

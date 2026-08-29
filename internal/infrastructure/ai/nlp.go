@@ -5,20 +5,20 @@ import (
 	"time"
 )
 
-// QueryFilter 对话式查询解析出的结构化过滤条件
+// QueryFilter is the structured filter condition parsed from a conversational query
 type QueryFilter struct {
-	TimeRange     *TimeRange // 时间范围（命中时间短语时为非 nil）
-	TypeFilter    string     // Typesense filter_by 片段（如 tags:=[图片]），空表示无类型约束
-	SemanticQuery string     // 去除停用词后的语义查询词，传给全文+向量检索
+	TimeRange     *TimeRange // time range (non-nil when a time phrase is matched)
+	TypeFilter    string     // Typesense filter_by fragment (e.g., tags:=[image]), empty means no type constraint
+	SemanticQuery string     // semantic query term after stopword removal, passed to full-text + vector search
 }
 
-// TimeRange 时间范围（Unix 毫秒，对应 Typesense created_at int64 字段）
+// TimeRange is the time range (Unix milliseconds, corresponding to Typesense created_at int64 field)
 type TimeRange struct {
-	Start int64 // >= Start，0 表示不限制
-	End   int64 // < End，0 表示不限制
+	Start int64 // >= Start, 0 means no limit
+	End   int64 // < End, 0 means no limit
 }
 
-// timePhrase 时间短语定义（按优先级排序，先匹配长的）
+// timePhrase defines a time phrase (sorted by priority, longer matches first)
 type timePhrase struct {
 	keywords []string
 	callback func(now time.Time) *TimeRange
@@ -96,7 +96,7 @@ var timePhrases = []timePhrase{
 	},
 }
 
-// typePhrase 类型短语定义
+// typePhrase defines a type phrase
 type typePhrase struct {
 	keywords []string
 	filter   string
@@ -113,12 +113,12 @@ var typePhrases = []typePhrase{
 	{[]string{"压缩", "zip", "压缩包", "压缩文件", "archive"}, "tags:=[压缩包]"},
 }
 
-// ParseQuery 将用户自然语言查询解析为结构化过滤 + 语义查询
+// ParseQuery parses a user's natural language query into structured filters + semantic query
 //
-// 解析流程（逐层剥离，避免子串替换互相干扰）：
-//  1. 提取时间短语 → created_at 范围，从文本中移除已匹配部分
-//  2. 提取类型词 → tags filter，从文本中移除已匹配部分
-//  3. 剩余文本去停用词 → SemanticQuery
+// Parsing flow (peel layer by layer to avoid substring replacement interference):
+//  1. Extract time phrase -> created_at range, remove matched part from text
+//  2. Extract type term -> tags filter, remove matched part from text
+//  3. Remove stopwords from remaining text -> SemanticQuery
 func ParseQuery(q string) *QueryFilter {
 	f := &QueryFilter{}
 	if q == "" {
@@ -127,30 +127,30 @@ func ParseQuery(q string) *QueryFilter {
 
 	rest := q
 
-	// 1. 提取时间短语
+	// 1. Extract time phrase
 	if tr, matched, ok := matchTimeRange(rest); ok {
 		f.TimeRange = tr
 		rest = removeFirst(rest, matched)
 	}
 
-	// 2. 提取类型词
+	// 2. Extract type term
 	if tf, matched := matchTypeFilter(rest); tf != "" {
 		f.TypeFilter = tf
 		rest = removeFirst(rest, matched)
 	}
 
-	// 3. 对剩余文本去停用词
+	// 3. Remove stopwords from remaining text
 	f.SemanticQuery = stripStopwords(rest)
 	return f
 }
 
-// matchTimeRange 识别时间短语，返回范围及匹配到的关键词
+// matchTimeRange identifies time phrases and returns the range and matched keyword
 func matchTimeRange(s string) (*TimeRange, string, bool) {
 	now := time.Now()
 	lower := strings.ToLower(s)
 
-	// "最近 N 天" 优先解析：若先走 timePhrases，"最近"条目会抢先用默认 7 天命中，
-	// 使 parseNDays 成为死代码，"最近3天" 等查询会错误返回 7 天范围
+	// "Last N days" is parsed first: if timePhrases is checked first, the "recent" entry would match with the default 7 days,
+	// making parseNDays dead code, and queries like "last 3 days" would incorrectly return a 7-day range
 	if strings.Contains(lower, "最近") {
 		if n, ok := parseNDays(lower); ok {
 			return &TimeRange{Start: now.AddDate(0, 0, -n).UnixMilli()}, "最近", true
@@ -168,7 +168,7 @@ func matchTimeRange(s string) (*TimeRange, string, bool) {
 	return nil, "", false
 }
 
-// matchTypeFilter 识别类型词，返回 filter 及匹配到的关键词
+// matchTypeFilter identifies type terms and returns the filter and matched keyword
 func matchTypeFilter(s string) (string, string) {
 	lower := strings.ToLower(s)
 	for _, tp := range typePhrases {
@@ -181,14 +181,14 @@ func matchTypeFilter(s string) (string, string) {
 	return "", ""
 }
 
-// stopwords 查询停用词表
+// stopwords is the query stopword list
 var stopwords = []string{
 	"的", "了", "和", "与", "或", "在", "是", "有", "找", "一下", "一个", "那份",
 	"那个", "这个", "什么", "哪些", "帮我", "请", "给", "我",
 	"上", "下",
 }
 
-// stripStopwords 去掉查询中的停用词，保留语义关键词
+// stripStopwords removes stopwords from the query, preserving semantic keywords
 func stripStopwords(s string) string {
 	out := s
 	for _, sw := range stopwords {
@@ -198,7 +198,7 @@ func stripStopwords(s string) string {
 	return out
 }
 
-// removeFirst 从字符串中移除首次出现的子串
+// removeFirst removes the first occurrence of a substring from a string
 func removeFirst(s, sub string) string {
 	if sub == "" {
 		return s
@@ -206,7 +206,7 @@ func removeFirst(s, sub string) string {
 	return strings.Replace(s, sub, " ", 1)
 }
 
-// parseNDays 解析"最近 N 天"中的 N
+// parseNDays parses N from "last N days"
 func parseNDays(lower string) (int, bool) {
 	s := strings.ReplaceAll(lower, " ", "")
 	if strings.HasPrefix(s, "最近") && strings.HasSuffix(s, "天") {

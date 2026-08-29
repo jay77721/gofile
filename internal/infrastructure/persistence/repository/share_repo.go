@@ -10,26 +10,26 @@ import (
 	"gorm.io/gorm"
 )
 
-// ShareRepository 文件分享数据访问接口
+// ShareRepository is the file sharing data access interface
 type ShareRepository interface {
-	// CreateShare 创建分享
+	// CreateShare creates a share
 	CreateShare(ctx context.Context, s *model.Share) error
-	// GetShareByToken 按令牌查询分享
+	// GetShareByToken queries a share by token
 	GetShareByToken(ctx context.Context, token string) (*model.Share, error)
-	// ListShares 列出用户的分享
+	// ListShares lists shares for a user
 	ListShares(ctx context.Context, username string) ([]model.Share, error)
-	// DeleteShare 撤销分享（校验归属）
+	// DeleteShare revokes a share (verify ownership)
 	DeleteShare(ctx context.Context, token, username string) (bool, error)
-	// DeleteExpired 清理过期分享
+	// DeleteExpired cleans up expired shares
 	DeleteExpired(ctx context.Context, before time.Time) error
 }
 
-// mysqlShareRepo GORM 实现的 ShareRepository
+// mysqlShareRepo is the GORM implementation of ShareRepository
 type mysqlShareRepo struct {
 	db *gorm.DB
 }
 
-// NewShareRepository 创建 GORM 分享仓库
+// NewShareRepository creates a GORM share repository
 func NewShareRepository(db *gorm.DB) ShareRepository {
 	return &mysqlShareRepo{db: db}
 }
@@ -72,15 +72,15 @@ func (r *mysqlShareRepo) DeleteExpired(ctx context.Context, before time.Time) er
 	return nil
 }
 
-// ---- Mock 实现 ----
+// ---- Mock implementation ----
 
-// mockShareRepo 内存 mock 分享仓库
+// mockShareRepo is an in-memory mock share repository
 type mockShareRepo struct {
 	mu     sync.Mutex
 	shares map[string]*model.Share // key: share_token
 }
 
-// NewMockShareRepository 创建 mock 分享仓库
+// NewMockShareRepository creates a mock share repository
 func NewMockShareRepository() ShareRepository {
 	return &mockShareRepo{shares: make(map[string]*model.Share)}
 }
@@ -138,6 +138,6 @@ func (m *mockShareRepo) DeleteExpired(ctx context.Context, before time.Time) err
 	return nil
 }
 
-// 确保编译时检查接口实现
+// Ensure interface implementation is checked at compile time
 var _ ShareRepository = (*mysqlShareRepo)(nil)
 var _ ShareRepository = (*mockShareRepo)(nil)

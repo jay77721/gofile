@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Requeuer 重新入队失败任务的能力，由 AI Processor 提供。
+// Requeuer is the capability to re-enqueue failed tasks, provided by the AI Processor.
 type Requeuer interface {
 	RequeueFailed(ctx context.Context) int
 }
@@ -244,9 +244,9 @@ func (m *Manager) runSoftDeleteGC(ctx context.Context) {
 	})
 }
 
-// runTicker 周期执行 fn，直到 ctx 取消。需要启动即执行一次的调用方应在
-// 调用 runTicker 前显式执行一次（如 runMultipartCleanup / runSoftDeleteGC），
-// 保持职责单一，避免 runImmediately 布尔参数的歧义。
+// runTicker periodically executes fn until ctx is canceled. Callers that need an immediate first run should
+// explicitly run once before calling runTicker (e.g., runMultipartCleanup / runSoftDeleteGC),
+// to keep single responsibility and avoid ambiguity of a runImmediately boolean.
 func runTicker(ctx context.Context, interval time.Duration, fn func()) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

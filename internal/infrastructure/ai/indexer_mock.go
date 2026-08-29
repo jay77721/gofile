@@ -8,16 +8,16 @@ import (
 	"sync"
 )
 
-// MockIndexer 内存版 Indexer（测试用，无外部依赖）
+// MockIndexer is an in-memory Indexer (for testing, no external dependencies)
 //
-// 实现极简语义：按 filename/summary 子串匹配 + 向量余弦相似度排序。
-// 仅用于单测验证编排逻辑，不替代真实 Typesense 行为。
+// Implements minimal semantics: substring matching on filename/summary + vector cosine similarity ranking.
+// Only used to verify orchestration logic in unit tests, not a replacement for real Typesense behavior.
 type MockIndexer struct {
 	mu   sync.RWMutex
 	docs map[string]*port.Doc // key: username:filehash
 }
 
-// NewMockIndexer 创建内存 mock 检索引擎
+// NewMockIndexer creates an in-memory mock search engine
 func NewMockIndexer() *MockIndexer {
 	return &MockIndexer{docs: make(map[string]*port.Doc)}
 }
@@ -51,7 +51,7 @@ func (m *MockIndexer) SearchHybrid(ctx context.Context, q, username string, vect
 	}
 	m.mu.RUnlock()
 
-	// 子串匹配打分
+	// Substring matching and scoring
 	q = strings.ToLower(q)
 	var scored []port.Doc
 	for _, d := range all {
@@ -78,7 +78,7 @@ func (m *MockIndexer) SearchHybrid(ctx context.Context, q, username string, vect
 		}
 	}
 
-	// 简单分页
+	// Simple pagination
 	start := (page - 1) * size
 	if start < 0 {
 		start = 0
@@ -114,7 +114,7 @@ func (m *MockIndexer) Similar(_ context.Context, username string, vector []float
 	}
 	m.mu.RUnlock()
 
-	// 余弦相似度排序
+	// Sort by cosine similarity
 	type scoredDoc struct {
 		doc   port.Doc
 		score float64
@@ -124,7 +124,7 @@ func (m *MockIndexer) Similar(_ context.Context, username string, vector []float
 		s := cosine(vector, d.ContentVec)
 		scored = append(scored, scoredDoc{doc: *d, score: s})
 	}
-	// 按分数降序
+	// Sort by score descending
 	for i := 0; i < len(scored); i++ {
 		for j := i + 1; j < len(scored); j++ {
 			if scored[j].score > scored[i].score {
@@ -142,7 +142,7 @@ func (m *MockIndexer) Similar(_ context.Context, username string, vector []float
 	return out, nil
 }
 
-// cosine 余弦相似度（零向量返回 0）
+// cosine computes cosine similarity (returns 0 for zero vectors)
 func cosine(a, b []float32) float64 {
 	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
 		return 0

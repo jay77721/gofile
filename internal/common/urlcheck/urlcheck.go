@@ -6,11 +6,11 @@ import (
 	"net/url"
 )
 
-// ValidatePublicURL 校验自定义 LLM 端点 URL:
-//   - 仅允许 http/https
-//   - 默认拒绝私有网段(防 SSRF);allowPrivate=true 时放行(个人部署接本地 Ollama/vLLM 使用)
+// ValidatePublicURL validates a custom LLM endpoint URL:
+//   - only http/https are allowed
+//   - private networks are rejected by default (SSRF protection); allowed when allowPrivate=true (for local Ollama/vLLM deployments)
 //
-// 注意:此处做 DNS 解析校验,极端 DNS rebinding 场景需在连接层加固,超出网盘范围。
+// Note: this does DNS resolution validation; extreme DNS rebinding cases need hardening at the connection layer, out of scope for file service.
 func ValidatePublicURL(rawURL string, allowPrivate bool) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -29,7 +29,7 @@ func ValidatePublicURL(rawURL string, allowPrivate bool) error {
 	host := u.Hostname()
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		// 域名解析失败:若本身是 IP 字面量则直接使用,否则报错
+		// DNS resolution failed: if host itself is an IP literal use it directly, otherwise error
 		if ip := net.ParseIP(host); ip != nil {
 			ips = []net.IP{ip}
 		} else {
@@ -44,16 +44,16 @@ func ValidatePublicURL(rawURL string, allowPrivate bool) error {
 	return nil
 }
 
-// isPrivateIP 判断 IP 是否属于私有/保留网段
-// 覆盖:loopback(127/8、::1)、RFC1918(10/8、172.16/12、192.168/16)、
-// 链路本地(169.254/16、fe80::/10)、IPv6 ULA(fc00::/7)、未指定地址
+// isPrivateIP checks whether an IP belongs to private/reserved ranges.
+// Covers: loopback (127/8, ::1), RFC1918 (10/8, 172.16/12, 192.168/16),
+// link-local (169.254/16, fe80::/10), IPv6 ULA (fc00::/7), unspecified address.
 func isPrivateIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 		return true
 	}
 	if ip4 := ip.To4(); ip4 != nil {
-		// 169.254.0.0/16 兜底(IsLinkLocalUnicast 对 IPv4 也应覆盖,此处双保险)
+		// 169.254.0.0/16 fallback (IsLinkLocalUnicast should also cover IPv4, double-checked here)
 		return ip4[0] == 169 && ip4[1] == 254
 	}
 	return false

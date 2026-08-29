@@ -7,7 +7,7 @@ import (
 	pdf "rsc.io/pdf"
 )
 
-// readPDF 用 rsc.io/pdf 打开 PDF，返回 *pdf.Reader
+// readPDF opens a PDF with rsc.io/pdf and returns *pdf.Reader
 func readPDF(r io.ReaderAt, size int64) (*pdf.Reader, error) {
 	rdr, err := pdf.NewReader(r, size)
 	if err != nil {

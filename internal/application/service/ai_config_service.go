@@ -15,20 +15,20 @@ import (
 	"gofile/internal/port"
 )
 
-// providerCacheTTL 用户 Provider 解析结果的内存缓存时长
+// providerCacheTTL is the in-memory cache TTL for per-user Provider resolution.
 const providerCacheTTL = 5 * time.Minute
 
-// errAPIKeyRequired 保存配置时既无新 key 也无旧 key
+// errAPIKeyRequired is returned when saving config with neither new nor existing key.
 var errAPIKeyRequired = fmt.Errorf("api key is required")
 
-// AIConfigService 用户级 AI Provider 配置管理
+// AIConfigService manages per-user AI Provider configuration.
 //
-// 生效优先级:用户配置(DB)→ env 系统默认 → mock 降级。
-// API key 使用 AES-GCM 加密落库,任何接口只回传掩码。
+// Effective priority: user config (DB) -> env system default -> mock fallback.
+// API keys are encrypted with AES-GCM before storage; all endpoints return only masked values.
 type AIConfigService struct {
 	repo     port.AIConfigRepository
 	cfg      *config.Config
-	defaultP port.Provider // env 系统默认 provider(ResolveProvider 的回退目标由调用方处理)
+	defaultP port.Provider // env system default provider (fallback target of ResolveProvider is handled by caller)
 
 	mu    sync.Mutex
 	cache map[string]cachedProvider
@@ -39,7 +39,7 @@ type cachedProvider struct {
 	at   time.Time
 }
 
-// NewAIConfigService 创建用户 AI 配置服务
+// NewAIConfigService creates the user AI configuration service.
 func NewAIConfigService(repo port.AIConfigRepository, cfg *config.Config, defaultP port.Provider) *AIConfigService {
 	return &AIConfigService{
 		repo:     repo,
@@ -49,8 +49,8 @@ func NewAIConfigService(repo port.AIConfigRepository, cfg *config.Config, defaul
 	}
 }
 
-// ResolveProvider 解析用户名生效的 Provider(用户配置优先),无配置或解析失败返回 nil
-// 供 Processor / AIService 注入;带 5min 内存缓存
+// ResolveProvider resolves the effective Provider for a username (user config takes precedence); returns nil if no config or resolution fails.
+// For injection into Processor / AIService; includes 5min in-memory cache.
 func (s *AIConfigService) ResolveProvider(ctx context.Context, username string) port.Provider {
 	if s == nil || username == "" {
 		return nil
@@ -65,7 +65,7 @@ func (s *AIConfigService) ResolveProvider(ctx context.Context, username string) 
 
 	cfg, err := s.repo.Get(username)
 	if err != nil {
-		return nil // 无用户配置 → 调用方回退默认
+		return nil // no user config -> caller falls back to default
 	}
 	if cfg.APIKeyEnc == "" {
 		return nil
@@ -83,12 +83,12 @@ func (s *AIConfigService) ResolveProvider(ctx context.Context, username string) 
 	return prov
 }
 
-// GetView 返回前端展示视图(API key 仅掩码)
+// GetView returns the frontend display view (API key masked only).
 func (s *AIConfigService) GetView(ctx context.Context, username string) (*model.AIConfigView, error) {
 	view := &model.AIConfigView{Mode: "mock"}
 	cfg, err := s.repo.Get(username)
 	if err != nil {
-		// 无配置:判定系统默认生效模式
+		// no config: determine system-default effective mode
 		if s.defaultP != nil && s.cfg.AIProvider == "openai" {
 			view.Mode = "openai"
 		}
@@ -108,8 +108,8 @@ func (s *AIConfigService) GetView(ctx context.Context, username string) (*model.
 	return view, nil
 }
 
-// Save 保存用户配置;apiKey 为空时保留旧值
-// 返回参数错误(如 SSRF 拦截)由调用方映射错误码
+// Save persists user config; when apiKey is empty the old value is kept.
+// Parameter errors (e.g. SSRF blocked) are mapped to error codes by the caller.
 func (s *AIConfigService) Save(ctx context.Context, username, baseURL, apiKey, chatModel, embedModel string) error {
 	if baseURL != "" {
 		if err := urlcheck.ValidatePublicURL(baseURL, s.cfg.AllowPrivateAIURL); err != nil {
@@ -130,7 +130,7 @@ func (s *AIConfigService) Save(ctx context.Context, username, baseURL, apiKey, c
 		}
 		cfg.APIKeyEnc = enc
 	} else {
-		// 保留旧 key
+		// keep existing key
 		existing, err := s.repo.Get(username)
 		if err == nil {
 			cfg.APIKeyEnc = existing.APIKeyEnc
@@ -146,7 +146,7 @@ func (s *AIConfigService) Save(ctx context.Context, username, baseURL, apiKey, c
 	return nil
 }
 
-// Delete 清除用户配置(回退 env/mock)
+// Delete clears user config (falls back to env/mock).
 func (s *AIConfigService) Delete(ctx context.Context, username string) error {
 	if err := s.repo.Delete(username); err != nil {
 		return err
@@ -155,8 +155,8 @@ func (s *AIConfigService) Delete(ctx context.Context, username string) error {
 	return nil
 }
 
-// TestConnection 用提交的参数(不持久化)做连通性测试:
-// 先调对话接口,再调 embedding 接口探测实际维度
+// TestConnection tests connectivity with the submitted parameters (without persisting):
+// it calls the chat API first, then probes the embedding API to detect actual dimensions.
 func (s *AIConfigService) TestConnection(ctx context.Context, baseURL, apiKey, model, embedModel string) TestResult {
 	res := TestResult{}
 	if apiKey == "" {
@@ -180,7 +180,7 @@ func (s *AIConfigService) TestConnection(ctx context.Context, baseURL, apiKey, m
 	vec, err := prov.Embed(ctx, "ping")
 	if err != nil {
 		res.Error = "对话接口正常,但 embedding 接口失败: " + err.Error()
-		res.OK = true // 摘要可用,语义搜索不可用
+		res.OK = true // summary available, semantic search unavailable
 		return res
 	}
 	res.EmbedOK = true
@@ -192,19 +192,19 @@ func (s *AIConfigService) TestConnection(ctx context.Context, baseURL, apiKey, m
 	return res
 }
 
-// invalidate 清除用户的 provider 缓存
+// invalidate clears the cached provider for a user.
 func (s *AIConfigService) invalidate(username string) {
 	s.mu.Lock()
 	delete(s.cache, username)
 	s.mu.Unlock()
 }
 
-// TestResult 连通性测试结果
+// TestResult is the connectivity test result.
 type TestResult struct {
-	OK          bool   `json:"ok"`           // 对话 + embedding 均可用
-	ChatOK      bool   `json:"chat_ok"`      // 对话接口可用
-	EmbedOK     bool   `json:"embed_ok"`     // embedding 接口可用
-	Dim         int    `json:"dim"`          // embedding 实际返回维度
-	DimMismatch bool   `json:"dim_mismatch"` // 实际维度 ≠ 检索引擎维度,语义搜索将降级
+	OK          bool   `json:"ok"`           // chat + embedding both available
+	ChatOK      bool   `json:"chat_ok"`      // chat API available
+	EmbedOK     bool   `json:"embed_ok"`     // embedding API available
+	Dim         int    `json:"dim"`          // actual embedding dimension returned
+	DimMismatch bool   `json:"dim_mismatch"` // actual dimension != index engine dimension, semantic search will be degraded
 	Error       string `json:"error"`
 }

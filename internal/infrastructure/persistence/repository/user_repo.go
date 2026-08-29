@@ -10,22 +10,22 @@ import (
 	"gorm.io/gorm"
 )
 
-// UserRepository 用户数据访问接口
+// UserRepository is the user data access interface
 type UserRepository interface {
-	// Create 创建用户
+	// Create creates a user
 	Create(ctx context.Context, username, hashedPassword string) (bool, error)
-	// GetPasswordHash 获取用户密码哈希
+	// GetPasswordHash retrieves the user password hash
 	GetPasswordHash(ctx context.Context, username string) (string, error)
-	// GetInfo 获取用户信息
+	// GetInfo retrieves user information
 	GetInfo(ctx context.Context, username string) (model.User, error)
 }
 
-// mysqlUserRepo GORM 实现的 UserRepository
+// mysqlUserRepo is the GORM implementation of UserRepository
 type mysqlUserRepo struct {
 	db *gorm.DB
 }
 
-// NewUserRepository 创建 GORM 用户仓库
+// NewUserRepository creates a GORM user repository
 func NewUserRepository(db *gorm.DB) UserRepository {
 	return &mysqlUserRepo{db: db}
 }
@@ -37,7 +37,7 @@ func (r *mysqlUserRepo) Create(ctx context.Context, username, hashedPassword str
 	}
 	res := r.db.WithContext(ctx).Create(&user)
 	if res.Error != nil {
-		// 主键冲突（用户已存在）
+		// Primary key conflict (user already exists)
 		return false, nil
 	}
 	if res.RowsAffected == 0 {
@@ -67,15 +67,15 @@ func (r *mysqlUserRepo) GetInfo(ctx context.Context, username string) (model.Use
 	return user, nil
 }
 
-// ---- Mock 实现 ----
+// ---- Mock implementation ----
 
-// mockUserRepo 内存 mock 用户仓库
+// mockUserRepo is an in-memory mock user repository
 type mockUserRepo struct {
 	users    map[string]string // username -> hashedPassword
 	userInfo map[string]model.User
 }
 
-// NewMockUserRepository 创建 mock 用户仓库
+// NewMockUserRepository creates a mock user repository
 func NewMockUserRepository() UserRepository {
 	return &mockUserRepo{
 		users:    make(map[string]string),
@@ -108,6 +108,6 @@ func (m *mockUserRepo) GetInfo(ctx context.Context, username string) (model.User
 	return user, nil
 }
 
-// 确保编译时检查接口实现
+// Ensure interface implementation is checked at compile time
 var _ UserRepository = (*mysqlUserRepo)(nil)
 var _ UserRepository = (*mockUserRepo)(nil)

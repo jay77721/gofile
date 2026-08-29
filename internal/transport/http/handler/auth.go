@@ -8,17 +8,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthMiddleware 认证中间件，依赖注入 AuthService
+// AuthMiddleware authentication middleware, injected with AuthService
 type AuthMiddleware struct {
 	authSvc *service.AuthService
 }
 
-// NewAuthMiddleware 创建认证中间件
+// NewAuthMiddleware create the authentication middleware
 func NewAuthMiddleware(authSvc *service.AuthService) *AuthMiddleware {
 	return &AuthMiddleware{authSvc: authSvc}
 }
 
-// Middleware 返回 Gin 认证中间件
+// Middleware return the Gin authentication middleware
 func (m *AuthMiddleware) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		username, _ := c.Cookie("username")

@@ -46,7 +46,7 @@ func TestMD5(t *testing.T) {
 }
 
 func TestFileSha1(t *testing.T) {
-	// 创建临时文件
+	// Create temp file
 	tmpFile, err := os.CreateTemp("", "test-sha1-*")
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestFileSha1(t *testing.T) {
 	tmpFile.WriteString("hello world")
 	tmpFile.Close()
 
-	// 重新打开计算 hash
+	// Reopen and compute hash
 	f, err := os.Open(tmpFile.Name())
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestFileSha1(t *testing.T) {
 }
 
 func TestPathExists(t *testing.T) {
-	// 测试存在的路径
+	// Test existing path
 	exists, err := PathExists(".")
 	if err != nil {
 		t.Errorf("PathExists(\".\") error: %v", err)
@@ -80,7 +80,7 @@ func TestPathExists(t *testing.T) {
 		t.Error("PathExists(\".\") = false, want true")
 	}
 
-	// 测试不存在的路径
+	// Test non-existent path
 	exists, err = PathExists("/nonexistent/path/that/does/not/exist")
 	if err != nil {
 		t.Errorf("PathExists(nonexistent) error: %v", err)

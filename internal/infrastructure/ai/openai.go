@@ -13,8 +13,8 @@ import (
 	"gofile/internal/port"
 )
 
-// OpenAIProvider OpenAI 协议 API 实现的 Provider
-// 支持自定义 baseURL,可对接任何 OpenAI 兼容端点(OpenAI / DeepSeek / Ollama / vLLM / OneAPI 等)
+// OpenAIProvider is a Provider implementation using the OpenAI-compatible API
+// Supports custom baseURL and can connect to any OpenAI-compatible endpoint (OpenAI / DeepSeek / Ollama / vLLM / OneAPI, etc.)
 type OpenAIProvider struct {
 	apiKey     string
 	baseURL    string
@@ -24,8 +24,8 @@ type OpenAIProvider struct {
 	dim        int
 }
 
-// NewOpenAIProvider 创建 OpenAI 协议 Provider
-// baseURL 为空时使用官方端点;embedModel 为空时使用 text-embedding-3-small
+// NewOpenAIProvider creates an OpenAI-compatible Provider
+// Uses the official endpoint when baseURL is empty; uses text-embedding-3-small when embedModel is empty
 func NewOpenAIProvider(apiKey, baseURL, model, embedModel string, dim int) port.Provider {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
@@ -48,7 +48,7 @@ func NewOpenAIProvider(apiKey, baseURL, model, embedModel string, dim int) port.
 	}
 }
 
-// NewOpenAIProviderWithTimeout 创建 OpenAI 协议 Provider,可指定 HTTP 超时(测试连接用短超时)
+// NewOpenAIProviderWithTimeout creates an OpenAI-compatible Provider with configurable HTTP timeout (use short timeout for testing connections)
 func NewOpenAIProviderWithTimeout(apiKey, baseURL, model, embedModel string, dim int, timeout time.Duration) port.Provider {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
@@ -114,7 +114,7 @@ func (p *OpenAIProvider) Analyze(ctx context.Context, fileName, content string) 
 
 	var analysis port.Analysis
 	content_str := strings.TrimSpace(result.Choices[0].Message.Content)
-	// 去除可能的 markdown 代码块
+	// Strip possible markdown code blocks
 	content_str = strings.TrimPrefix(content_str, "```json")
 	content_str = strings.TrimPrefix(content_str, "```")
 	content_str = strings.TrimSuffix(content_str, "```")
@@ -135,8 +135,8 @@ func (p *OpenAIProvider) Embed(ctx context.Context, text string) ([]float32, err
 		"model": p.embedModel,
 		"input": text,
 	}
-	// OpenAI text-embedding-3 系列支持 dimensions 截断,与检索引擎维度保持一致
-	// 第三方兼容端点若不支持该参数,会在测试连接/搜索时暴露并降级提示
+	// OpenAI text-embedding-3 series supports dimensions truncation, keeping it consistent with the search engine dimension
+	// If a third-party compatible endpoint does not support this parameter, it will be exposed during connection testing/search and a fallback hint will be shown
 	if p.dim > 0 {
 		body["dimensions"] = p.dim
 	}

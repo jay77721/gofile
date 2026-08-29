@@ -5,7 +5,7 @@ import { toast } from '../toast';
 
 interface Props {
   file: FileItem;
-  // delete = 软删除(进回收站);purge = 彻底删除
+  // delete = soft delete (move to trash); purge = permanent deletion
   kind?: 'delete' | 'purge' | string;
 }
 

@@ -7,9 +7,9 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-// NewServer 创建 Asynq 消费者服务（AI 专用队列，concurrency = AIWorkers）
+// NewServer creates an Asynq consumer service (AI-dedicated queue, concurrency = AIWorkers)
 //
-// 队列优先级：ai(6) > default(3) > low(1)，加权严格优先
+// Queue priority: ai(6) > default(3) > low(1), strictly weighted priority
 func NewServer(redisAddr, redisPassword string, redisDB, concurrency int) *asynq.Server {
 	if concurrency <= 0 {
 		concurrency = 4
@@ -21,14 +21,14 @@ func NewServer(redisAddr, redisPassword string, redisDB, concurrency int) *asynq
 			DB:       redisDB,
 		},
 		asynq.Config{
-			// 多队列加权优先：ai 队列享受最高权重
+			// Multi-queue weighted priority: ai queue has the highest weight
 			Queues: map[string]int{
 				"ai":      6,
 				"default": 3,
 				"low":     1,
 			},
 			Concurrency: concurrency,
-			// 错误处理：打日志（重试由 Asynq 内置，这里只记录最终失败）
+			// Error handling: log errors (retries are built into Asynq, only final failures are logged here)
 			ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, t *asynq.Task, err error) {
 				slog.Error("asynq task permanently failed",
 					"type", t.Type(),
@@ -36,13 +36,13 @@ func NewServer(redisAddr, redisPassword string, redisDB, concurrency int) *asynq
 					"payload", string(t.Payload()),
 				)
 			}),
-			// 日志级别：仅 Error（减少 Info 日志噪声）
+			// Log level: Error only (reduce Info log noise)
 			Logger: newAsynqLogger(),
 		},
 	)
 }
 
-// asynqLogger 适配 Asynq 的 Logger 接口，桥接到 slog
+// asynqLogger adapts the Asynq Logger interface to slog
 type asynqLogger struct{}
 
 func newAsynqLogger() *asynqLogger { return &asynqLogger{} }

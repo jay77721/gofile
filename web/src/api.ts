@@ -1,7 +1,7 @@
-// API 封装:统一 JSON 响应处理(code!==0 抛错、401 清除会话)
+// API wrapper: unified JSON response handling (throw on code!==0, clear session on 401)
 import { reactive } from 'vue';
 
-// 全局会话状态(登录态变更由 AuthView 驱动)
+// Global session state (login state changes driven by AuthView)
 export interface SessionState {
   username: string;
 }
@@ -67,7 +67,7 @@ export async function apiPost<T = unknown>(
   return parse<T>(res);
 }
 
-// 通用 JSON 请求(POST/PUT/DELETE 用,AI 配置等结构化接口)
+// Generic JSON request (for POST/PUT/DELETE, e.g., AI config structured APIs)
 export async function apiJSON<T = unknown>(
   path: string,
   method = 'POST',
@@ -89,7 +89,7 @@ export async function apiJSON<T = unknown>(
   return parse<T>(res);
 }
 
-// 上传走 XMLHttpRequest(需要上传进度)
+// Upload via XMLHttpRequest (requires upload progress)
 export function apiUpload<T = unknown>(
   path: string,
   fd: FormData,
@@ -182,7 +182,7 @@ export function uploadPart(
 }
 
 // ==========================================
-// 数据类型定义与专属 API 方法
+// Data type definitions and dedicated API methods
 // ==========================================
 
 export interface UserInfo {
@@ -295,7 +295,7 @@ export interface FolderMoveReq {
   target_parent_id: number;
 }
 
-// VFS 目录操作 API
+// VFS directory operation APIs
 export const vfsApi = {
   createFolder: (req: FolderCreateReq) => apiJSON<FileItem>('/file/folder/create', 'POST', req),
   rename: (req: FolderRenameReq) => apiJSON<void>('/file/folder/rename', 'POST', req),
@@ -304,14 +304,14 @@ export const vfsApi = {
     api<PagedList<FileItem>>(`/file/query?parent_id=${parentId}&page=${page}&size=${size}`),
 };
 
-// S3 Multipart 分片直传 API
+// S3 Multipart direct upload APIs
 export const multipartApi = {
   init: (req: MultipartInitReq, signal?: AbortSignal) => apiJSON<MultipartInitResp>('/file/upload/multipart/init', 'POST', req, signal),
   complete: (req: MultipartCompleteReq, signal?: AbortSignal) => apiJSON<FileItem>('/file/upload/multipart/complete', 'POST', req, signal),
   abort: (uploadId: string, signal?: AbortSignal) => apiJSON<void>('/file/upload/multipart/abort', 'POST', { upload_id: uploadId }, signal),
 };
 
-// AI 配置与检索 API
+// AI configuration and retrieval APIs
 export const aiApi = {
   getConfig: () => api<AIConfigData>('/ai/config'),
   saveConfig: (config: { base_url: string; api_key: string; model: string; embed_model: string }) =>

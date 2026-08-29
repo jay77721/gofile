@@ -28,7 +28,7 @@ const kind = computed<PreviewKind>(() => {
 
 const src = computed<string>(() => '/file/preview?filehash=' + encodeURIComponent(props.file.filehash));
 
-// 文本类型异步加载
+// Async load for text types
 if (kind.value === 'text') {
   textLoading.value = true;
   fetch(src.value, { credentials: 'include' })
@@ -71,15 +71,15 @@ const icon = computed<string>(() => {
       </div>
 
       <div class="pv-body">
-        <!-- 图片 -->
+        <!-- Image -->
         <img v-if="kind === 'image'" :src="src" alt="preview" class="pv-image">
-        <!-- 视频(后端支持 Range,可拖动) -->
+        <!-- Video (backend supports Range, seekable) -->
         <video v-else-if="kind === 'video'" :src="src" class="pv-media" controls autoplay playsinline></video>
-        <!-- 音频 -->
+        <!-- Audio -->
         <audio v-else-if="kind === 'audio'" :src="src" class="pv-audio" controls></audio>
         <!-- PDF -->
         <iframe v-else-if="kind === 'pdf'" :src="src" class="pv-pdf"></iframe>
-        <!-- 文本 -->
+        <!-- Text -->
         <pre v-else class="pv-text">{{ textLoading ? '加载中…' : text }}</pre>
       </div>
     </div>

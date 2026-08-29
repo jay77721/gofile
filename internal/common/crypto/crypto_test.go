@@ -48,7 +48,7 @@ func TestDecryptWrongSecretFails(t *testing.T) {
 }
 
 func TestEncryptRandomizedNonce(t *testing.T) {
-	// 相同明文两次加密应产生不同密文(随机 nonce)
+	// Same plaintext encrypted twice should produce different ciphertexts (random nonce)
 	a, _ := EncryptSecret("k", "sk-abcdef")
 	b, _ := EncryptSecret("k", "sk-abcdef")
 	if a == b {
@@ -78,7 +78,7 @@ func TestMaskSecretNoPlaintextLeak(t *testing.T) {
 		if part == "" {
 			continue
 		}
-		// 掩码保留的是首尾,不应出现中间片段
+		// Mask retains prefix/suffix; middle segment should not appear
 		if strings.Contains(masked, "very-secret") {
 			t.Fatalf("masked secret leaks middle content: %s", masked)
 		}

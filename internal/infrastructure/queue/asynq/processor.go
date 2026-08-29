@@ -9,23 +9,23 @@ import (
 	"gofile/internal/infrastructure/ai"
 )
 
-// AITaskProcessor Asynq handler：解包 Payload → 调用 ai.Processor.ProcessOne
-// task 包依赖 ai 包，ai 包通过 TaskEnqueuer 接口依赖 task.Client，无循环引用
+// AITaskProcessor is an Asynq handler: unpack Payload -> call ai.Processor.ProcessOne
+// task package depends on ai, ai depends on task.Client via TaskEnqueuer interface, no circular dependency
 type AITaskProcessor struct {
 	proc *ai.Processor
 }
 
-// NewAITaskProcessor 创建 Asynq AI 分析任务处理器
+// NewAITaskProcessor creates an Asynq AI analysis task processor
 func NewAITaskProcessor(proc *ai.Processor) *AITaskProcessor {
 	return &AITaskProcessor{proc: proc}
 }
 
-// ProcessTask 实现 asynq.Handler 接口
-// 返回 error 时 Asynq 按 MaxRetry 自动重试（指数退避）
+// ProcessTask implements the asynq.Handler interface
+// When an error is returned, Asynq automatically retries according to MaxRetry (exponential backoff)
 func (p *AITaskProcessor) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	var payload AIAnalyzePayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
-		// 解析失败是不可重试的错误（Payload 损坏），用 asynq.SkipRetry 包装
+		// Parse failure is a non-retryable error (corrupted Payload), wrap with asynq.SkipRetry
 		return fmt.Errorf("%w: unmarshal ai analyze payload: %v", asynq.SkipRetry, err)
 	}
 

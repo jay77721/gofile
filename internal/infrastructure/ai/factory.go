@@ -5,7 +5,7 @@ import (
 	"gofile/internal/port"
 )
 
-// NewProvider 根据配置创建对应的 AI Provider(env 系统默认)
+// NewProvider creates the corresponding AI Provider based on configuration (env/system default)
 func NewProvider(cfg *config.Config) port.Provider {
 	switch cfg.AIProvider {
 	case "openai":

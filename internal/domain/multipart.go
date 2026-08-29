@@ -10,8 +10,8 @@ const (
 	MultipartStatusAborted   = 3
 )
 
-// MultipartUpload 分片直传任务元数据
-// 对应 tbl_multipart_upload 表
+// MultipartUpload is metadata for direct multipart upload tasks.
+// Corresponds to tbl_multipart_upload.
 type MultipartUpload struct {
 	ID         uint64    `gorm:"primaryKey;autoIncrement"`
 	UploadID   string    `gorm:"column:upload_id;size:128;not null;uniqueIndex:uk_upload_id"`
@@ -29,25 +29,25 @@ type MultipartUpload struct {
 
 func (MultipartUpload) TableName() string { return "tbl_multipart_upload" }
 
-// MultipartInitReq 初始化分片直传请求 DTO
+// MultipartInitReq is the init direct multipart upload request DTO.
 type MultipartInitReq struct {
 	FileSha1  string `json:"filehash" binding:"required,len=40"`
 	FileName  string `json:"filename" binding:"required"`
 	FileSize  int64  `json:"filesize" binding:"required,gt=0"`
-	ChunkSize int    `json:"chunk_size"` // 可选，默认 10MB
-	ParentID  uint64 `json:"parent_id"`  // 目标父目录 ID
+	ChunkSize int    `json:"chunk_size"` // optional, default 10MB
+	ParentID  uint64 `json:"parent_id"`  // target parent directory ID
 }
 
-// MultipartInitResp 初始化分片直传响应 DTO
+// MultipartInitResp is the init direct multipart upload response DTO.
 type MultipartInitResp struct {
-	FastUpload bool     `json:"fast_upload"`           // 是否命中秒传
+	FastUpload bool     `json:"fast_upload"`           // whether fast dedup hit
 	UploadID   string   `json:"upload_id,omitempty"`   // MinIO/S3 UploadID
-	ChunkSize  int      `json:"chunk_size,omitempty"`  // 分片大小 (bytes)
-	ChunkCount int      `json:"chunk_count,omitempty"` // 总分片数
-	PartURLs   []string `json:"part_urls,omitempty"`   // 批量预签名 PUT URL（1-based 对应下标 0..N-1）
+	ChunkSize  int      `json:"chunk_size,omitempty"`  // chunk size (bytes)
+	ChunkCount int      `json:"chunk_count,omitempty"` // total chunk count
+	PartURLs   []string `json:"part_urls,omitempty"`   // batch presigned PUT URLs (1-based maps to index 0..N-1)
 }
 
-// MultipartCompleteReq 合并分片请求 DTO
+// MultipartCompleteReq is the complete multipart request DTO.
 type MultipartCompletePart struct {
 	PartNumber int    `json:"part_number"`
 	ETag       string `json:"etag"`
@@ -58,7 +58,7 @@ type MultipartCompleteReq struct {
 	Parts    []MultipartCompletePart `json:"parts" binding:"required"`
 }
 
-// MultipartAbortReq 取消分片请求 DTO
+// MultipartAbortReq is the abort multipart request DTO.
 type MultipartAbortReq struct {
 	UploadID string `json:"upload_id" binding:"required"`
 }

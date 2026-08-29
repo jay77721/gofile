@@ -10,7 +10,7 @@ import (
 	"gofile/internal/port"
 )
 
-// SearchResult AI 检索返回的单条结果
+// SearchResult is a single AI search result.
 type SearchResult struct {
 	Filehash string  `json:"filehash"`
 	Filename string  `json:"filename"`
@@ -20,28 +20,28 @@ type SearchResult struct {
 	Score    float64 `json:"score"`
 }
 
-// AIService AI 语义检索编排（搜索 / 相似推荐 / 重复检测）
+// AIService orchestrates AI semantic search (search / similar recommendations / duplicate detection).
 type AIService struct {
 	indexer  port.Indexer
 	provider port.Provider
 	fileRepo port.FileRepository
 
-	// resolve 按用户名解析生效 Provider(用户自定义配置优先),nil 时使用默认 provider
+	// resolve resolves the effective Provider by username (user custom config takes precedence); nil means use default provider
 	resolve func(ctx context.Context, username string) port.Provider
 }
 
-// NewAIService 创建 AI 检索服务
+// NewAIService creates the AI search service.
 func NewAIService(indexer port.Indexer, provider port.Provider, fileRepo port.FileRepository) *AIService {
 	return &AIService{indexer: indexer, provider: provider, fileRepo: fileRepo}
 }
 
-// WithResolver 注入按用户解析 Provider 的函数(用户级 AI 配置)
+// WithResolver injects the function that resolves Provider per user (user-level AI config).
 func (s *AIService) WithResolver(fn func(ctx context.Context, username string) port.Provider) *AIService {
 	s.resolve = fn
 	return s
 }
 
-// providerFor 解析当前用户生效的 Provider,解析不到时回退默认
+// providerFor resolves the effective Provider for the current user, falling back to default if not found.
 func (s *AIService) providerFor(ctx context.Context, username string) port.Provider {
 	if s.resolve != nil {
 		if prov := s.resolve(ctx, username); prov != nil {
@@ -51,8 +51,8 @@ func (s *AIService) providerFor(ctx context.Context, username string) port.Provi
 	return s.provider
 }
 
-// Search 对话式语义检索（自然语言 → 结构化过滤 + 全文+向量混合检索）
-// indexer 不可用时降级为 MySQL LIKE filename 模糊搜索。
+// Search performs conversational semantic search (natural language -> structured filters + hybrid full-text+vector search).
+// Falls back to MySQL LIKE on filename when indexer is unavailable.
 func (s *AIService) Search(ctx context.Context, username, q string, page, size int) ([]SearchResult, error) {
 	if q == "" {
 		return []SearchResult{}, nil
@@ -64,17 +64,17 @@ func (s *AIService) Search(ctx context.Context, username, q string, page, size i
 		size = 20
 	}
 
-	// 1. 解析查询
+	// 1. parse query
 	filter := ai.ParseQuery(q)
 
-	// 2. 构建向量（用过滤后的语义词）
+	// 2. build vector (using filtered semantic query)
 	vector, err := s.providerFor(ctx, username).Embed(ctx, filter.SemanticQuery)
 	if err != nil {
 		slog.WarnContext(ctx, "ai search: embed failed, fallback LIKE", "error", err)
 		return s.fallbackLike(ctx, username, q, page, size), nil
 	}
 
-	// 3. 混合检索（indexer 为 nil 时降级 LIKE）
+	// 3. hybrid search (fallback to LIKE when indexer is nil)
 	if s.indexer == nil {
 		return s.fallbackLike(ctx, username, q, page, size), nil
 	}
@@ -98,7 +98,7 @@ func (s *AIService) Search(ctx context.Context, username, q string, page, size i
 	return out, nil
 }
 
-// fallbackLike 降级：MySQL LIKE filename 模糊搜索
+// fallbackLike is the fallback: MySQL LIKE fuzzy search on filename.
 func (s *AIService) fallbackLike(ctx context.Context, username, q string, page, size int) []SearchResult {
 	files, err := s.fileRepo.ListByUser(ctx, username)
 	if err != nil {
@@ -129,12 +129,12 @@ func (s *AIService) fallbackLike(ctx context.Context, username, q string, page, 
 	return matched[start:end]
 }
 
-// Similar 相似文件推荐（向量 KNN，排除自身）
+// Similar recommends similar files (vector KNN, excluding itself).
 func (s *AIService) Similar(ctx context.Context, username, filehash string, limit int) ([]SearchResult, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 5
 	}
-	// 验证所有权
+	// verify ownership
 	fMeta, err := s.fileRepo.GetByHash(ctx, filehash, username)
 	if err != nil {
 		return nil, fmt.Errorf("file not found or no permission")
@@ -161,12 +161,12 @@ func (s *AIService) Similar(ctx context.Context, username, filehash string, limi
 	return out, nil
 }
 
-// Duplicates 近似重复检测（相似度 > 阈值的文件）
+// Duplicates detects near-duplicates (files with similarity > threshold).
 func (s *AIService) Duplicates(ctx context.Context, username, filehash string, threshold float64) ([]SearchResult, error) {
 	if threshold <= 0 {
 		threshold = 0.9
 	}
-	// 候选：取较多，再按阈值过滤
+	// candidates: fetch more, then filter by threshold
 	candidates, err := s.Similar(ctx, username, filehash, 20)
 	if err != nil {
 		return nil, err

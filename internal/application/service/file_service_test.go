@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-// newTestFileService 组装 mock repo + 真实本地存储的 FileService
+// newTestFileService assembles FileService with mock repo + real local storage
 func newTestFileService(t *testing.T, hash, content string) *FileService {
 	t.Helper()
 	repo := repository.NewMockFileRepository()
@@ -43,7 +43,7 @@ func readAll(t *testing.T, r io.Reader) []byte {
 
 func TestDownloadRange(t *testing.T) {
 	const hash = "abcdef0123456789abcdef0123456789abcdef01"
-	content := "0123456789" // 10 字节
+	content := "0123456789" // 10 bytes
 	svc := newTestFileService(t, hash, content)
 	ctx := context.Background()
 
@@ -109,14 +109,14 @@ func TestDownloadRange(t *testing.T) {
 	})
 }
 
-// TestFastUploadOwnership 秒传路径必须为当前用户建立所有权关联(跨用户场景)
+// TestFastUploadOwnership fast-dedup path must create ownership association for current user (cross-user scenario)
 func TestFastUploadOwnership(t *testing.T) {
 	const hash = "fedcba9876543210fedcba9876543210fedcba98"
 	content := "shared file content"
 	svc := newTestFileService(t, hash, content)
 	ctx := context.Background()
 
-	// 用户 bob 秒传 alice 已上传的文件(存储层已存在,bob 无关联)
+	// User bob fast-uploads a file already uploaded by alice (exists in storage, bob has no association)
 	exists, err := svc.FastUpload(ctx, hash, "bob")
 	if err != nil {
 		t.Fatalf("FastUpload failed: %v", err)
@@ -125,7 +125,7 @@ func TestFastUploadOwnership(t *testing.T) {
 		t.Fatal("expected exists=true")
 	}
 
-	// bob 现在拥有该文件:可查询、可下载
+	// bob now owns the file: queryable and downloadable
 	meta, err := svc.GetMeta(context.Background(), hash, "bob")
 	if err != nil {
 		t.Fatalf("bob should own file after fast upload: %v", err)
@@ -139,13 +139,13 @@ func TestFastUploadOwnership(t *testing.T) {
 	}
 	rc.Close()
 
-	// 幂等:重复秒传不报错
+	// Idempotent: repeated fast upload does not error
 	if _, err := svc.FastUpload(ctx, hash, "bob"); err != nil {
 		t.Fatalf("second fast upload should be idempotent: %v", err)
 	}
 }
 
-// TestFastUploadMiss 存储层不存在时返回 false,不建关联
+// TestFastUploadMiss returns false when storage layer has no file, no association created
 func TestFastUploadMiss(t *testing.T) {
 	const hash = "0000000000000000000000000000000000000000"
 	svc := newTestFileService(t, "abcdef0123456789abcdef0123456789abcdef01", "x")
@@ -161,7 +161,7 @@ func TestFastUploadMiss(t *testing.T) {
 	}
 }
 
-// TestFileCRUD 验证基础 CRUD 与列表统计操作
+// TestFileCRUD verifies basic CRUD and list/count operations
 func TestFileCRUD(t *testing.T) {
 	repo := repository.NewMockFileRepository()
 	store := storage.NewLocal(t.TempDir())
@@ -231,7 +231,7 @@ func TestFileCRUD(t *testing.T) {
 	}
 }
 
-// TestPresignedUploadAndConfirm 预签名直传确认流程
+// TestPresignedUploadAndConfirm presigned direct-upload confirmation flow
 func TestPresignedUploadAndConfirm(t *testing.T) {
 	repo := repository.NewMockFileRepository()
 	store := storage.NewLocal(t.TempDir())
@@ -240,13 +240,13 @@ func TestPresignedUploadAndConfirm(t *testing.T) {
 
 	hash := hashutil.Sha1([]byte("presigned data"))
 
-	// 本地存储不支持 PresignPut 会返回错误
+	// Local storage does not support PresignPut and will return an error
 	_, err := svc.PresignUpload(ctx, hash, "alice")
 	if !errors.Is(err, storage.ErrPresignNotSupported) {
 		t.Errorf("expected ErrPresignNotSupported on local storage, got %v", err)
 	}
 
-	// 模拟写入存储后 ConfirmUpload
+	// Simulate writing to storage then ConfirmUpload
 	_ = store.Put(ctx, hash, strings.NewReader("presigned data"), 14)
 	if err := svc.ConfirmUpload(ctx, hash, "presigned.txt", "alice"); err != nil {
 		t.Fatalf("ConfirmUpload failed: %v", err)

@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-// ---- VFS 虚拟文件系统目录管理 ----
+// ---- VFS virtual file system directory management ----
 
-// CreateFolder 创建新文件夹
+// CreateFolder creates a new folder.
 func (s *FileService) CreateFolder(ctx context.Context, username string, req model.FolderCreateReq) (model.UserFile, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") {
@@ -42,7 +42,7 @@ func (s *FileService) CreateFolder(ctx context.Context, username string, req mod
 	return uf, nil
 }
 
-// RenameFolderOrFile 重命名文件或文件夹
+// RenameFolderOrFile renames a file or folder.
 func (s *FileService) RenameFolderOrFile(ctx context.Context, username string, req model.FolderRenameReq) error {
 	newName := strings.TrimSpace(req.NewName)
 	if newName == "" || strings.Contains(newName, "/") || strings.Contains(newName, "\\") || strings.Contains(newName, "..") {
@@ -55,7 +55,7 @@ func (s *FileService) RenameFolderOrFile(ctx context.Context, username string, r
 	}
 
 	if uf.IsDir == 1 {
-		// 计算当前父级目录路径
+		// compute current parent directory path
 		parentDirPath := strings.TrimSuffix(uf.DirPath, uf.FileName+"/")
 		newDirPath := parentDirPath + newName + "/"
 		return s.fileRepo.RenameItem(ctx, req.FileID, username, newName, newDirPath)
@@ -64,7 +64,7 @@ func (s *FileService) RenameFolderOrFile(ctx context.Context, username string, r
 	return s.fileRepo.RenameItem(ctx, req.FileID, username, newName, uf.DirPath)
 }
 
-// MoveFolderOrFile 移动文件或文件夹（含防循环嵌套检查）
+// MoveFolderOrFile moves a file or folder (includes circular-nested move prevention).
 func (s *FileService) MoveFolderOrFile(ctx context.Context, username string, req model.FolderMoveReq) error {
 	uf, err := s.fileRepo.GetUserFileByID(ctx, req.FileID, username)
 	if err != nil || uf.Status != model.UserFileStatusActive {
@@ -81,7 +81,7 @@ func (s *FileService) MoveFolderOrFile(ctx context.Context, username string, req
 	}
 
 	if uf.IsDir == 1 {
-		// 防循环移动检测：不能将文件夹移入自身子目录下
+		// prevent circular move: cannot move a folder into its own subdirectory
 		if isVFSPathWithin(targetDirPath, uf.DirPath) {
 			return fmt.Errorf("cannot move folder into its own subfolder")
 		}
@@ -102,7 +102,7 @@ func isVFSPathWithin(path, prefix string) bool {
 	return path == prefix || strings.HasPrefix(path, prefix)
 }
 
-// QueryDirectory 查询指定目录下的文件列表与面包屑导航
+// QueryDirectory lists files in a directory with breadcrumb navigation.
 func (s *FileService) QueryDirectory(ctx context.Context, username string, parentID uint64, offset, limit int) ([]model.FileMeta, int64, []model.Breadcrumb, error) {
 	files, total, err := s.fileRepo.ListByParent(ctx, username, parentID, offset, limit)
 	if err != nil {

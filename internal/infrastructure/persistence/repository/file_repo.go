@@ -14,42 +14,42 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// FileRepository 文件数据访问接口
+// FileRepository is the file data access interface
 type FileRepository interface {
-	// Create 注册全局文件（按 SHA1 去重，已存在则忽略）
+	// Create registers a global file (deduplicated by SHA1, ignored if already exists)
 	Create(ctx context.Context, f model.File) error
-	// CreateUserFile 建立用户文件拥有关系（幂等）
+	// CreateUserFile creates the user file ownership (idempotent)
 	CreateUserFile(ctx context.Context, uf model.UserFile) error
-	// GetByHash 按 hash 和用户名获取文件元信息
+	// GetByHash retrieves file metadata by hash and username
 	GetByHash(ctx context.Context, filehash, username string) (model.FileMeta, error)
-	// ListByUser 获取用户的所有文件
+	// ListByUser retrieves all files for a user
 	ListByUser(ctx context.Context, username string) ([]model.FileMeta, error)
-	// CountByUser 统计用户文件总数
+	// CountByUser counts the total number of files for a user
 	CountByUser(ctx context.Context, username string) (int64, error)
-	// ListTrash 分页查询用户回收站文件（status=2）
+	// ListTrash paginates trashed files for a user (status=2)
 	ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error)
-	// Restore 恢复软删除文件（status 2→1）
+	// Restore restores a soft-deleted file (status 2->1)
 	Restore(ctx context.Context, filehash, username string) (bool, error)
-	// PurgeUserFile 彻底删除用户文件关联行
+	// PurgeUserFile permanently deletes the user file association
 	PurgeUserFile(ctx context.Context, filehash, username string) (bool, error)
-	// ListByUserPaged 分页查询用户文件（批量查询避免 N+1）
+	// ListByUserPaged paginates user files (batch query to avoid N+1)
 	ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, error)
-	// Delete 软删除用户文件（status=2）
+	// Delete soft-deletes a user file (status=2)
 	Delete(ctx context.Context, filehash, username string) (bool, error)
-	// UpdateName 更新用户文件名
+	// UpdateName updates the user file name
 	UpdateName(ctx context.Context, filehash, username, newFilename string) (bool, error)
-	// CountRefs 统计某文件在 tbl_user_file 中的活跃引用数
+	// CountRefs counts active references to a file in tbl_user_file
 	CountRefs(ctx context.Context, filehash string) (int64, error)
-	// ListOldest 列出创建时间早于 before 的全局文件（GC 候选）
+	// ListOldest lists global files created before 'before' (GC candidates)
 	ListOldest(ctx context.Context, before time.Time) ([]model.File, error)
-	// RemoveOrphan 从 tbl_file 删除无引用的全局文件记录
+	// RemoveOrphan deletes orphan global file records from tbl_file
 	RemoveOrphan(ctx context.Context, filehash string) error
-	// SaveAnalysis 写入 AI 生成的摘要与标签（全局文件维度，幂等）
+	// SaveAnalysis writes the AI-generated summary and tags (global file dimension, idempotent)
 	SaveAnalysis(ctx context.Context, filehash, summary, tags string) error
-	// GetGlobalFile 按 hash 读取全局文件（含摘要/标签），不带用户维度
+	// GetGlobalFile reads the global file by hash (including summary/tags), without user dimension
 	GetGlobalFile(ctx context.Context, filehash string) (model.File, error)
 
-	// VFS 虚拟文件系统扩展接口
+	// VFS virtual file system extension interface
 	GetUserFileByID(ctx context.Context, id uint, username string) (model.UserFile, error)
 	ListByParent(ctx context.Context, username string, parentID uint64, offset, limit int) ([]model.FileMeta, int64, error)
 	CreateFolder(ctx context.Context, uf model.UserFile) (model.UserFile, error)
@@ -60,17 +60,17 @@ type FileRepository interface {
 	GetBreadcrumbs(ctx context.Context, username string, folderID uint64) ([]model.Breadcrumb, error)
 }
 
-// mysqlFileRepo GORM 实现的 FileRepository
+// mysqlFileRepo is the GORM implementation of FileRepository
 type mysqlFileRepo struct {
 	db *gorm.DB
 }
 
-// NewFileRepository 创建 GORM 文件仓库
+// NewFileRepository creates a GORM file repository
 func NewFileRepository(db *gorm.DB) FileRepository {
 	return &mysqlFileRepo{db: db}
 }
 
-// Create 注册全局文件，已存在则忽略（幂等）
+// Create registers a global file, ignored if already exists (idempotent)
 func (r *mysqlFileRepo) Create(ctx context.Context, f model.File) error {
 	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&f).Error; err != nil {
 		return fmt.Errorf("create file failed: %w", err)
@@ -78,12 +78,12 @@ func (r *mysqlFileRepo) Create(ctx context.Context, f model.File) error {
 	return nil
 }
 
-// CreateUserFile 建立用户文件拥有关系，已存在则忽略（幂等）
+// CreateUserFile creates the user file ownership, ignored if already exists (idempotent)
 func (r *mysqlFileRepo) CreateUserFile(ctx context.Context, uf model.UserFile) error {
 	if uf.DirPath == "" {
 		uf.DirPath = "/"
 	}
-	// 幂等防重检查
+	// Idempotency duplicate check
 	var count int64
 	_ = r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("user_name = ? AND parent_id = ? AND file_sha1 = ? AND status = ?", uf.Username, uf.ParentID, uf.FileSha1, model.UserFileStatusActive).
@@ -98,7 +98,7 @@ func (r *mysqlFileRepo) CreateUserFile(ctx context.Context, uf model.UserFile) e
 	return nil
 }
 
-// GetByHash 查询用户拥有的某个文件（JOIN tbl_file）
+// GetByHash queries a file owned by the user (JOIN tbl_file)
 func (r *mysqlFileRepo) GetByHash(ctx context.Context, filehash, username string) (model.FileMeta, error) {
 	var uf model.UserFile
 	if err := r.db.WithContext(ctx).Where("file_sha1 = ? AND user_name = ? AND status = 1", filehash, username).
@@ -126,7 +126,7 @@ func (r *mysqlFileRepo) GetByHash(ctx context.Context, filehash, username string
 	}, nil
 }
 
-// ListByUser 查询用户的所有活跃文件（批量查询避免 N+1）
+// ListByUser queries all active files for a user (batch query to avoid N+1)
 func (r *mysqlFileRepo) ListByUser(ctx context.Context, username string) ([]model.FileMeta, error) {
 	var ufs []model.UserFile
 	if err := r.db.WithContext(ctx).Where("user_name = ? AND status = ? AND is_dir = 0", username, model.UserFileStatusActive).
@@ -176,7 +176,7 @@ func (r *mysqlFileRepo) ListByUser(ctx context.Context, username string) ([]mode
 	return files, nil
 }
 
-// CountByUser 统计用户文件总数
+// CountByUser counts the total number of files for a user
 func (r *mysqlFileRepo) CountByUser(ctx context.Context, username string) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.UserFile{}).
@@ -188,7 +188,7 @@ func (r *mysqlFileRepo) CountByUser(ctx context.Context, username string) (int64
 	return count, nil
 }
 
-// ListByUserPaged 分页查询用户文件（批量查询避免 N+1）
+// ListByUserPaged paginates user files (batch query to avoid N+1)
 func (r *mysqlFileRepo) ListByUserPaged(ctx context.Context, username string, page, size int) ([]model.FileMeta, error) {
 	var ufs []model.UserFile
 	offset := (page - 1) * size
@@ -240,7 +240,7 @@ func (r *mysqlFileRepo) ListByUserPaged(ctx context.Context, username string, pa
 	return files, nil
 }
 
-// Delete 软删除用户文件（status=UserFileStatusDeleted），仅删除该用户的所有权
+// Delete soft-deletes a user file (status=UserFileStatusDeleted), only removing that user's ownership
 func (r *mysqlFileRepo) Delete(ctx context.Context, filehash, username string) (bool, error) {
 	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusActive).
@@ -251,7 +251,7 @@ func (r *mysqlFileRepo) Delete(ctx context.Context, filehash, username string) (
 	return res.RowsAffected > 0, nil
 }
 
-// ListTrash 分页查询回收站文件（status=2），批量查询避免 N+1
+// ListTrash paginates trashed files (status=2), batch query to avoid N+1
 func (r *mysqlFileRepo) ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
 	var total int64
 	if err := r.db.WithContext(ctx).Model(&model.UserFile{}).
@@ -313,7 +313,7 @@ func (r *mysqlFileRepo) ListTrash(ctx context.Context, username string, page, si
 	return files, total, nil
 }
 
-// Restore 恢复软删除文件（status 2→1）
+// Restore restores a soft-deleted file (status 2->1)
 func (r *mysqlFileRepo) Restore(ctx context.Context, filehash, username string) (bool, error) {
 	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusDeleted).
@@ -324,7 +324,7 @@ func (r *mysqlFileRepo) Restore(ctx context.Context, filehash, username string) 
 	return res.RowsAffected > 0, nil
 }
 
-// PurgeUserFile 彻底删除用户文件关联行
+// PurgeUserFile permanently deletes the user file association
 func (r *mysqlFileRepo) PurgeUserFile(ctx context.Context, filehash, username string) (bool, error) {
 	res := r.db.WithContext(ctx).Where("file_sha1 = ? AND user_name = ?", filehash, username).
 		Delete(&model.UserFile{})
@@ -334,7 +334,7 @@ func (r *mysqlFileRepo) PurgeUserFile(ctx context.Context, filehash, username st
 	return res.RowsAffected > 0, nil
 }
 
-// UpdateName 更新用户文件名
+// UpdateName updates the user file name
 func (r *mysqlFileRepo) UpdateName(ctx context.Context, filehash, username, newFilename string) (bool, error) {
 	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
 		Where("file_sha1 = ? AND user_name = ? AND status = ?", filehash, username, model.UserFileStatusActive).
@@ -345,7 +345,7 @@ func (r *mysqlFileRepo) UpdateName(ctx context.Context, filehash, username, newF
 	return res.RowsAffected > 0, nil
 }
 
-// CountRefs 统计某文件在 tbl_user_file 中的活跃引用数
+// CountRefs counts active references to a file in tbl_user_file
 func (r *mysqlFileRepo) CountRefs(ctx context.Context, filehash string) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.UserFile{}).
@@ -357,7 +357,7 @@ func (r *mysqlFileRepo) CountRefs(ctx context.Context, filehash string) (int64, 
 	return count, nil
 }
 
-// ListOldest 列出创建时间早于 before 的全局文件
+// ListOldest lists global files created before 'before'
 func (r *mysqlFileRepo) ListOldest(ctx context.Context, before time.Time) ([]model.File, error) {
 	var files []model.File
 	if err := r.db.WithContext(ctx).Where("create_at < ?", before).Find(&files).Error; err != nil {
@@ -366,7 +366,7 @@ func (r *mysqlFileRepo) ListOldest(ctx context.Context, before time.Time) ([]mod
 	return files, nil
 }
 
-// RemoveOrphan 从 tbl_file 删除无引用的全局文件记录
+// RemoveOrphan deletes orphan global file records from tbl_file
 func (r *mysqlFileRepo) RemoveOrphan(ctx context.Context, filehash string) error {
 	if err := r.db.WithContext(ctx).Where("file_sha1 = ?", filehash).Delete(&model.File{}).Error; err != nil {
 		return fmt.Errorf("remove orphan file failed: %w", err)
@@ -374,7 +374,7 @@ func (r *mysqlFileRepo) RemoveOrphan(ctx context.Context, filehash string) error
 	return nil
 }
 
-// SaveAnalysis 写入 AI 生成的摘要与标签（全局文件维度）
+// SaveAnalysis writes the AI-generated summary and tags (global file dimension)
 func (r *mysqlFileRepo) SaveAnalysis(ctx context.Context, filehash, summary, tags string) error {
 	res := r.db.WithContext(ctx).Model(&model.File{}).
 		Where("file_sha1 = ?", filehash).
@@ -385,7 +385,7 @@ func (r *mysqlFileRepo) SaveAnalysis(ctx context.Context, filehash, summary, tag
 	return nil
 }
 
-// GetGlobalFile 按 hash 读取全局文件（含摘要/标签），不带用户维度
+// GetGlobalFile reads the global file by hash (including summary/tags), without user dimension
 func (r *mysqlFileRepo) GetGlobalFile(ctx context.Context, filehash string) (model.File, error) {
 	var f model.File
 	if err := r.db.WithContext(ctx).Where("file_sha1 = ?", filehash).First(&f).Error; err != nil {
@@ -394,7 +394,7 @@ func (r *mysqlFileRepo) GetGlobalFile(ctx context.Context, filehash string) (mod
 	return f, nil
 }
 
-// ---- VFS 方法实现 ----
+// ---- VFS method implementations ----
 
 func (r *mysqlFileRepo) GetUserFileByID(ctx context.Context, id uint, username string) (model.UserFile, error) {
 	var uf model.UserFile
@@ -745,19 +745,19 @@ func (r *mysqlFileRepo) GetBreadcrumbs(ctx context.Context, username string, fol
 	return crumbs, nil
 }
 
-// ---- Mock 实现 ----
+// ---- Mock implementation ----
 
-// mockFileRepo 内存 mock 文件仓库
+// mockFileRepo is an in-memory mock file repository
 type mockFileRepo struct {
 	mu        sync.RWMutex
 	nextID    uint
-	files     map[string]model.File        // key: filehash -> 全局文件
+	files     map[string]model.File        // key: filehash -> global file
 	userFile  map[string]map[string]string // key: username -> filehash -> filename
-	deleted   map[string]map[string]bool   // key: username -> filehash -> 已软删除
-	userItems map[string][]model.UserFile  // key: username -> 用户所有文件/目录列表
+	deleted   map[string]map[string]bool   // key: username -> filehash -> soft-deleted
+	userItems map[string][]model.UserFile  // key: username -> list of all user files/directories
 }
 
-// NewMockFileRepository 创建 mock 文件仓库
+// NewMockFileRepository creates a mock file repository
 func NewMockFileRepository() FileRepository {
 	return &mockFileRepo{
 		nextID:    1,
@@ -791,7 +791,7 @@ func (m *mockFileRepo) CreateUserFile(ctx context.Context, uf model.UserFile) er
 	if uf.Status == 0 {
 		uf.Status = model.UserFileStatusActive
 	}
-	// 幂等：已存在则忽略
+	// Idempotent: ignore if already exists
 	if _, exists := m.userFile[uf.Username][uf.FileSha1]; !exists {
 		m.userFile[uf.Username][uf.FileSha1] = uf.FileName
 		m.userItems[uf.Username] = append(m.userItems[uf.Username], uf)
@@ -1246,6 +1246,6 @@ func (m *mockFileRepo) GetBreadcrumbs(ctx context.Context, username string, fold
 	return crumbs, nil
 }
 
-// 确保编译时检查接口实现
+// Ensure interface implementation is checked at compile time
 var _ FileRepository = (*mysqlFileRepo)(nil)
 var _ FileRepository = (*mockFileRepo)(nil)

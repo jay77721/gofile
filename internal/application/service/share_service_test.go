@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// newTestShareSvc 组装 mock repo + 本地存储的分享服务,alice 拥有一个文件
+// newTestShareSvc assembles share service with mock repo + local storage, alice owns a file
 func newTestShareSvc(t *testing.T) (*ShareService, *storage.LocalStorage, string) {
 	t.Helper()
 	const hash = "abcdef0123456789abcdef0123456789abcdef01"
@@ -116,7 +116,7 @@ func TestShareService(t *testing.T) {
 		}
 		t.Run("resolve: file soft-deleted", func(t *testing.T) {
 			share, _ := svc.Create(ctx, "alice", hash, 7, "")
-			// 用新的 FileService 删除文件(共享同一 mock repo)
+			// Delete file with a new FileService (sharing the same mock repo)
 			fileSvc := NewFileService(svc.fileRepo, storage.NewLocal(t.TempDir()), nil)
 			if err := fileSvc.Delete(context.Background(), hash, "alice"); err != nil {
 				t.Fatal(err)
@@ -129,7 +129,7 @@ func TestShareService(t *testing.T) {
 	})
 }
 
-// TestShareListHasPassword 验证列表接口 has_password 字段(PasswordHash 不下发)
+// TestShareListHasPassword verifies list endpoint has_password field (PasswordHash is not exposed)
 func TestShareListHasPassword(t *testing.T) {
 	svc, _, hash := newTestShareSvc(t)
 	ctx := context.Background()

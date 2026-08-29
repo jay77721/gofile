@@ -16,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// setupAIConfigHandler 创建测试用 AIConfigHandler + 路由(不依赖 MySQL)
+// setupAIConfigHandler create a test AIConfigHandler with router (without MySQL)
 func setupAIConfigHandler() (*gin.Engine, *AIConfigHandler) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{AIEmbedDim: 128, AllowPrivateAIURL: true}
@@ -24,7 +24,7 @@ func setupAIConfigHandler() (*gin.Engine, *AIConfigHandler) {
 	h := NewAIConfigHandler(svc)
 	r := gin.New()
 
-	// 模拟 AuthMiddleware:注入 username
+	// Mock AuthMiddleware: inject username
 	r.Use(func(c *gin.Context) { c.Set("username", "alice"); c.Next() })
 	aiCfg := r.Group("/ai/config")
 	{
@@ -49,14 +49,14 @@ func postJSON(t *testing.T, r *gin.Engine, path string, body any) *httptest.Resp
 func TestAIConfigHandlerFlow(t *testing.T) {
 	r, _ := setupAIConfigHandler()
 
-	// 1. 初始未配置
+	// 1. initially not configured
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ai/config", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"configured":false`) {
 		t.Fatalf("expected unconfigured, got %d %s", w.Code, w.Body.String())
 	}
 
-	// 2. 保存配置
+	// 2. Save configuration
 	w = postJSON(t, r, "/ai/config", map[string]any{
 		"base_url": "https://8.8.8.8/v1", "api_key": "sk-test-abcdef1234", "model": "gpt-4o",
 	})
@@ -64,7 +64,7 @@ func TestAIConfigHandlerFlow(t *testing.T) {
 		t.Fatalf("save failed: %d %s", w.Code, w.Body.String())
 	}
 
-	// 3. 读取:掩码,不泄露明文
+	// 3. read: masked, do not leak plaintext
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ai/config", nil))
 	body := w.Body.String()
@@ -75,13 +75,13 @@ func TestAIConfigHandlerFlow(t *testing.T) {
 		t.Fatalf("view leaks plaintext key: %s", body)
 	}
 
-	// 4. 保存非法 URL → 1001
+	// 4. save invalid URL → 1001
 	w = postJSON(t, r, "/ai/config", map[string]any{"base_url": "ftp://x", "api_key": "k"})
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"code":1001`) {
 		t.Fatalf("expected 1001 for bad url, got %d %s", w.Code, w.Body.String())
 	}
 
-	// 5. 测试连接(指向本地立即失败的端点,应返回 ok:false 但 HTTP 200)
+	// 5. test connection (points to a local endpoint that fails immediately; should return ok:false but HTTP 200)
 	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
@@ -94,7 +94,7 @@ func TestAIConfigHandlerFlow(t *testing.T) {
 		t.Fatalf("expected test failure result, got %d %s", w.Code, w.Body.String())
 	}
 
-	// 6. 删除配置
+	// 6. delete configuration
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/ai/config", nil))
 	if w.Code != http.StatusOK {

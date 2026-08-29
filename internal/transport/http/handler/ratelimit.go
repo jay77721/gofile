@@ -11,7 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ipLimiter 基于 IP 的令牌桶限流器（内存版，作为 Redis 不可用时的回退）
+// ipLimiter IP-based token bucket rate limiter (in-memory fallback when Redis is unavailable)
 type ipLimiter struct {
 	mu       sync.Mutex
 	limiters map[string]*tokenBucket
@@ -27,7 +27,7 @@ type tokenBucket struct {
 	burst    float64
 }
 
-// newIPLimiter 创建基于 IP 的限流器
+// newIPLimiter create an IP-based rate limiter
 func newIPLimiter(rate, burst int) *ipLimiter {
 	limiter := &ipLimiter{
 		limiters: make(map[string]*tokenBucket),
@@ -86,7 +86,7 @@ func (l *ipLimiter) allow(ip string) bool {
 	return false
 }
 
-// redisRateLimiterScript Lua 固定窗口计数器脚本
+// redisRateLimiterScript Lua fixed-window counter script
 var redisRateLimiterScript = redis.NewScript(`
 	local key = KEYS[1]
 	local now = tonumber(ARGV[1])
@@ -100,8 +100,8 @@ var redisRateLimiterScript = redis.NewScript(`
 	return current <= limit
 `)
 
-// RateLimitMiddleware Gin 限流中间件
-// 传入 cache 时用 Redis 全局限流；否则回退到内存限流（多实例下各自独立）
+// RateLimitMiddleware Gin rate limiting middleware
+// Uses Redis global rate limiting when cache is provided; otherwise falls back to in-memory rate limiting (per-instance isolated)
 func RateLimitMiddleware(rate, burst int, c ...*cache.Client) gin.HandlerFunc {
 	if len(c) > 0 && c[0] != nil {
 		return newRedisRateLimiter(rate, burst, c[0])
@@ -117,7 +117,7 @@ func RateLimitMiddleware(rate, burst int, c ...*cache.Client) gin.HandlerFunc {
 	}
 }
 
-// newRedisRateLimiter 基于 Redis 的限流器（Lua 原子固定窗口）
+// newRedisRateLimiter Redis-based rate limiter (Lua atomic fixed window)
 func newRedisRateLimiter(rate, burst int, c *cache.Client) gin.HandlerFunc {
 	window := time.Second
 	return func(ginCtx *gin.Context) {

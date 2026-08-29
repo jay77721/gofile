@@ -12,14 +12,14 @@ import (
 	"gofile/internal/port"
 )
 
-// TypesenseIndexer Typesense 实现的检索引擎
+// TypesenseIndexer is a search engine implemented with Typesense
 type TypesenseIndexer struct {
 	client     *typesense.Client
 	collection string
 	dim        int
 }
 
-// NewTypesenseIndexer 创建 Typesense 检索引擎
+// NewTypesenseIndexer creates a Typesense search engine
 func NewTypesenseIndexer(addr, apiKey string, dim int) *TypesenseIndexer {
 	client := typesense.NewClient(
 		typesense.WithServer(addr),
@@ -33,7 +33,7 @@ func NewTypesenseIndexer(addr, apiKey string, dim int) *TypesenseIndexer {
 	}
 }
 
-// collectionSchema 返回 files collection 的 schema
+// collectionSchema returns the schema for the files collection
 func (t *TypesenseIndexer) collectionSchema() *api.CollectionSchema {
 	dim := t.dim
 	return &api.CollectionSchema{
@@ -52,9 +52,9 @@ func (t *TypesenseIndexer) collectionSchema() *api.CollectionSchema {
 	}
 }
 
-// EnsureCollection 幂等创建 collection
+// EnsureCollection creates the collection idempotently
 func (t *TypesenseIndexer) EnsureCollection(ctx context.Context) error {
-	// 幂等：已存在则忽略
+	// Idempotent: ignore if already exists
 	if _, err := t.client.Collection(t.collection).Retrieve(ctx); err == nil {
 		slog.InfoContext(ctx, "typesense collection exists", "collection", t.collection)
 		return nil
@@ -98,7 +98,7 @@ func (t *TypesenseIndexer) Delete(ctx context.Context, username, filehash string
 	return nil
 }
 
-// SearchHybrid 混合检索（全文 + 向量 KNN，RRF 融合）+ 所有权 filter
+// SearchHybrid performs hybrid search (full-text + vector KNN, RRF fusion) + ownership filter
 func (t *TypesenseIndexer) SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]port.Doc, error) {
 	filterBy := ownershipFilter(username)
 	if filter = safeTypeFilter(filter); filter != "" {
@@ -129,7 +129,7 @@ func (t *TypesenseIndexer) SearchHybrid(ctx context.Context, q, username string,
 	return hitsToDocs(*res.Hits), nil
 }
 
-// Similar 相似文件推荐（向量 KNN，排除自身）
+// Similar recommends similar files (vector KNN, excluding itself)
 func (t *TypesenseIndexer) Similar(ctx context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]port.Doc, error) {
 	if len(vector) == 0 {
 		return []port.Doc{}, nil
@@ -152,7 +152,7 @@ func (t *TypesenseIndexer) Similar(ctx context.Context, username string, vector 
 		return []port.Doc{}, nil
 	}
 	docs := hitsToDocs(*res.Hits)
-	// 排除自身
+	// Exclude itself
 	out := make([]port.Doc, 0, len(docs))
 	for _, d := range docs {
 		if d.Filehash != excludeFilehash {
@@ -248,7 +248,7 @@ func hitsToDocs(hits []api.SearchResultHit) []port.Doc {
 	return out
 }
 
-// DeleteByFilehash 删除指定 filehash 的所有用户文档（GC 用）
+// DeleteByFilehash deletes all user documents for the specified filehash (for GC)
 func (t *TypesenseIndexer) DeleteByFilehash(ctx context.Context, filehash string) error {
 	filterBy := "filehash:=" + typesenseLiteral(filehash)
 	page := 1
@@ -277,8 +277,8 @@ func (t *TypesenseIndexer) DeleteByFilehash(ctx context.Context, filehash string
 				}
 			}
 		}
-		// 翻页直到取完所有命中：共享该文件的用户数可能超过单页上限（250），
-		// 否则会留下孤儿文档，仍可被语义搜索命中
+		// Paginate until all hits are fetched: the number of users sharing this file may exceed the single-page limit (250),
+		// otherwise orphan documents would remain and still be hit by semantic search
 		if len(*res.Hits) < 250 {
 			return nil
 		}

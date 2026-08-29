@@ -16,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// sanitizeFilename 清理文件名中的危险字符
+// sanitizeFilename remove dangerous characters from the filename
 func sanitizeFilename(name string) string {
 	name = strings.ReplaceAll(name, `"`, "")
 	name = strings.ReplaceAll(name, "\r", "")
@@ -24,15 +24,15 @@ func sanitizeFilename(name string) string {
 	return name
 }
 
-// buildContentDisposition 构建安全的 Content-Disposition 响应头
+// buildContentDisposition build a safe Content-Disposition header
 func buildContentDisposition(name string) string {
 	return `attachment; filename="` + name + `"; filename*=UTF-8''` + url.PathEscape(name)
 }
 
-// parseRangeHeader 解析 Range 头，返回 offset 和 length
-// totalSize=0 表示还不知道总大小，会先查 storage 获取
+// parseRangeHeader parse the Range header and return offset and length
+// totalSize=0 means total size is unknown; storage will be queried first
 func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64, ok bool) {
-	// 格式：bytes=start-end 或 bytes=start-
+	// Format: bytes=start-end or bytes=start-
 	if !strings.HasPrefix(rangeHeader, "bytes=") {
 		return 0, 0, false
 	}
@@ -48,7 +48,7 @@ func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64
 	}
 
 	if parts[1] == "" {
-		// bytes=100-  → 从 100 到末尾；length 未知时返回 -1，由 service 按文件大小补齐
+		// bytes=100-  → from 100 to end; returns -1 when length is unknown and service fills it by file size
 		offset = start
 		length = -1
 		if totalSize > 0 {
@@ -64,20 +64,20 @@ func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64
 		}
 		offset = start
 		length = end - start + 1
-		// 空区间或溢出（end-start 达到 MaxInt64 时 +1 变负）均非法
+		// Empty interval or overflow (end-start reaches MaxInt64 and +1 becomes negative) is invalid
 		if length <= 0 {
 			return 0, 0, false
 		}
 	}
 
-	// length == 0 表示空区间（非法）；-1 表示开放区间未知大小，放行由 service 补齐
+	// length == 0 denotes empty interval (invalid); -1 denotes open interval with unknown size, handled by service
 	if length == 0 {
 		return 0, 0, false
 	}
 	return offset, length, true
 }
 
-// detectMimeType 根据文件扩展名返回 MIME 类型
+// detectMimeType return MIME type based on file extension
 func detectMimeType(ext string) string {
 	switch ext {
 	case ".jpg", ".jpeg":
@@ -139,17 +139,17 @@ func detectMimeType(ext string) string {
 	}
 }
 
-// DownloadHandler 下载文件（支持 HTTP Range 断点续传）
-// @Summary 下载文件
-// @Description 支持 Range 请求头实现断点续传和拖动播放
-// @Tags 文件
+// DownloadHandler download a file (supports HTTP Range resumable download)
+// @Summary Download file
+// @Description Supports Range header for resumable download and seek playback
+// @Tags File
 // @Produce application/octet-stream
 // @Security ApiKeyAuth
-// @Param filehash query string true "文件 SHA1"
-// @Param range header string false "Range 请求头（如 bytes=0-1023）"
-// @Success 200 "完整文件内容"
-// @Success 206 "区间响应"
-// @Failure 404 "文件不存在"
+// @Param filehash query string true "File SHA1"
+// @Param range header string false "Range header (e.g. bytes=0-1023)"
+// @Success 200 "Full file content"
+// @Success 206 "Partial content"
+// @Failure 404 "File not found"
 // @Router /file/download [get]
 func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
@@ -160,17 +160,17 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 
 	username := c.GetString("username")
 
-	// 获取文件元信息（用于文件名和 Content-Type）
+	// Retrieve file metadata (for filename and Content-Type)
 	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, username)
 	if err != nil {
 		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 
-	// 解析 Range 请求头
+	// Parse Range header
 	rangeHeader := c.GetHeader("Range")
 	if rangeHeader == "" {
-		// 无 Range 头：返回完整文件
+		// No Range header: return the whole file
 		reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
 		if err != nil {
 			slog.ErrorContext(c.Request.Context(), "download failed", "error", err, "filehash", filehash)
@@ -189,7 +189,7 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 		return
 	}
 
-	// 有 Range 头：解析范围（开放区间 bytes=a- 由 service 按文件大小补齐）
+	// Range header present: parse range (open interval bytes=a- is filled by service with file size)
 	offset, length, ok := parseRangeHeader(rangeHeader, 0)
 	if !ok {
 		if size, err := h.fileSvc.FileSize(c.Request.Context(), filehash, username); err == nil {
@@ -225,7 +225,7 @@ func (h *FileHandler) DownloadHandler(c *gin.Context) {
 	io.CopyBuffer(c.Writer, reader, buf)
 }
 
-// PreviewHandler 在线预览文件（图片/PDF/文本/视频等，支持 Range 拖动）
+// PreviewHandler preview a file inline (images/PDF/text/video etc., supports Range seeking)
 func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
@@ -235,19 +235,19 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 
 	username := c.GetString("username")
 
-	// 获取文件元信息（用于文件名和 Content-Type）
+	// Retrieve file metadata (for filename and Content-Type)
 	fMeta, err := h.fileSvc.GetMeta(c.Request.Context(), filehash, username)
 	if err != nil {
 		respondError(c, http.StatusNotFound, CodeNotFound, "文件不存在")
 		return
 	}
 
-	// 根据扩展名检测 Content-Type
+	// Detect Content-Type by extension
 	ext := strings.ToLower(filepath.Ext(fMeta.FileName))
 	contentType := detectMimeType(ext)
 	safeName := sanitizeFilename(fMeta.FileName)
 
-	// Range 请求：206 区间响应（视频/音频拖动播放依赖）
+	// Range request: 206 partial response (required for video/audio seeking)
 	if rangeHeader := c.GetHeader("Range"); rangeHeader != "" {
 		offset, length, ok := parseRangeHeader(rangeHeader, 0)
 		if !ok {
@@ -283,7 +283,7 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 		return
 	}
 
-	// 无 Range 头：返回完整文件
+	// No Range header: return the whole file
 	reader, _, err := h.fileSvc.Download(c.Request.Context(), filehash, username)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "preview failed", "error", err, "filehash", filehash)
@@ -297,7 +297,7 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 	c.Header("Accept-Ranges", "bytes")
 	c.Header("X-Content-Type-Options", "nosniff")
 
-	// 扩展名无法识别时，读取文件头探测真实类型
+	// When extension is unrecognized, sniff file header to detect real type
 	if contentType == "application/octet-stream" {
 		buf := make([]byte, 512)
 		n, _ := reader.Read(buf)
@@ -305,7 +305,7 @@ func (h *FileHandler) PreviewHandler(c *gin.Context) {
 			contentType = http.DetectContentType(buf[:n])
 			c.Header("Content-Type", contentType)
 		}
-		// 重新组合读取器
+		// Reassemble the reader
 		combinedReader := io.MultiReader(bytes.NewReader(buf[:n]), reader)
 		io.CopyBuffer(c.Writer, combinedReader, make([]byte, 32*1024))
 		return

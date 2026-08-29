@@ -2,15 +2,15 @@ package model
 
 import "time"
 
-// AITask AI 异步分析任务状态机
-// 对应 tbl_ai_task 表
+// AITask is the AI async analysis task state machine.
+// Corresponds to tbl_ai_task.
 //
-// 状态流转：
+// State transitions:
 //
-//	0 pending    → 待处理
-//	1 processing → worker 正在处理
-//	2 done       → 分析成功（幂等锚点：已分析则跳过）
-//	3 failed     → 失败，retry_count < 上限时由补偿任务重新入队
+//	0 pending    -> pending
+//	1 processing -> worker is processing
+//	2 done       -> analyzed successfully (idempotency anchor: skip if already analyzed)
+//	3 failed     -> failed, re-enqueued by compensation job when retry_count < limit
 type AITask struct {
 	ID         uint      `gorm:"primaryKey;autoIncrement"`
 	FileSha1   string    `gorm:"column:file_sha1;size:40;not null;uniqueIndex:uk_sha1_user"`
@@ -25,28 +25,28 @@ type AITask struct {
 
 func (AITask) TableName() string { return "tbl_ai_task" }
 
-// AIConfig 用户级 AI Provider 配置(前端自定义 OpenAI 协议 baseURL/API key)
-// 对应 tbl_ai_config 表
+// AIConfig is per-user AI Provider config (frontend custom OpenAI-compatible baseURL/API key).
+// Corresponds to tbl_ai_config.
 //
-// 生效优先级:用户配置(本表)→ env 系统配置 → mock 降级
+// Effective priority: user config (this table) -> env system config -> mock fallback.
 type AIConfig struct {
 	Username   string    `gorm:"column:user_name;primaryKey;size:64"`
-	BaseURL    string    `gorm:"column:base_url;size:512;default:''"`    // OpenAI 协议端点,空 = 使用系统默认
-	APIKeyEnc  string    `gorm:"column:api_key_enc;size:512;default:''"` // API key AES-GCM 密文(base64),明文不下发
-	Model      string    `gorm:"column:model;size:128;default:''"`       // 对话模型名,空 = 默认
-	EmbedModel string    `gorm:"column:embed_model;size:128;default:''"` // embedding 模型名,空 = 默认
+	BaseURL    string    `gorm:"column:base_url;size:512;default:''"`    // OpenAI-compatible endpoint, empty = use system default
+	APIKeyEnc  string    `gorm:"column:api_key_enc;size:512;default:''"` // API key AES-GCM ciphertext (base64), plaintext never sent to client
+	Model      string    `gorm:"column:model;size:128;default:''"`       // chat model name, empty = default
+	EmbedModel string    `gorm:"column:embed_model;size:128;default:''"` // embedding model name, empty = default
 	UpdateAt   time.Time `gorm:"column:update_at;autoUpdateTime"`
 }
 
 func (AIConfig) TableName() string { return "tbl_ai_config" }
 
-// AIConfigView 下发给前端的配置视图(API key 仅掩码展示)
+// AIConfigView is the config view sent to frontend (API key displayed as masked only).
 type AIConfigView struct {
-	Configured bool   `json:"configured"`   // 是否配置了用户级真实 provider
-	BaseURL    string `json:"base_url"`     // 用户自定义端点,空 = 系统默认
-	HasKey     bool   `json:"has_key"`      // 是否已保存 API key(前端决定是否显示掩码)
-	APIKeyMask string `json:"api_key_mask"` // sk-****abcd,便于前端回显
-	Model      string `json:"model"`        // 对话模型
-	EmbedModel string `json:"embed_model"`  // embedding 模型
-	Mode       string `json:"mode"`         // 当前生效模式:openai | mock
+	Configured bool   `json:"configured"`   // whether a real per-user provider is configured
+	BaseURL    string `json:"base_url"`     // user custom endpoint, empty = system default
+	HasKey     bool   `json:"has_key"`      // whether API key is saved (frontend decides whether to show mask)
+	APIKeyMask string `json:"api_key_mask"` // sk-****abcd, for frontend echo
+	Model      string `json:"model"`        // chat model
+	EmbedModel string `json:"embed_model"`  // embedding model
+	Mode       string `json:"mode"`         // current effective mode: openai | mock
 }

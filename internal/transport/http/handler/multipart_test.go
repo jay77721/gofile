@@ -151,7 +151,7 @@ func TestS3Multipart_Handlers(t *testing.T) {
 	})
 
 	t.Run("init invalid params", func(t *testing.T) {
-		// 无效 hash
+		// Invalid hash
 		body, _ := json.Marshal(model.MultipartInitReq{FileSha1: "invalid-hash", FileName: "test.zip", FileSize: 1024})
 		req := httptest.NewRequest("POST", "/file/upload/multipart/init", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -161,7 +161,7 @@ func TestS3Multipart_Handlers(t *testing.T) {
 			t.Errorf("invalid hash status = %d, want 400", w.Code)
 		}
 
-		// 危险扩展名
+		// Dangerous extension
 		body, _ = json.Marshal(model.MultipartInitReq{FileSha1: validHash, FileName: "malicious.exe", FileSize: 1024})
 		req = httptest.NewRequest("POST", "/file/upload/multipart/init", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -201,7 +201,7 @@ func TestS3Multipart_Handlers(t *testing.T) {
 	})
 
 	t.Run("abort multipart upload", func(t *testing.T) {
-		// 先初始化一个新的会话供取消
+		// Initialize a new session for abort
 		initBody, _ := json.Marshal(model.MultipartInitReq{
 			FileSha1: "6666666666666666666666666666666666666666",
 			FileName: "to_abort.zip",
@@ -286,7 +286,7 @@ func TestTraditionalChunk_Handlers(t *testing.T) {
 			t.Fatalf("upload chunk status = %d, want 200", w.Code)
 		}
 
-		// 查询已上传分块状态
+		// Query uploaded chunk status
 		statusReq := httptest.NewRequest("GET", "/file/upload/status?filehash="+validHash, nil)
 		statusW := httptest.NewRecorder()
 		r.ServeHTTP(statusW, statusReq)

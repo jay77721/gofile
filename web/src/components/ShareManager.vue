@@ -84,7 +84,7 @@ async function revoke(): Promise<void> {
       <div class="empty-hint">在文件卡片上点击「分享」创建链接</div>
     </div>
 
-    <!-- 撤销确认(复用 ConfirmModal 需 file 字段,构造兼容对象) -->
+    <!-- Revoke confirmation (reuses ConfirmModal which requires a file field; construct a compatible object) -->
     <div v-if="revokeTarget" class="modal-mask on" @click.self="revokeTarget = null">
       <div class="modal">
         <h4>撤销分享</h4>

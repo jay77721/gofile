@@ -10,26 +10,26 @@ import (
 	"gofile/internal/application/service"
 )
 
-// AIConfigHandler 用户级 AI Provider 配置端点
-// 前端可自定义 OpenAI 协议 baseURL + API key,保存后异步任务与语义搜索按用户生效
+// AIConfigHandler per-user AI Provider configuration endpoints
+// Frontend can customize OpenAI-compatible baseURL + API key; async tasks and semantic search take effect per user after saving
 type AIConfigHandler struct {
 	svc *service.AIConfigService
 }
 
-// NewAIConfigHandler 创建 AI 配置 handler
+// NewAIConfigHandler create the AI configuration handler
 func NewAIConfigHandler(svc *service.AIConfigService) *AIConfigHandler {
 	return &AIConfigHandler{svc: svc}
 }
 
-// aiConfigReq 保存/测试连接的请求体
+// aiConfigReq request body for saving/testing the connection
 type aiConfigReq struct {
-	BaseURL    string `json:"base_url"`    // OpenAI 协议端点,空 = 官方默认
-	APIKey     string `json:"api_key"`     // 空 = 保留旧值(仅保存时)
-	Model      string `json:"model"`       // 对话模型名
-	EmbedModel string `json:"embed_model"` // embedding 模型名
+	BaseURL    string `json:"base_url"`    // OpenAI-compatible endpoint; empty means official default
+	APIKey     string `json:"api_key"`     // empty means keep the previous value (only when saving)
+	Model      string `json:"model"`       // chat model name
+	EmbedModel string `json:"embed_model"` // embedding model name
 }
 
-// GetConfigHandler 获取当前用户配置(API key 仅掩码)
+// GetConfigHandler retrieve the current user config (API key is masked)
 // GET /ai/config
 func (h *AIConfigHandler) GetConfigHandler(c *gin.Context) {
 	username := c.GetString("username")
@@ -42,7 +42,7 @@ func (h *AIConfigHandler) GetConfigHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": view})
 }
 
-// SaveConfigHandler 保存当前用户配置
+// SaveConfigHandler save the current user configuration
 // POST /ai/config
 func (h *AIConfigHandler) SaveConfigHandler(c *gin.Context) {
 	var req aiConfigReq
@@ -60,7 +60,7 @@ func (h *AIConfigHandler) SaveConfigHandler(c *gin.Context) {
 		msg := "保存 AI 配置失败"
 		code := CodeStorageError
 		status := http.StatusInternalServerError
-		// URL 校验失败(含 SSRF 拦截)属参数问题
+		// URL validation failure (including SSRF interception) is treated as invalid params
 		if isURLValidationError(err) {
 			msg = err.Error()
 			code = CodeInvalidParams
@@ -74,7 +74,7 @@ func (h *AIConfigHandler) SaveConfigHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已保存,配置即刻生效", "data": nil})
 }
 
-// DeleteConfigHandler 清除当前用户配置(回退系统默认/mock)
+// DeleteConfigHandler clear the current user configuration (falls back to system default/mock)
 // DELETE /ai/config
 func (h *AIConfigHandler) DeleteConfigHandler(c *gin.Context) {
 	username := c.GetString("username")
@@ -86,7 +86,7 @@ func (h *AIConfigHandler) DeleteConfigHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已清除,回退系统默认配置", "data": nil})
 }
 
-// TestConfigHandler 测试连接(不持久化)
+// TestConfigHandler test the connection (without persistence)
 // POST /ai/config/test
 func (h *AIConfigHandler) TestConfigHandler(c *gin.Context) {
 	var req aiConfigReq
@@ -98,7 +98,7 @@ func (h *AIConfigHandler) TestConfigHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": result})
 }
 
-// isURLValidationError 判断错误是否来自 URL/SSRF 校验(映射为参数错误)
+// isURLValidationError check whether the error originates from URL/SSRF validation (mapped to invalid params)
 func isURLValidationError(err error) bool {
 	if err == nil {
 		return false

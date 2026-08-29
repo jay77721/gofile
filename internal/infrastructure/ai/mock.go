@@ -10,15 +10,15 @@ import (
 	"gofile/internal/port"
 )
 
-// MockProvider 基于规则的 mock 实现（无 LLM 时可跑通全流程，行为确定性、可测试）
+// MockProvider is a rule-based mock implementation (can run the full workflow without an LLM, deterministic and testable)
 //
-// Analyze：summary = 文件名 + ": " + 前 200 字符；tags = 扩展名规则 + 文件名关键词。
-// Embed：从文本 hash 生成确定性定长向量（同一文本 → 同一向量），不调用任何外部服务。
+// Analyze：summary = filename + ": " + first 200 characters; tags = extension rules + filename keywords.
+// Embed：generates a deterministic fixed-length vector from text hash (same text -> same vector), without calling any external service.
 type MockProvider struct {
 	dim int
 }
 
-// NewMockProvider 创建 mock provider，dim 为向量维度
+// NewMockProvider creates a mock provider, dim is the vector dimension
 func NewMockProvider(dim int) port.Provider {
 	if dim <= 0 {
 		dim = 128
@@ -38,7 +38,7 @@ func (m *MockProvider) Embed(_ context.Context, text string) ([]float32, error) 
 	return deterministicVector(text, m.dim), nil
 }
 
-// buildSummary 生成 mock 摘要
+// buildSummary generates a mock summary
 func buildSummary(fileName, content string) string {
 	const maxLen = 200
 	preview := content
@@ -52,7 +52,7 @@ func buildSummary(fileName, content string) string {
 	return fileName + ": " + preview
 }
 
-// buildTags 基于扩展名 + 文件名关键词生成标签
+// buildTags generates tags based on extension + filename keywords
 func buildTags(fileName, content string) []string {
 	ext := strings.ToLower(getExt(fileName))
 	var tags []string
@@ -79,7 +79,7 @@ func buildTags(fileName, content string) []string {
 	case ".txt", ".md", ".log", ".json", ".xml", ".yaml", ".yml", ".html", ".htm", ".css", ".sql", ".conf", ".ini", ".toml", ".env":
 		tags = append(tags, "文本")
 	default:
-		// 按 MIME 推断
+		// Infer by MIME
 		mt := mimetype.Lookup(ext)
 		if mt != nil {
 			switch {
@@ -99,7 +99,7 @@ func buildTags(fileName, content string) []string {
 		}
 	}
 
-	// 文件名关键词补充标签
+	// Supplement tags with filename keywords
 	lower := strings.ToLower(fileName)
 	for kw, tag := range keywordTags {
 		if strings.Contains(lower, kw) {
@@ -110,7 +110,7 @@ func buildTags(fileName, content string) []string {
 	return uniqueTags(tags)
 }
 
-// keywordTags 文件名关键词 → 标签映射
+// keywordTags maps filename keywords to tags
 var keywordTags = map[string]string{
 	"报告":       "报告",
 	"report":   "报告",
@@ -148,13 +148,13 @@ func uniqueTags(in []string) []string {
 	return out
 }
 
-// deterministicVector 从文本 hash 生成确定性定长向量（不依赖 math/rand，测试可重复）
+// deterministicVector generates a deterministic fixed-length vector from text hash (without math/rand, reproducible in tests)
 func deterministicVector(text string, dim int) []float32 {
 	v := make([]float32, dim)
 	h := fnv.New64a()
 	fmt.Fprint(h, text)
 	for i := 0; i < dim; i++ {
-		// 每个维度用独立 hash 种子，映射到 [-1, 1)
+		// Each dimension uses an independent hash seed, mapped to [-1, 1)
 		h.Reset()
 		fmt.Fprintf(h, "%s:%d", text, i)
 		v[i] = float32(h.Sum64()%2000)/1000.0 - 1.0

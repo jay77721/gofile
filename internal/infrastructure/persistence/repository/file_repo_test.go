@@ -13,8 +13,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// newTestDB 创建 sqlite 内存库并迁移全部表(与 MySQL 行为一致,纯 Go 无 CGO)
-// 每个测试使用独立库名,避免 shared cache 串库
+// newTestDB creates sqlite in-memory DB and migrates all tables (consistent with MySQL behavior, pure Go without CGO)
+// Each test uses independent DB name to avoid shared cache cross-contamination
 func newTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
@@ -45,7 +45,7 @@ func TestFileRepoCreateIdempotent(t *testing.T) {
 	if err := repo.Create(context.Background(), f); err != nil {
 		t.Fatalf("first create failed: %v", err)
 	}
-	// 幂等:重复创建不报错
+	// Idempotent: repeated creation does not error
 	if err := repo.Create(context.Background(), model.File{FileSha1: testHash, FileName: "b.txt", FileSize: 20}); err != nil {
 		t.Fatalf("second create should be ignored: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestFileRepoCreateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGlobalFile failed: %v", err)
 	}
-	// INSERT IGNORE 语义:首次记录不被覆盖
+	// INSERT IGNORE semantics: first record not overwritten
 	if global.FileName != "a.txt" || global.FileSize != 10 {
 		t.Fatalf("expected first record preserved, got %+v", global)
 	}
@@ -70,7 +70,7 @@ func TestFileRepoOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 所有者可见
+	// Owner visible
 	meta, err := repo.GetByHash(context.Background(), testHash, "alice")
 	if err != nil {
 		t.Fatalf("owner lookup failed: %v", err)
@@ -79,12 +79,12 @@ func TestFileRepoOwnership(t *testing.T) {
 		t.Fatalf("meta mismatch: %+v", meta)
 	}
 
-	// 非所有者不可见
+	// Non-owner invisible
 	if _, err := repo.GetByHash(context.Background(), testHash, "bob"); err == nil {
 		t.Fatal("bob should not see alice's file")
 	}
 
-	// 幂等:重复建立关联不报错、不重复
+	// Idempotent: repeated association does not error or duplicate
 	if err := repo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: testHash, FileName: "a.txt", Status: model.UserFileStatusActive}); err != nil {
 		t.Fatalf("duplicate user file should be ignored: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestFileRepoTrashLifecycle(t *testing.T) {
 	_ = repo.Create(context.Background(), model.File{FileSha1: testHash, FileName: "a.txt", FileSize: 10})
 	_ = repo.CreateUserFile(context.Background(), model.UserFile{Username: "alice", FileSha1: testHash, FileName: "a.txt", Status: model.UserFileStatusActive})
 
-	// 软删 → 列表不可见、回收站可见
+	// Soft delete -> invisible in list, visible in trash
 	ok, err := repo.Delete(context.Background(), testHash, "alice")
 	if err != nil || !ok {
 		t.Fatalf("delete failed: ok=%v err=%v", ok, err)
@@ -113,7 +113,7 @@ func TestFileRepoTrashLifecycle(t *testing.T) {
 		t.Fatalf("expected 1 trash item, got total=%d len=%d err=%v", total, len(list), err)
 	}
 
-	// 恢复 → 重新可见
+	// Restore -> visible again
 	if ok, err := repo.Restore(context.Background(), testHash, "alice"); err != nil || !ok {
 		t.Fatalf("restore failed: ok=%v err=%v", ok, err)
 	}
@@ -121,7 +121,7 @@ func TestFileRepoTrashLifecycle(t *testing.T) {
 		t.Fatalf("restored file should be visible: %v", err)
 	}
 
-	// 再次软删 → 彻底删除
+	// Soft delete again -> purge
 	_, _ = repo.Delete(context.Background(), testHash, "alice")
 	if ok, err := repo.PurgeUserFile(context.Background(), testHash, "alice"); err != nil || !ok {
 		t.Fatalf("purge failed: ok=%v err=%v", ok, err)
@@ -147,7 +147,7 @@ func TestFileRepoListByUserPaged(t *testing.T) {
 	if len(page) != 1 {
 		t.Fatalf("page 2 size 2 of 3 items should return 1, got %d", len(page))
 	}
-	// bob 无文件
+	// bob has no files
 	empty, err := repo.ListByUserPaged(context.Background(), "bob", 1, 10)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("bob should have 0 files, got %d err=%v", len(empty), err)
@@ -167,17 +167,17 @@ func TestFileRepoSaveAnalysisAndGC(t *testing.T) {
 		t.Fatalf("analysis not saved: %+v err=%v", global, err)
 	}
 
-	// GC 候选:无活跃引用的旧文件
+	// GC candidate: old file without active references
 	if err := repo.RemoveOrphan(context.Background(), testHash); err != nil {
 		t.Fatalf("RemoveOrphan failed: %v", err)
 	}
 	if _, err := repo.GetGlobalFile(context.Background(), testHash); err == nil {
 		t.Fatal("orphan should be removed")
 	}
-	// ListOldest:时间过滤
+	// ListOldest: time filter
 	_ = repo.Create(context.Background(), model.File{FileSha1: testHash, FileSize: 1})
 	if err := repo.RemoveOrphan(context.Background(), testHash); err == nil {
-		// 已删除,重建后应可再次移除(无引用)
+		// Already deleted, should be removable again after recreation (no references)
 	}
 	if old, err := repo.ListOldest(context.Background(), time.Now().Add(time.Hour)); err != nil || len(old) != 0 {
 		t.Fatalf("ListOldest before any create should be empty, got %d err=%v", len(old), err)
@@ -189,7 +189,7 @@ func TestFileRepoVFS(t *testing.T) {
 	repo := NewFileRepository(db)
 	ctx := context.Background()
 
-	// 1. 创建根目录下的文件夹 A
+	// 1. Create folder A under root
 	folderA, err := repo.CreateFolder(ctx, model.UserFile{
 		Username: "alice",
 		ParentID: 0,
@@ -203,7 +203,7 @@ func TestFileRepoVFS(t *testing.T) {
 		t.Fatalf("expected folder with is_dir=1 and ID>0, got %+v", folderA)
 	}
 
-	// 2. 创建子文件夹 B (/学习资料/Go/)
+	// 2. Create subfolder B (/学习资料/Go/)
 	folderB, err := repo.CreateFolder(ctx, model.UserFile{
 		Username: "alice",
 		ParentID: uint64(folderA.ID),
@@ -214,7 +214,7 @@ func TestFileRepoVFS(t *testing.T) {
 		t.Fatalf("create folderB failed: %v", err)
 	}
 
-	// 3. 在 folderB 下创建文件
+	// 3. Create file under folderB
 	_ = repo.Create(ctx, model.File{FileSha1: testHash, FileName: "main.go", FileSize: 100})
 	if err := repo.CreateUserFile(ctx, model.UserFile{
 		Username: "alice",
@@ -227,7 +227,7 @@ func TestFileRepoVFS(t *testing.T) {
 		t.Fatalf("create user file in folderB failed: %v", err)
 	}
 
-	// 4. 查询 folderB 下的文件
+	// 4. Query files under folderB
 	files, total, err := repo.ListByParent(ctx, "alice", uint64(folderB.ID), 0, 10)
 	if err != nil {
 		t.Fatalf("list by parent failed: %v", err)
@@ -236,19 +236,19 @@ func TestFileRepoVFS(t *testing.T) {
 		t.Fatalf("expected 1 file in folderB, got %d files: %+v", total, files)
 	}
 
-	// 5. 面包屑测试
+	// 5. Breadcrumb test
 	crumbs, err := repo.GetBreadcrumbs(ctx, "alice", uint64(folderB.ID))
 	if err != nil {
 		t.Fatalf("get breadcrumbs failed: %v", err)
 	}
-	if len(crumbs) != 3 { // 全部文件 -> 学习资料 -> Go
+	if len(crumbs) != 3 { // All Files -> 学习资料 -> Go
 		t.Fatalf("expected 3 breadcrumbs, got %d: %+v", len(crumbs), crumbs)
 	}
 	if crumbs[0].Name != "全部文件" || crumbs[1].Name != "学习资料" || crumbs[2].Name != "Go" {
 		t.Fatalf("breadcrumb hierarchy mismatch: %+v", crumbs)
 	}
 
-	// 6. 重命名与前缀迁移
+	// 6. Rename and prefix migration
 	err = repo.RenameItem(ctx, folderA.ID, "alice", "资料库", "/资料库/")
 	if err != nil {
 		t.Fatalf("rename folderA failed: %v", err)
@@ -258,7 +258,7 @@ func TestFileRepoVFS(t *testing.T) {
 		t.Fatalf("rename should atomically update subtree, got %+v err=%v", updatedB, err)
 	}
 
-	// 7. 软删除目录级联
+	// 7. Soft-delete directory cascade
 	err = repo.SoftDeleteDir(ctx, "alice", "/资料库/")
 	if err != nil {
 		t.Fatalf("soft delete dir failed: %v", err)

@@ -13,14 +13,14 @@ import (
 	"gofile/internal/port"
 )
 
-// MinIOStorage MinIO 对象存储实现（S3 兼容）
+// MinIOStorage is a MinIO object storage implementation (S3-compatible)
 type MinIOStorage struct {
 	client *minio.Client
 	core   *minio.Core
 	bucket string
 }
 
-// NewMinIO 创建 MinIO 存储实例，自动创建 bucket（如不存在）
+// NewMinIO creates a MinIO storage instance, automatically creating the bucket if it does not exist
 func NewMinIO(endpoint, accessKey, secretKey, bucket string, useSSL bool) (*MinIOStorage, error) {
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
@@ -30,7 +30,7 @@ func NewMinIO(endpoint, accessKey, secretKey, bucket string, useSSL bool) (*MinI
 		return nil, fmt.Errorf("create minio client failed: %w", err)
 	}
 
-	// 自动创建 bucket
+	// Automatically create bucket
 	ctx := context.Background()
 	exists, err := client.BucketExists(ctx, bucket)
 	if err != nil {
@@ -48,7 +48,7 @@ func NewMinIO(endpoint, accessKey, secretKey, bucket string, useSSL bool) (*MinI
 	return &MinIOStorage{client: client, core: core, bucket: bucket}, nil
 }
 
-// Put 将文件上传到 MinIO
+// Put uploads a file to MinIO
 func (s *MinIOStorage) Put(ctx context.Context, key string, reader io.Reader, size int64) error {
 	_, err := s.client.PutObject(ctx, s.bucket, key, reader, size, minio.PutObjectOptions{
 		ContentType: "application/octet-stream",
@@ -60,7 +60,7 @@ func (s *MinIOStorage) Put(ctx context.Context, key string, reader io.Reader, si
 	return nil
 }
 
-// Get 从 MinIO 读取文件
+// Get reads a file from MinIO
 func (s *MinIOStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
@@ -69,7 +69,7 @@ func (s *MinIOStorage) Get(ctx context.Context, key string) (io.ReadCloser, erro
 	return obj, nil
 }
 
-// GetRange 按字节区间读取 MinIO 文件（支持 HTTP Range 下载）
+// GetRange reads a MinIO file by byte range (supports HTTP Range downloads)
 func (s *MinIOStorage) GetRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
 	opts := minio.GetObjectOptions{}
 	opts.SetRange(offset, offset+length-1)
@@ -80,7 +80,7 @@ func (s *MinIOStorage) GetRange(ctx context.Context, key string, offset, length 
 	return obj, nil
 }
 
-// FileSize 获取 MinIO 文件大小
+// FileSize retrieves the MinIO file size
 func (s *MinIOStorage) FileSize(ctx context.Context, key string) (int64, error) {
 	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
@@ -89,7 +89,7 @@ func (s *MinIOStorage) FileSize(ctx context.Context, key string) (int64, error) 
 	return info.Size, nil
 }
 
-// Exists 检查文件是否存在于 MinIO
+// Exists checks whether a file exists in MinIO
 func (s *MinIOStorage) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
@@ -102,7 +102,7 @@ func (s *MinIOStorage) Exists(ctx context.Context, key string) (bool, error) {
 	return true, nil
 }
 
-// Delete 从 MinIO 删除文件
+// Delete deletes a file from MinIO
 func (s *MinIOStorage) Delete(ctx context.Context, key string) error {
 	if err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
 		return fmt.Errorf("remove object failed: %w", err)
@@ -110,7 +110,7 @@ func (s *MinIOStorage) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// PresignPut 签发预签名上传 URL（前端直接 PUT 文件到 MinIO，不经过应用服务器）
+// PresignPut issues a presigned upload URL (frontend PUTs directly to MinIO, bypassing the app server)
 func (s *MinIOStorage) PresignPut(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	url, err := s.client.PresignedPutObject(ctx, s.bucket, key, expiry)
 	if err != nil {
@@ -119,7 +119,7 @@ func (s *MinIOStorage) PresignPut(ctx context.Context, key string, expiry time.D
 	return url.String(), nil
 }
 
-// PresignGet 签发预签名下载 URL（前端直接从 MinIO 下载，不经过应用服务器）
+// PresignGet issues a presigned download URL (frontend downloads directly from MinIO, bypassing the app server)
 func (s *MinIOStorage) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	url, err := s.client.PresignedGetObject(ctx, s.bucket, key, expiry, nil)
 	if err != nil {
@@ -128,7 +128,7 @@ func (s *MinIOStorage) PresignGet(ctx context.Context, key string, expiry time.D
 	return url.String(), nil
 }
 
-// InitMultipart 初始化 S3 分片直传，返回 UploadID
+// InitMultipart initializes S3 multipart upload and returns UploadID
 func (s *MinIOStorage) InitMultipart(ctx context.Context, key string) (string, error) {
 	uploadID, err := s.core.NewMultipartUpload(ctx, s.bucket, key, minio.PutObjectOptions{
 		ContentType: "application/octet-stream",
@@ -139,7 +139,7 @@ func (s *MinIOStorage) InitMultipart(ctx context.Context, key string) (string, e
 	return uploadID, nil
 }
 
-// PresignPartPut 签发指定分片的预签名直传 URL
+// PresignPartPut issues a presigned URL for a specific multipart chunk
 func (s *MinIOStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
 	reqParams := make(url.Values)
 	reqParams.Set("uploadId", uploadID)
@@ -152,7 +152,7 @@ func (s *MinIOStorage) PresignPartPut(ctx context.Context, key, uploadID string,
 	return u.String(), nil
 }
 
-// CompleteMultipart 在存储层合并分片
+// CompleteMultipart merges multipart chunks at the storage layer
 func (s *MinIOStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []port.CompletePart) error {
 	var minioParts []minio.CompletePart
 	for _, p := range parts {
@@ -168,7 +168,7 @@ func (s *MinIOStorage) CompleteMultipart(ctx context.Context, key, uploadID stri
 	return nil
 }
 
-// AbortMultipart 取消分片上传并清理存储层临时分片
+// AbortMultipart aborts a multipart upload and cleans up temporary storage chunks
 func (s *MinIOStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
 	if err := s.core.AbortMultipartUpload(ctx, s.bucket, key, uploadID); err != nil {
 		return fmt.Errorf("minio abort multipart failed: %w", err)

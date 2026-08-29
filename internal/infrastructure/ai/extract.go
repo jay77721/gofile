@@ -13,25 +13,25 @@ import (
 )
 
 const (
-	// maxExtractBytes 提取的原始文本预算上限，防止超大文件 OOM
+	// maxExtractBytes is the budget cap for extracted raw text to prevent OOM on oversized files
 	maxExtractBytes = 1 << 20 // 1MB
-	// maxSummaryChars 送给 LLM 的内容最大字符数
+	// maxSummaryChars is the maximum number of characters sent to the LLM
 	maxSummaryChars = 8000
 )
 
-// Extracted 文本提取结果
+// Extracted is the text extraction result
 type Extracted struct {
-	Text string // 提取出的纯文本（可能为空，如图片/二进制）
+	Text string // Extracted plain text (may be empty, e.g., images/binaries)
 }
 
-// Extract 从存储层读取文件并提取文本（格式感知两级管线）
+// Extract reads a file from storage and extracts text (format-aware two-stage pipeline)
 //
-// 第 1 级按 MIME/扩展名分派解析器；第 2 级对解出的纯文本做采样（首尾 + 结构锚点）。
-// 读取受 maxExtractBytes 预算限制。
+// Stage 1 dispatches parsers by MIME/extension; stage 2 samples the extracted plain text (head + tail + structural anchors).
+// Reading is bounded by the maxExtractBytes budget.
 func Extract(ctx context.Context, store port.Storage, filehash, fileName string) (*Extracted, error) {
 	mt, ext := detectType(fileName)
 
-	// 读取前 maxExtractBytes 字节（文本类文件从头读就是内容）
+	// Read the first maxExtractBytes bytes (for text files, reading from the start yields the content)
 	reader, err := store.GetRange(ctx, filehash, 0, maxExtractBytes)
 	if err != nil {
 		return nil, fmt.Errorf("extract: read file failed: %w", err)
@@ -55,7 +55,7 @@ func Extract(ctx context.Context, store port.Storage, filehash, fileName string)
 	case isArchiveMime(mt, ext):
 		text = extractArchiveList(buf, ext)
 	default:
-		// 图片/音频/视频/其他二进制：不提取文本，按文件名打标签即可
+		// Images/audio/video/other binaries: no text extraction, tagging by filename is sufficient
 		text = ""
 	}
 
@@ -64,7 +64,7 @@ func Extract(ctx context.Context, store port.Storage, filehash, fileName string)
 	}, nil
 }
 
-// detectType 推断 MIME 与扩展名
+// detectType infers MIME type and extension
 func detectType(fileName string) (mime, ext string) {
 	ext = "." + strings.TrimPrefix(getExt(fileName), ".")
 	mt := mimetype.Lookup(ext)
@@ -76,7 +76,7 @@ func detectType(fileName string) (mime, ext string) {
 
 func isTextMime(mt, ext string) bool {
 	if mt == "" {
-		// 按扩展名兜底
+		// Fallback by extension
 		switch ext {
 		case ".txt", ".md", ".log", ".json", ".xml", ".yaml", ".yml", ".html", ".htm", ".css",
 			".js", ".ts", ".go", ".py", ".java", ".rs", ".c", ".cpp", ".swift", ".kt",
@@ -108,9 +108,9 @@ func isArchiveMime(mt, ext string) bool {
 	return false
 }
 
-// extractPDF 提取 PDF 文本（纯 Go 库 rsc.io/pdf）
+// extractPDF extracts PDF text (pure Go library rsc.io/pdf)
 func extractPDF(buf []byte) string {
-	// rsc.io/pdf 需要 io.ReaderAt + size
+	// rsc.io/pdf requires io.ReaderAt + size
 	r := bytes.NewReader(buf)
 	pdf, err := readPDF(r, int64(len(buf)))
 	if err != nil {
@@ -130,7 +130,7 @@ func extractPDF(buf []byte) string {
 	return sb.String()
 }
 
-// extractOffice 从 docx/xlsx/pptx（zip 容器）提取文本
+// extractOffice extracts text from docx/xlsx/pptx (zip containers)
 func extractOffice(buf []byte, ext string) string {
 	zr, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
 	if err != nil {
@@ -158,7 +158,7 @@ func extractOffice(buf []byte, ext string) string {
 	return ""
 }
 
-// extractDocx 从 docx 提取文本（按段落组织，保留结构）
+// extractDocx extracts text from docx (organized by paragraphs, preserving structure)
 func extractDocx(zr *zip.Reader) string {
 	for _, f := range zr.File {
 		if f.Name == "word/document.xml" {
@@ -168,8 +168,8 @@ func extractDocx(zr *zip.Reader) string {
 			}
 			b, _ := io.ReadAll(rc)
 			rc.Close()
-			// 先将段落分隔符转为换行，再剥离标签：
-			// 若先 stripXML，"</w:p>" 已被剥掉，ReplaceAll 永远匹配不到，段落结构丢失
+			// First convert paragraph delimiters to newlines, then strip tags:
+			// If stripXML is called first, "</w:p>" would already be stripped and ReplaceAll would never match, losing paragraph structure
 			text := strings.ReplaceAll(string(b), "</w:p>", "\n")
 			text = stripXML(text)
 			return text
@@ -198,7 +198,7 @@ func extractPPTXSlides(zr *zip.Reader) string {
 	return sb.String()
 }
 
-// extractArchiveList 只读压缩包内文件清单（不展开内容）
+// extractArchiveList only reads the file list inside archives (without expanding contents)
 func extractArchiveList(buf []byte, ext string) string {
 	if ext != ".zip" {
 		return ""
@@ -219,8 +219,8 @@ func extractArchiveList(buf []byte, ext string) string {
 	return sb.String()
 }
 
-// stripXML 剥离 XML 标签，保留文本内容
-// 处理：标签剥离、CDATA 段、常见 XML 实体解码
+// stripXML strips XML tags and preserves text content
+// Handles: tag stripping, CDATA sections, and common XML entity decoding
 func stripXML(s string) string {
 	var sb strings.Builder
 	inTag := false
@@ -248,7 +248,7 @@ func stripXML(s string) string {
 			inTag = false
 			i++
 		case !inTag:
-			// 解码常见 XML 实体
+			// Decode common XML entities
 			if r == '&' && i+3 < len(runes) {
 				entity := string(runes[i:min(i+6, len(runes))])
 				switch {
@@ -289,7 +289,7 @@ func min(a, b int) int {
 	return b
 }
 
-// sampleText 对解出的纯文本做采样（首尾 + 结构锚点），控制送给 LLM 的长度
+// sampleText samples the extracted plain text (head + tail + structural anchors) to control length sent to the LLM
 func sampleText(text, fileName string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -302,7 +302,7 @@ func sampleText(text, fileName string) string {
 	const head = 2000
 	const tail = 2000
 
-	// 结构锚点采样
+	// Structural anchor sampling
 	anchors := extractAnchors(text)
 
 	var sb strings.Builder
@@ -322,7 +322,7 @@ func sampleText(text, fileName string) string {
 	return out
 }
 
-// extractAnchors 抽取结构锚点：markdown 标题、代码定义行、json keys、log 错误行
+// extractAnchors extracts structural anchors: markdown headings, code definition lines, json keys, and log error lines
 func extractAnchors(text string) []string {
 	var anchors []string
 	lines := strings.Split(text, "\n")
@@ -342,11 +342,11 @@ func extractAnchors(text string) []string {
 }
 
 func isAnchorLine(line string) bool {
-	// markdown 标题
+	// markdown heading
 	if strings.HasPrefix(line, "#") {
 		return true
 	}
-	// 代码定义行
+	// code definition line
 	for _, kw := range []string{"func ", "function ", "def ", "class ", "type ", "import ", "package ", "interface "} {
 		if strings.HasPrefix(line, kw) {
 			return true
@@ -356,7 +356,7 @@ func isAnchorLine(line string) bool {
 	if strings.HasPrefix(line, `"`) && strings.Contains(line, `":`) {
 		return true
 	}
-	// log 错误行
+	// log error line
 	lower := strings.ToLower(line)
 	for _, kw := range []string{"error", "fail", "fatal", "panic", "exception"} {
 		if strings.Contains(lower, kw) {

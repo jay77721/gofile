@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestLocalPutAtomic 验证 Put 原子写：写入后目标文件完整、内容正确、无临时文件残留
+// TestLocalPutAtomic verifies Put atomic write: target file complete, content correct, no temp file residue
 func TestLocalPutAtomic(t *testing.T) {
 	dir := t.TempDir()
 	s := NewLocal(dir)
@@ -24,7 +24,7 @@ func TestLocalPutAtomic(t *testing.T) {
 		t.Fatalf("Put failed: %v", err)
 	}
 
-	// 目标文件存在且内容完整
+	// Target file exists and content is complete
 	got, err := s.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
@@ -38,7 +38,7 @@ func TestLocalPutAtomic(t *testing.T) {
 		t.Errorf("content = %q, want %q", buf.String(), content)
 	}
 
-	// 无临时文件残留
+	// No temp file residue
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read dir failed: %v", err)
@@ -53,7 +53,7 @@ func TestLocalPutAtomic(t *testing.T) {
 	}
 }
 
-// TestLocalPutKeySanitized 验证 key 经过 filepath.Base 清洗，无法越出上传目录
+// TestLocalPutKeySanitized verifies key is sanitized via filepath.Base and cannot escape upload directory
 func TestLocalPutKeySanitized(t *testing.T) {
 	dir := t.TempDir()
 	s := NewLocal(dir)
@@ -63,7 +63,7 @@ func TestLocalPutKeySanitized(t *testing.T) {
 		t.Fatalf("Put failed: %v", err)
 	}
 
-	// 文件应落在 uploadDir 下的 escape.txt，而不是上层目录
+	// File should land at escape.txt under uploadDir, not parent directory
 	if _, err := os.Stat(filepath.Join(dir, "escape.txt")); err != nil {
 		t.Errorf("file not stored under upload dir: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestLocalPutKeySanitized(t *testing.T) {
 	}
 }
 
-// ---- 基准:本地存储 Put/Get(上传/下载主路径) ----
+// ---- Benchmark: local storage Put/Get (upload/download hot path) ----
 
 func BenchmarkLocalPut_1MB(b *testing.B) {
 	s := NewLocal(b.TempDir())

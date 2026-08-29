@@ -8,10 +8,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// 指标定义（client_golang 惯例：包级变量 + 默认注册表）
+// Metric definitions (client_golang convention: package-level variables + default registry)
 var (
-	// httpRequestsTotal HTTP 请求计数器，按 method/path/status 分桶
-	// path 使用 gin 路由模板（如 /file/download），不含 query 参数，避免标签基数爆炸
+	// httpRequestsTotal HTTP request counter, partitioned by method/path/status
+	// path uses the Gin route template (e.g., /file/download), without query parameters to avoid label cardinality explosion
 	httpRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "http_requests_total",
@@ -20,8 +20,8 @@ var (
 		[]string{"method", "path", "status"},
 	)
 
-	// httpRequestDuration HTTP 请求耗时直方图，按 method/path 分桶
-	// 不含 status 标签，进一步控制基数；status 差异已由 http_requests_total 覆盖
+	// httpRequestDuration HTTP request duration histogram, partitioned by method/path
+	// Does not include status label to further control cardinality; status differences are already covered by http_requests_total
 	httpRequestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "http_request_duration_seconds",
@@ -31,8 +31,8 @@ var (
 		[]string{"method", "path"},
 	)
 
-	// fileUploadBytes 业务指标：累计上传成功的文件字节数
-	// 普通 Counter（不按 username 分桶）——用户名是高基数标签，会撑爆 Prometheus 内存
+	// fileUploadBytes is a business metric: total bytes of files successfully uploaded
+	// Plain Counter (not partitioned by username) — username is a high-cardinality label that would exhaust Prometheus memory
 	fileUploadBytes = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "file_upload_bytes_total",
@@ -40,7 +40,7 @@ var (
 		},
 	)
 
-	// aiTasksTotal AI 异步任务计数器，按 status 分桶（pending/done/failed）
+	// aiTasksTotal AI async task counter, partitioned by status (pending/done/failed)
 	aiTasksTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ai_tasks_total",
@@ -49,7 +49,7 @@ var (
 		[]string{"status"},
 	)
 
-	// aiLLMDuration LLM 调用耗时直方图（Analyze + Embed）
+	// aiLLMDuration LLM call duration histogram (Analyze + Embed)
 	aiLLMDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "ai_llm_duration_seconds",
@@ -59,7 +59,7 @@ var (
 		[]string{"operation"},
 	)
 
-	// aiIndexOps 检索引擎操作计数器，按 op/result 分桶
+	// aiIndexOps Search engine operation counter, partitioned by op/result
 	aiIndexOps = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "ai_index_ops_total",
@@ -71,41 +71,41 @@ var (
 	registerOnce sync.Once
 )
 
-// Register 将指标注册到默认注册表。幂等，可安全重复调用（测试 + main 多次调用）。
+// Register Register metrics to the default registry. Idempotent and safe to call repeatedly (tests + main).
 func Register() {
 	registerOnce.Do(func() {
 		prometheus.MustRegister(httpRequestsTotal, httpRequestDuration, fileUploadBytes, aiTasksTotal, aiLLMDuration, aiIndexOps)
 	})
 }
 
-// RecordHTTPRequest 由 MetricsMiddleware 在请求结束时调用
+// RecordHTTPRequest called by MetricsMiddleware at the end of a request
 func RecordHTTPRequest(method, path, status string, durSec float64) {
 	httpRequestsTotal.WithLabelValues(method, path, status).Inc()
 	httpRequestDuration.WithLabelValues(method, path).Observe(durSec)
 }
 
-// AddUploadBytes 由 service 层在上传成功后调用，累计业务上传字节
+// AddUploadBytes called by the service layer after a successful upload to accumulate business upload bytes
 func AddUploadBytes(bytes int64) {
 	fileUploadBytes.Add(float64(bytes))
 }
 
-// RecordAITask 由 ai.Processor 在任务状态变更时调用
+// RecordAITask called by ai.Processor when task status changes
 func RecordAITask(status string) {
 	aiTasksTotal.WithLabelValues(status).Inc()
 }
 
-// ObserveLLMDuration 由 port.Provider 调用方记录 LLM 耗时
+// ObserveLLMDuration called by port.Provider callers to record LLM duration
 func ObserveLLMDuration(operation string, durSec float64) {
 	aiLLMDuration.WithLabelValues(operation).Observe(durSec)
 }
 
-// RecordIndexOp 由 port.Indexer 调用方记录检索引擎操作
+// RecordIndexOp called by port.Indexer callers to record search engine operations
 func RecordIndexOp(operation, result string) {
 	aiIndexOps.WithLabelValues(operation, result).Inc()
 }
 
-// Handler 返回 /metrics 抓取端点
-// 使用默认注册表，附带 go/process 运行时指标（go_goroutines 等）
+// Handler return the /metrics scrape endpoint
+// Use the default registry with go/process runtime metrics (go_goroutines, etc.)
 func Handler() http.Handler {
 	Register()
 	return promhttp.Handler()

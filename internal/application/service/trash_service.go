@@ -7,12 +7,12 @@ import (
 	"log/slog"
 )
 
-// ListTrash 分页查询用户回收站文件
+// ListTrash lists trashed files for a user with pagination.
 func (s *FileService) ListTrash(ctx context.Context, username string, page, size int) ([]model.FileMeta, int64, error) {
 	return s.fileRepo.ListTrash(ctx, username, page, size)
 }
 
-// Restore 恢复回收站中的文件（status 2→1），并重新入队 AI 分析重建检索引擎文档
+// Restore restores a trashed file (status 2->1) and re-enqueues AI analysis to rebuild the search index document.
 func (s *FileService) Restore(ctx context.Context, filehash, username string) error {
 	ok, err := s.fileRepo.Restore(ctx, filehash, username)
 	if err != nil {
@@ -25,8 +25,8 @@ func (s *FileService) Restore(ctx context.Context, filehash, username string) er
 	return nil
 }
 
-// Purge 彻底删除（回收站）：删除用户关联行；无其他活跃引用时同步清理
-// 存储层内容、tbl_file 全局记录与检索引擎文档
+// Purge permanently deletes from trash: removes the user association; when no other active references remain,
+// also cleans up storage content, tbl_file global record, and search index document.
 func (s *FileService) Purge(ctx context.Context, filehash, username string) error {
 	ok, err := s.fileRepo.PurgeUserFile(ctx, filehash, username)
 	if err != nil {
@@ -41,10 +41,10 @@ func (s *FileService) Purge(ctx context.Context, filehash, username string) erro
 		return err
 	}
 	if refs > 0 {
-		return nil // 其他用户仍引用该文件，仅移除当前用户的关联
+		return nil // other users still reference the file, only remove current user's association
 	}
 
-	// 零引用：清理存储层 + 全局文件记录 + 检索引擎
+	// zero references: clean up storage + global file record + search index
 	if err := s.store.Delete(ctx, filehash); err != nil {
 		slog.WarnContext(ctx, "purge: delete storage failed", "error", err, "filehash", filehash)
 	}

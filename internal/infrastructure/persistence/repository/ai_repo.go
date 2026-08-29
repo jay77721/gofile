@@ -10,38 +10,38 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// AITaskRepository AI 异步分析任务的数据访问接口
+// AITaskRepository is the data access interface for AI async analysis tasks
 type AITaskRepository interface {
-	// CreateTask 创建任务（幂等：同一 file_sha1+username 已存在则忽略）
+	// CreateTask creates a task (idempotent: ignore if same file_sha1+username already exists)
 	CreateTask(ctx context.Context, task *model.AITask) error
-	// GetTask 按 hash+username 获取任务
+	// GetTask retrieves a task by hash+username
 	GetTask(ctx context.Context, filehash, username string) (*model.AITask, error)
-	// MarkProcessing 将任务置为处理中
+	// MarkProcessing marks the task as processing
 	MarkProcessing(ctx context.Context, filehash, username string) error
-	// MarkDone 将任务置为完成
+	// MarkDone marks the task as completed
 	MarkDone(ctx context.Context, filehash, username string) error
-	// MarkFailed 将任务置为失败，记录错误信息，retry_count+1
+	// MarkFailed marks the task as failed, records error message, and increments retry_count by 1
 	MarkFailed(ctx context.Context, filehash, username, errMsg string) error
-	// ListRequeueable 列出可重新入队的失败任务（retry_count < max）
+	// ListRequeueable lists failed tasks that can be re-enqueued (retry_count < max)
 	ListRequeueable(ctx context.Context, maxRetry int) ([]model.AITask, error)
-	// CleanupExpired 删除过期的 done/failed 任务
+	// CleanupExpired deletes expired done/failed tasks
 	CleanupExpired(ctx context.Context, before time.Time) error
 }
 
-// mysqlAITaskRepo GORM 实现的 AITaskRepository
+// mysqlAITaskRepo is the GORM implementation of AITaskRepository
 type mysqlAITaskRepo struct {
 	db *gorm.DB
 }
 
-// NewAITaskRepository 创建 GORM AI 任务仓库
+// NewAITaskRepository creates a GORM AI task repository
 func NewAITaskRepository(db *gorm.DB) AITaskRepository {
 	return &mysqlAITaskRepo{db: db}
 }
 
 func (r *mysqlAITaskRepo) CreateTask(ctx context.Context, task *model.AITask) error {
-	// 已存在则忽略（幂等）
-	// 显式设置过期时间：零值 time.Time 会被 GORM 显式 INSERT，绕过 schema 的 DEFAULT，
-	// 在 MySQL 严格模式下因超出 datetime 范围直接报错，导致任务不落库、幂等锚点失效
+	// Ignore if already exists (idempotent)
+	// Explicitly set expiration time: zero value time.Time would be explicitly INSERTed by GORM, bypassing the schema DEFAULT,
+	// and in MySQL strict mode would fail directly due to out-of-range datetime, causing tasks not to be persisted and breaking the idempotency anchor
 	if task.ExpiredAt.IsZero() {
 		task.ExpiredAt = time.Now().Add(7 * 24 * time.Hour)
 	}
@@ -100,7 +100,7 @@ func (r *mysqlAITaskRepo) ListRequeueable(ctx context.Context, maxRetry int) ([]
 	return tasks, nil
 }
 
-// CleanupExpired 删除过期任务（done/failed 且 expired_at < before）
+// CleanupExpired deletes expired tasks (done/failed and expired_at < before)
 func (r *mysqlAITaskRepo) CleanupExpired(ctx context.Context, before time.Time) error {
 	if err := r.db.WithContext(ctx).Where("status IN (2, 3) AND expired_at < ?", before).Delete(&model.AITask{}).Error; err != nil {
 		return fmt.Errorf("cleanup expired ai tasks failed: %w", err)
@@ -108,5 +108,5 @@ func (r *mysqlAITaskRepo) CleanupExpired(ctx context.Context, before time.Time) 
 	return nil
 }
 
-// 确保编译时检查接口实现
+// Ensure interface implementation is checked at compile time
 var _ AITaskRepository = (*mysqlAITaskRepo)(nil)

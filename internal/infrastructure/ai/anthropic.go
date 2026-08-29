@@ -13,7 +13,7 @@ import (
 	"gofile/internal/port"
 )
 
-// AnthropicProvider Anthropic API 实现的 Provider
+// AnthropicProvider is a Provider implementation using the Anthropic API
 type AnthropicProvider struct {
 	apiKey     string
 	baseURL    string
@@ -22,7 +22,7 @@ type AnthropicProvider struct {
 	dim        int
 }
 
-// NewAnthropicProvider 创建 Anthropic Provider
+// NewAnthropicProvider creates an Anthropic Provider
 func NewAnthropicProvider(apiKey, model string, dim int) port.Provider {
 	if model == "" {
 		model = "claude-3-haiku-20240307"
@@ -86,9 +86,9 @@ func (p *AnthropicProvider) Analyze(ctx context.Context, fileName, content strin
 }
 
 func (p *AnthropicProvider) Embed(ctx context.Context, text string) ([]float32, error) {
-	// Anthropic 官方不提供 embedding API,这里降级为确定性 hash 向量(关键词近似,非语义向量)。
-	// 需要真实语义搜索时,请在网页「AI 设置」中配置 OpenAI 协议端点(自带 /embeddings),
-	// 或使用 Voyage AI 等第三方 embedding 服务。
+	// Anthropic does not provide an official embedding API; fallback to deterministic hash vector (keyword approximation, not a semantic vector).
+	// For real semantic search, configure an OpenAI-compatible endpoint (with /embeddings) in the web "AI Settings",
+	// or use a third-party embedding service such as Voyage AI.
 	return deterministicVector(text, p.dim), nil
 }
 

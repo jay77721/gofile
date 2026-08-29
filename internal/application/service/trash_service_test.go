@@ -46,24 +46,24 @@ func TestTrash_List(t *testing.T) {
 	_ = repo.CreateUserFile(ctx, model.UserFile{Username: "alice", FileSha1: hash1, FileName: "file1.txt", Status: model.UserFileStatusActive})
 	_ = repo.CreateUserFile(ctx, model.UserFile{Username: "alice", FileSha1: hash2, FileName: "file2.txt", Status: model.UserFileStatusActive})
 
-	// 软删除 file1
+	// Soft-delete file1
 	if err := svc.Delete(ctx, hash1, "alice"); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// 活跃列表仅剩 file2
+	// Active list contains only file2
 	activeFiles, total, err := svc.ListByUserPaged(ctx, "alice", 1, 10)
 	if err != nil || total != 1 || len(activeFiles) != 1 || activeFiles[0].FileSha1 != hash2 {
 		t.Fatalf("active files = %+v, total = %d (want 1 / file2)", activeFiles, total)
 	}
 
-	// 回收站列表包含 file1
+	// Trash list contains file1
 	trashFiles, trashTotal, err := svc.ListTrash(ctx, "alice", 1, 10)
 	if err != nil || trashTotal != 1 || len(trashFiles) != 1 || trashFiles[0].FileSha1 != hash1 {
 		t.Fatalf("trash files = %+v, total = %d (want 1 / file1)", trashFiles, trashTotal)
 	}
 
-	// 分页越界返回空列表
+	// Out-of-range page returns empty list
 	emptyTrash, _, _ := svc.ListTrash(ctx, "alice", 2, 10)
 	if len(emptyTrash) != 0 {
 		t.Errorf("expected empty trash for page 2, got %d items", len(emptyTrash))
@@ -80,17 +80,17 @@ func TestTrash_Restore_And_AIReindex(t *testing.T) {
 	_ = repo.Create(ctx, model.File{FileSha1: hash, FileSize: 100})
 	_ = repo.CreateUserFile(ctx, model.UserFile{Username: "alice", FileSha1: hash, FileName: "a.txt", Status: model.UserFileStatusActive})
 
-	// 1. 删除
+	// 1. Delete
 	if err := svc.Delete(ctx, hash, "alice"); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// 2. 恢复
+	// 2. Restore
 	if err := svc.Restore(ctx, hash, "alice"); err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
 
-	// 恢复后活跃列表可见，回收站为空
+	// After restore, active list is visible and trash is empty
 	active, total, _ := svc.ListByUserPaged(ctx, "alice", 1, 10)
 	if total != 1 || len(active) != 1 {
 		t.Fatalf("active list = %d, want 1", total)
@@ -100,12 +100,12 @@ func TestTrash_Restore_And_AIReindex(t *testing.T) {
 		t.Fatalf("trash total = %d, want 0", trashTotal)
 	}
 
-	// 3. 再次恢复（不在回收站中）报错
+	// 3. Restoring again (not in trash) should error
 	if err := svc.Restore(ctx, hash, "alice"); err == nil {
 		t.Fatal("expected error on restoring non-trash file, got nil")
 	}
 
-	// 4. 越权恢复（Bob 尝试恢复 Alice 的文件）报错
+	// 4. Unauthorized restore (Bob tries to restore Alice's file) should error
 	_ = svc.Delete(ctx, hash, "alice")
 	if err := svc.Restore(ctx, hash, "bob"); err == nil {
 		t.Fatal("expected error for unauthorized user restore, got nil")
@@ -127,18 +127,18 @@ func TestTrash_Purge_CascadeAndZeroReference(t *testing.T) {
 		_ = repo.CreateUserFile(ctx, model.UserFile{Username: "bob", FileSha1: sharedHash, FileName: "bob_shared.txt", Status: model.UserFileStatusActive})
 		_ = store.Put(ctx, sharedHash, bytes.NewReader(content), int64(len(content)))
 
-		// Alice 软删除并彻底删除该文件
+		// Alice soft-deletes and purges the file
 		_ = svc.Delete(ctx, sharedHash, "alice")
 		if err := svc.Purge(ctx, sharedHash, "alice"); err != nil {
 			t.Fatalf("Alice Purge failed: %v", err)
 		}
 
-		// Alice 的 UserFile 已删除
+		// Alice's UserFile has been deleted
 		if _, err := svc.GetMeta(ctx, sharedHash, "alice"); err == nil {
 			t.Fatal("Alice should not own the file after purge")
 		}
 
-		// 存储层和全局记录必须保留，因为 Bob 依然拥有该文件
+		// Storage object and global record must be retained because Bob still owns the file
 		exists, err := store.Exists(ctx, sharedHash)
 		if err != nil || !exists {
 			t.Fatal("storage file should still exist when referenced by other users")
@@ -161,18 +161,18 @@ func TestTrash_Purge_CascadeAndZeroReference(t *testing.T) {
 			t.Fatalf("Purge failed: %v", err)
 		}
 
-		// 存储层文件已被删除
+		// Storage file has been deleted
 		exists, _ := store.Exists(ctx, singleHash)
 		if exists {
 			t.Fatal("storage object should be removed on zero-reference purge")
 		}
 
-		// 全局记录已移除
+		// Global record has been removed
 		if _, err := repo.GetGlobalFile(ctx, singleHash); err == nil {
 			t.Fatal("global file record should be removed on zero-reference purge")
 		}
 
-		// 检索引擎已通知清理
+		// Search index has been notified to clean up
 		foundIndexClean := false
 		for _, h := range indexer.deletedByHash {
 			if h == singleHash {
@@ -184,7 +184,7 @@ func TestTrash_Purge_CascadeAndZeroReference(t *testing.T) {
 			t.Fatal("expected indexer.DeleteByFilehash to be called")
 		}
 
-		// 重复彻底删除应报错
+		// Repeated purge should error
 		if err := svc.Purge(ctx, singleHash, "alice"); err == nil {
 			t.Fatal("second purge should fail, got nil")
 		}

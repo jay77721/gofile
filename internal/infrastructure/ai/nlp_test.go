@@ -17,7 +17,7 @@ func TestParseQuery_TimeRange(t *testing.T) {
 		{"去年", false},
 		{"最近3天", false},
 		{"最近", false},
-		{"找那个PDF", true}, // 无时间短语
+		{"找那个PDF", true}, // No time phrase
 		{"", true},
 	}
 	for _, c := range cases {
@@ -53,7 +53,7 @@ func TestParseQuery_TypeFilter(t *testing.T) {
 
 func TestParseQuery_SemanticQuery(t *testing.T) {
 	f := ParseQuery("找那个季度预算报告")
-	// 去停用词后应保留"季度预算报告"
+	// After removing stopwords, should keep "季度预算报告"
 	if !strings.Contains(f.SemanticQuery, "季度") {
 		t.Errorf("SemanticQuery should contain 季度, got %q", f.SemanticQuery)
 	}

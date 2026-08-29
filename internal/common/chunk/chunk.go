@@ -6,7 +6,7 @@ import (
 	"strconv"
 )
 
-// GetUploadedChunks 获取已上传的 chunk 列表（按用户隔离）
+// GetUploadedChunks gets the list of uploaded chunks (isolated per user).
 func GetUploadedChunks(chunkDir, username, filehash string) ([]string, error) {
 	dir := filepath.Join(chunkDir, filepath.Base(username), filepath.Base(filehash))
 	entries, err := os.ReadDir(dir)
@@ -26,7 +26,7 @@ func GetUploadedChunks(chunkDir, username, filehash string) ([]string, error) {
 	return chunks, nil
 }
 
-// ChunkExists 判断 chunk 是否已存在（按用户隔离）
+// ChunkExists checks whether a chunk already exists (isolated per user).
 func ChunkExists(chunkDir, username, filehash string, index int) bool {
 	chunkPath := filepath.Join(chunkDir, filepath.Base(username), filepath.Base(filehash), strconv.Itoa(index))
 	_, err := os.Stat(chunkPath)

@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// fakeAIConfigRepo 内存版 AIConfigRepository,供 service 测试使用
+// fakeAIConfigRepo in-memory AIConfigRepository for service tests
 type fakeAIConfigRepo struct {
 	cfg *model.AIConfig
 }
@@ -91,7 +91,7 @@ func TestAIConfigSaveKeepsOldKey(t *testing.T) {
 	if err := svc.Save(ctx, "alice", "", testAPIKey, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	// 第二次只更新模型,key 留空 → 保留旧 key
+	// Second save only updates model, key left empty -> keep old key
 	if err := svc.Save(ctx, "alice", "", "", "gpt-4o-mini", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestAIConfigDelete(t *testing.T) {
 	}
 }
 
-// mockOpenAIServer 模拟 OpenAI 协议端点(/chat/completions + /embeddings)
+// mockOpenAIServer mocks OpenAI-compatible endpoints (/chat/completions + /embeddings)
 func mockOpenAIServer(t *testing.T, chatOK, embedOK bool, embedDim int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +186,7 @@ func TestAIConfigTestConnectionDimMismatch(t *testing.T) {
 	srv := mockOpenAIServer(t, true, true, 1536)
 	defer srv.Close()
 
-	svc := newTestAIConfigSvc() // 索引维度 128
+	svc := newTestAIConfigSvc() // index dimension 128
 	res := svc.TestConnection(context.Background(), srv.URL, testAPIKey, "gpt-4o", "")
 	if !res.OK || !res.DimMismatch || res.Dim != 1536 {
 		t.Fatalf("expected dim mismatch 1536 vs 128, got %+v", res)
@@ -219,25 +219,25 @@ func TestAIConfigResolveProviderAndCache(t *testing.T) {
 		t.Fatalf("expected dim 128, got %d", openAI.Dimension())
 	}
 
-	// 缓存命中:第二次不读 repo
+	// Cache hit: second call does not read repo
 	first := svc.cache["alice"].prov
 	if first != prov {
 		t.Fatal("expected cached provider reuse")
 	}
 
-	// 未配置用户返回 nil
+	// Unconfigured user returns nil
 	if p := svc.ResolveProvider(ctx, "bob"); p != nil {
 		t.Fatalf("expected nil for unconfigured user, got %T", p)
 	}
 
-	// Delete 后缓存失效
+	// Cache invalidated after Delete
 	_ = svc.Delete(ctx, "alice")
 	if p := svc.ResolveProvider(ctx, "alice"); p != nil {
 		t.Fatalf("expected nil after delete, got %T", p)
 	}
 }
 
-// 确保 providerCacheTTL 在合理范围,防止缓存永不过期
+// Ensure providerCacheTTL is within reasonable bounds to prevent indefinite cache
 func TestProviderCacheTTLSanity(t *testing.T) {
 	if providerCacheTTL <= 0 || providerCacheTTL > time.Hour {
 		t.Fatalf("providerCacheTTL out of range: %v", providerCacheTTL)

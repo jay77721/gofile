@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-// Token 用户会话 token，对应 tbl_user_token 表
+// Token is the user session token, corresponding to tbl_user_token.
 type Token struct {
 	Username  string    `gorm:"column:user_name;primaryKey;size:64"`
 	Token     string    `gorm:"column:user_token;size:64;not null;default:''"`

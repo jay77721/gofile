@@ -7,13 +7,13 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// AIConfigRepository 用户 AI Provider 配置的数据访问接口
+// AIConfigRepository is the data access interface for user AI Provider configuration
 type AIConfigRepository interface {
-	// Get 获取用户配置,不存在返回 gorm.ErrRecordNotFound
+	// Get retrieves the user configuration, returns gorm.ErrRecordNotFound if not found
 	Get(username string) (*model.AIConfig, error)
-	// Upsert 保存用户配置(存在则整行更新,幂等)
+	// Upsert saves the user configuration (updates the entire row if exists, idempotent)
 	Upsert(cfg *model.AIConfig) error
-	// Delete 删除用户配置(回退 env/mock)
+	// Delete removes the user configuration (fallback to env/mock)
 	Delete(username string) error
 }
 
@@ -21,7 +21,7 @@ type mysqlAIConfigRepo struct {
 	db *gorm.DB
 }
 
-// NewAIConfigRepository 创建 GORM 用户 AI 配置仓库
+// NewAIConfigRepository creates a GORM user AI config repository
 func NewAIConfigRepository(db *gorm.DB) AIConfigRepository {
 	return &mysqlAIConfigRepo{db: db}
 }
@@ -47,14 +47,14 @@ func (r *mysqlAIConfigRepo) Delete(username string) error {
 	return r.db.Where("user_name = ?", username).Delete(&model.AIConfig{}).Error
 }
 
-// ---- Mock 实现 ----
+// ---- Mock implementation ----
 
-// mockAIConfigRepo 内存 mock 用户 AI 配置仓库
+// mockAIConfigRepo is an in-memory mock user AI config repository
 type mockAIConfigRepo struct {
 	cfgs map[string]model.AIConfig
 }
 
-// NewMockAIConfigRepository 创建 mock 用户 AI 配置仓库
+// NewMockAIConfigRepository creates a mock user AI config repository
 func NewMockAIConfigRepository() AIConfigRepository {
 	return &mockAIConfigRepo{cfgs: make(map[string]model.AIConfig)}
 }
@@ -77,6 +77,6 @@ func (m *mockAIConfigRepo) Delete(username string) error {
 	return nil
 }
 
-// 确保编译时检查接口实现
+// Ensure interface implementation is checked at compile time
 var _ AIConfigRepository = (*mysqlAIConfigRepo)(nil)
 var _ AIConfigRepository = (*mockAIConfigRepo)(nil)

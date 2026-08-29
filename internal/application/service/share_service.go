@@ -14,26 +14,26 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// 分享相关哨兵错误,handler 据此映射 HTTP 状态
+// Sentinel errors for sharing; handlers map these to HTTP statuses.
 var (
 	ErrShareNotFound = errors.New("share not found or expired")
 	ErrShareWrongPwd = errors.New("share password incorrect")
 	ErrShareFileGone = errors.New("shared file unavailable")
 )
 
-// ShareService 文件分享业务逻辑
+// ShareService handles file sharing business logic.
 type ShareService struct {
 	shareRepo port.ShareRepository
 	fileRepo  port.FileRepository
 }
 
-// NewShareService 创建分享服务
+// NewShareService creates the sharing service.
 func NewShareService(shareRepo port.ShareRepository, fileRepo port.FileRepository) *ShareService {
 	return &ShareService{shareRepo: shareRepo, fileRepo: fileRepo}
 }
 
-// Create 创建分享:校验所有权,生成 64 位 hex 令牌,可选提取码
-// days 取值范围 1-30,默认 7
+// Create creates a share: verifies ownership, generates a 64-char hex token, optional password.
+// days range is 1-30, defaults to 7.
 func (s *ShareService) Create(ctx context.Context, username, filehash string, days int, password string) (*model.Share, error) {
 	if _, err := s.fileRepo.GetByHash(ctx, filehash, username); err != nil {
 		return nil, fmt.Errorf("file not found or no permission")
@@ -69,21 +69,21 @@ func (s *ShareService) Create(ctx context.Context, username, filehash string, da
 	return share, nil
 }
 
-// List 列出当前用户的分享
+// List lists shares for the current user.
 func (s *ShareService) List(ctx context.Context, username string) ([]model.Share, error) {
 	shares, err := s.shareRepo.ListShares(ctx, username)
 	if err != nil {
 		return nil, err
 	}
-	// 补充序列化字段并清空哈希(PasswordHash 不下发;has_password 供前端展示)
+	// populate serialized fields and clear hash (PasswordHash is never sent; has_password is for frontend display)
 	for i := range shares {
 		shares[i].HasPassword = shares[i].PasswordHash != ""
-		shares[i].PasswordHash = "" // 纵深防御:即使序列化配置出错也不泄露
+		shares[i].PasswordHash = "" // defense in depth: never leak even if serialization is misconfigured
 	}
 	return shares, nil
 }
 
-// Revoke 撤销分享(校验归属)
+// Revoke revokes a share (verifies ownership).
 func (s *ShareService) Revoke(ctx context.Context, token, username string) error {
 	ok, err := s.shareRepo.DeleteShare(ctx, token, username)
 	if err != nil {
@@ -96,15 +96,15 @@ func (s *ShareService) Revoke(ctx context.Context, token, username string) error
 	return nil
 }
 
-// Resolve 解析分享令牌,校验过期与提取码,返回文件元信息(用于免登录下载)
-// 文件被软删除或已彻底删除时同样返回 ErrShareFileGone
+// Resolve resolves a share token, validates expiration and password, and returns file metadata (for anonymous download).
+// Returns ErrShareFileGone when the file has been soft-deleted or permanently removed.
 func (s *ShareService) Resolve(ctx context.Context, token, password string) (model.FileMeta, error) {
 	share, err := s.shareRepo.GetShareByToken(ctx, token)
 	if err != nil {
 		return model.FileMeta{}, ErrShareNotFound
 	}
 	if time.Now().After(share.ExpireAt) {
-		return model.FileMeta{}, ErrShareNotFound // 过期视为不存在
+		return model.FileMeta{}, ErrShareNotFound // expired is treated as not found
 	}
 	if share.PasswordHash != "" {
 		if err := bcrypt.CompareHashAndPassword([]byte(share.PasswordHash), []byte(password)); err != nil {
@@ -112,7 +112,7 @@ func (s *ShareService) Resolve(ctx context.Context, token, password string) (mod
 		}
 	}
 
-	// 以分享者的身份校验所有权:软删除/彻底删除后 GetByHash 失败
+	// verify ownership as the sharer: GetByHash fails after soft delete / permanent deletion
 	fMeta, err := s.fileRepo.GetByHash(ctx, share.FileSha1, share.UserName)
 	if err != nil {
 		return model.FileMeta{}, ErrShareFileGone
@@ -120,7 +120,7 @@ func (s *ShareService) Resolve(ctx context.Context, token, password string) (mod
 	return fMeta, nil
 }
 
-// randomToken 生成 64 位 hex 分享令牌(crypto/rand,防枚举)
+// randomToken generates a 64-char hex share token (crypto/rand, prevents enumeration).
 func randomToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {

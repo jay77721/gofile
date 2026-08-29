@@ -9,17 +9,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AIHandler AI 语义检索 HTTP 处理器
+// AIHandler AI semantic search HTTP handler
 type AIHandler struct {
 	aiSvc *service.AIService
 }
 
-// NewAIHandler 创建 AI 处理器
+// NewAIHandler create an AI handler
 func NewAIHandler(aiSvc *service.AIService) *AIHandler {
 	return &AIHandler{aiSvc: aiSvc}
 }
 
-// SearchHandler 对话式语义检索
+// SearchHandler conversational semantic search
 // GET /file/ai/search?q=&page=&size=
 func (h *AIHandler) SearchHandler(c *gin.Context) {
 	q := c.Query("q")
@@ -50,7 +50,7 @@ func (h *AIHandler) SearchHandler(c *gin.Context) {
 	}})
 }
 
-// SimilarHandler 相似文件推荐
+// SimilarHandler similar file recommendations
 // GET /file/ai/similar?filehash=&limit=
 func (h *AIHandler) SimilarHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
@@ -74,7 +74,7 @@ func (h *AIHandler) SimilarHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": results})
 }
 
-// DuplicatesHandler 近似重复检测
+// DuplicatesHandler near-duplicate detection
 // GET /file/ai/duplicates?filehash=&threshold=
 func (h *AIHandler) DuplicatesHandler(c *gin.Context) {
 	filehash := c.Query("filehash")

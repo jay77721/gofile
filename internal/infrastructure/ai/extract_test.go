@@ -19,7 +19,7 @@ func TestSampleText_Short(t *testing.T) {
 }
 
 func TestSampleText_Long(t *testing.T) {
-	// 构造超长文本，含 markdown 标题与代码定义行作为锚点
+	// Construct overlong text containing markdown headings and code definition lines as anchors
 	var sb strings.Builder
 	sb.WriteString("开头内容\n")
 	sb.WriteString("# 重要标题\n")
@@ -34,7 +34,7 @@ func TestSampleText_Long(t *testing.T) {
 	if len(got) > maxSummaryChars+100 {
 		t.Errorf("sampled text too long: %d", len(got))
 	}
-	// 应保留锚点
+	// Should keep anchors
 	if !strings.Contains(got, "重要标题") {
 		t.Error("should keep markdown heading anchor")
 	}

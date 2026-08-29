@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// AI 设置:自定义 OpenAI 协议 baseURL + API key(每用户,保存后即刻生效)
+// AI settings: customize OpenAI-compatible baseURL + API key (per user, takes effect immediately after saving)
 import { ref, onMounted } from 'vue';
 import { api, apiJSON, type AIConfigData, type AITestResult } from '../api';
 import { toast } from '../toast';
@@ -14,8 +14,8 @@ const saving = ref<boolean>(false);
 
 const configured = ref<boolean>(false);
 const baseURL = ref<string>('');
-const apiKey = ref<string>(''); // 输入框:空 = 保留旧 key
-const apiKeyMask = ref<string>(''); // 已保存 key 的掩码(仅展示)
+const apiKey = ref<string>(''); // Input: empty means keep the previous key
+const apiKeyMask = ref<string>(''); // Mask of the saved key (display only)
 const hasKey = ref<boolean>(false);
 const model = ref<string>('');
 const embedModel = ref<string>('');
@@ -62,7 +62,7 @@ async function save(): Promise<void> {
   try {
     await apiJSON<void>('/ai/config', 'POST', {
       base_url: baseURL.value.trim(),
-      api_key: apiKey.value.trim(), // 空 = 保留旧 key
+      api_key: apiKey.value.trim(), // empty means keep the previous key
       model: model.value.trim(),
       embed_model: embedModel.value.trim(),
     });
@@ -134,7 +134,7 @@ async function clearConfig(): Promise<void> {
           </label>
         </div>
 
-        <!-- 测试结果 -->
+        <!-- Test results -->
         <div v-if="testResult" class="test-result" :class="testResult.ok ? 'ok' : 'err'">
           <template v-if="testResult.ok">
             ✅ 连接成功：对话 ✓

@@ -16,7 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// setupShareTestHandler 组装分享 handler 测试环境,alice 拥有一个文件
+// setupShareTestHandler assemble share handler test environment; alice owns a file
 func setupShareTestHandler(t *testing.T) (*ShareHandler, *service.ShareService, string) {
 	t.Helper()
 	const hash = "abcdef0123456789abcdef0123456789abcdef01"
@@ -59,7 +59,7 @@ func TestShareHandlers(t *testing.T) {
 		return w
 	}
 
-	// 1. 创建分享(带提取码)
+	// 1. Create share (with access code)
 	w := post("/file/share", url.Values{"filehash": {hash}, "days": {"7"}, "password": {"secret"}})
 	if w.Code != http.StatusOK {
 		t.Fatalf("create share status = %d, want 200", w.Code)
@@ -79,7 +79,7 @@ func TestShareHandlers(t *testing.T) {
 	}
 	token := resp.Data.ShareToken
 
-	// 2. 免登录下载:错误提取码 → 403
+	// 2. Download without login: wrong access code → 403
 	req := httptest.NewRequest("GET", "/share/"+token+"?pwd=wrong", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -87,7 +87,7 @@ func TestShareHandlers(t *testing.T) {
 		t.Fatalf("wrong pwd status = %d, want 403", w.Code)
 	}
 
-	// 3. 免登录下载:正确提取码 → 200 + 文件内容
+	// 3. Download without login: correct access code → 200 + file content
 	req = httptest.NewRequest("GET", "/share/"+token+"?pwd=secret", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -98,7 +98,7 @@ func TestShareHandlers(t *testing.T) {
 		t.Errorf("body = %q, want %q", w.Body.String(), "0123456789")
 	}
 
-	// 4. Range 下载 → 206
+	// 4. Range download → 206
 	req = httptest.NewRequest("GET", "/share/"+token+"?pwd=secret", nil)
 	req.Header.Set("Range", "bytes=2-5")
 	w = httptest.NewRecorder()
@@ -110,7 +110,7 @@ func TestShareHandlers(t *testing.T) {
 		t.Errorf("range body = %q, want %q", w.Body.String(), "2345")
 	}
 
-	// 5. 分享列表
+	// 5. Share list
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/file/share/list", nil))
 	if w.Code != http.StatusOK {
@@ -126,14 +126,14 @@ func TestShareHandlers(t *testing.T) {
 		t.Errorf("share list len = %d, want 1", len(listResp.Data))
 	}
 
-	// 6. 未知令牌 → 404
+	// 6. Unknown token → 404
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/share/"+strings.Repeat("0", 64), nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("unknown token status = %d, want 404", w.Code)
 	}
 
-	// 7. 撤销后 → 404
+	// 7. After revoke → 404
 	if w := post("/file/share/revoke", url.Values{"share_token": {token}}); w.Code != http.StatusOK {
 		t.Fatalf("revoke status = %d, want 200", w.Code)
 	}
@@ -143,7 +143,7 @@ func TestShareHandlers(t *testing.T) {
 		t.Fatalf("download after revoke = %d, want 404", w.Code)
 	}
 
-	// 8. 越权:他人无法撤销(用直接 service 调用验证归属)
+	// 8. Unauthorized: others cannot revoke (verify ownership via direct service call)
 	if err := shareSvc.Revoke(context.Background(), token, "bob"); err == nil {
 		t.Errorf("bob revoke should fail")
 	}

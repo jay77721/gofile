@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-// User 用户信息，对应 tbl_user 表
+// User is user information, corresponding to tbl_user.
 type User struct {
 	Username     string    `gorm:"column:user_name;primaryKey;size:64"`
 	Password     string    `gorm:"column:user_pwd;size:60;not null;default:''" json:"-"`

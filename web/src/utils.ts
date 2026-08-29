@@ -1,4 +1,4 @@
-// 工具函数:格式化、文件类型、分片哈希
+// Utility functions: formatting, file type, chunk hashing
 
 export type FileKind = 'image' | 'video' | 'audio' | 'pdf' | 'code' | 'file';
 
@@ -52,7 +52,7 @@ export function canPreview(fn: string): boolean {
   );
 }
 
-// 文件类型分类(图标/标签)
+// File type classification (icon/label)
 export function fileKind(fn: string): FileKind {
   const ext = extOf(fn);
   if (IMAGE_EXTS.includes(ext as any)) return 'image';
@@ -87,7 +87,7 @@ export function kindColor(kind: FileKind | string): string {
   return colors[kind] || '#64748b';
 }
 
-// 分片哈希(与后端 FastUpload 一致的 head+tail+size 方案)
+// Chunk hash (head+tail+size scheme consistent with backend FastUpload)
 export const CHUNK_SIZE = 5 * 1024 * 1024;
 export const CHUNK_MIN = 10 * 1024 * 1024;
 export const MAX_FILE = 100 * 1024 * 1024;

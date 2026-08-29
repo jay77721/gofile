@@ -97,7 +97,7 @@ async function uploadLegacy(file: File, hash: string, signal: AbortSignal): Prom
       const statusList = await api<string[] | number[]>(`/file/upload/status?filehash=${encodeURIComponent(hash)}`, signal);
       (statusList || []).forEach((index) => uploaded.add(String(index)));
     } catch {
-      // 没有历史分片时从头上传。
+      // No previous chunks, upload from scratch.
     }
 
     const total = Math.ceil(file.size / CHUNK_SIZE);
@@ -178,11 +178,11 @@ async function uploadMultipart(file: File, hash: string, signal: AbortSignal): P
     return true;
   } catch (error) {
     if (uploadId) {
-      try { await multipartApi.abort(uploadId); } catch { /* 过期清理任务兜底 */ }
+      try { await multipartApi.abort(uploadId); } catch { /* Expired cleanup task will handle it as fallback */ }
     }
     if (isCancelled(error)) throw error;
-    // 初始化或分片直传不可用时，回退到已有应用服务分片接口。
-    // 已发起合并则不回退，避免重复创建文件记录。
+    // When init or multipart direct upload is unavailable, fall back to the legacy app-service chunk API.
+    // Do not fall back if merge has already started to avoid duplicate file records.
     if (!completing) return false;
     throw error;
   }
@@ -209,7 +209,7 @@ async function start(): Promise<void> {
       clear();
       return;
     } catch {
-      // 未命中当前用户文件，继续上传。
+      // No hit for current user file, continue upload.
     }
 
     checkCancelled();

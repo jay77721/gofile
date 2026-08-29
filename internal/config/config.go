@@ -7,44 +7,44 @@ import (
 	"strings"
 )
 
-// Config 应用配置，从环境变量读取
+// Config holds application configuration loaded from environment variables.
 type Config struct {
-	ServerAddr string // 服务监听地址，默认 :8080
-	MySQLDSN   string // MySQL 连接字符串，必填
-	UploadDir  string // 文件上传目录，默认 ./uploads
-	ChunkDir   string // 分块上传目录，默认 ./chunks
+	ServerAddr string // server listen address, default :8080
+	MySQLDSN   string // MySQL DSN, required
+	UploadDir  string // file upload directory, default ./uploads
+	ChunkDir   string // chunk upload directory, default ./chunks
 
-	MinioEndpoint  string // MinIO 地址，默认 minio:9000
-	MinioAccessKey string // MinIO AccessKey，默认 minioadmin
-	MinioSecretKey string // MinIO SecretKey，默认 minioadmin
-	MinioBucket    string // MinIO Bucket，默认 filestore
-	MinioUseSSL    bool   // 是否使用 SSL，默认 false
+	MinioEndpoint  string // MinIO endpoint, default minio:9000
+	MinioAccessKey string // MinIO AccessKey, default minioadmin
+	MinioSecretKey string // MinIO SecretKey, default minioadmin
+	MinioBucket    string // MinIO Bucket, default filestore
+	MinioUseSSL    bool   // whether to use SSL, default false
 
-	CookieSecure bool // 生产环境为 true，Cookie 仅通过 HTTPS 传输
+	CookieSecure bool // true in production, Cookie is only sent over HTTPS
 
-	RedisAddr     string // Redis 地址，默认 localhost:6379
-	RedisPassword string // Redis 密码，默认空
-	RedisDB       int    // Redis 数据库编号，默认 0
+	RedisAddr     string // Redis address, default localhost:6379
+	RedisPassword string // Redis password, default empty
+	RedisDB       int    // Redis DB number, default 0
 
-	// AI 功能配置
-	AIEnabled         bool   // AI 功能总开关，默认 false
-	AIProvider        string // LLM 供应商：mock | anthropic | openai，默认 mock
-	AIAPIKey          string // LLM API Key（mock 下忽略）
-	AIModel           string // LLM 模型名（空则用各 provider 默认值）
-	AIEmbedDim        int    // 向量维度，默认 128
-	AIWorkers         int    // 异步 worker 数量，默认 4
-	TypesenseURL      string // Typesense 地址，默认 http://localhost:8108
-	TypesenseAPIKey   string // Typesense API Key，默认 xyz
-	AIConfigSecret    string // 用户自定义 API key 的 AES 加密密钥，缺失时从 DSN 派生
-	AllowPrivateAIURL bool   // 是否允许自定义 baseURL 指向内网（默认 false，本地 Ollama 场景开启）
+	// AI feature configuration
+	AIEnabled         bool   // AI feature master switch, default false
+	AIProvider        string // LLM provider: mock | anthropic | openai, default mock
+	AIAPIKey          string // LLM API Key (ignored under mock)
+	AIModel           string // LLM model name (empty uses each provider's default)
+	AIEmbedDim        int    // vector dimension, default 128
+	AIWorkers         int    // async worker count, default 4
+	TypesenseURL      string // Typesense URL, default http://localhost:8108
+	TypesenseAPIKey   string // Typesense API Key, default xyz
+	AIConfigSecret    string // AES key for user custom API key encryption, derived from DSN when missing
+	AllowPrivateAIURL bool   // whether to allow custom baseURL to point to private network (default false, enable for local Ollama)
 
-	// AsynqEnabled 是否启用 Asynq 持久化任务队列（替代进程内 chan，需 Redis）
-	// true：任务写入 Redis，跨实例共享，内置重试 + 死信队列
-	// false（默认）：回退进程内 chan（重启丢失，单实例）
+	// AsynqEnabled whether to enable Asynq persistent task queue (replaces in-process chan, requires Redis)
+	// true: tasks are written to Redis, shared across instances, with built-in retry + dead-letter queue
+	// false (default): fallback to in-process chan (lost on restart, single instance)
 	AsynqEnabled bool
 }
 
-// Load 从环境变量加载配置，提供合理默认值
+// Load loads configuration from environment variables with sensible defaults.
 func Load() *Config {
 	loadDotEnv()
 
@@ -80,7 +80,7 @@ func Load() *Config {
 		AsynqEnabled: getEnvBool("ASYNQ_ENABLED", false),
 	}
 
-	// MySQL DSN 未设置时使用默认值（本地开发）
+	// use default when MySQL DSN is not set (local dev)
 	if cfg.MySQLDSN == "" {
 		cfg.MySQLDSN = "root:root@tcp(127.0.0.1:3306)/gofile?charset=utf8mb4&parseTime=True&loc=Local"
 	}
@@ -88,8 +88,8 @@ func Load() *Config {
 	return cfg
 }
 
-// AIConfigSecretKey 返回 API key 加密密钥:
-// 优先 AI_CONFIG_SECRET;未配置时从 MySQL DSN 派生(保证重启后仍可解密已有密文)
+// AIConfigSecretKey returns the API key encryption secret:
+// prefers AI_CONFIG_SECRET; when not configured, derives from MySQL DSN (ensures existing ciphertext remains decryptable after restart).
 func (c *Config) AIConfigSecretKey() string {
 	if c.AIConfigSecret != "" {
 		return c.AIConfigSecret
@@ -97,7 +97,7 @@ func (c *Config) AIConfigSecretKey() string {
 	return "gofile-secret:" + c.MySQLDSN
 }
 
-// loadDotEnv 加载 .env 文件中的变量（不覆盖已存在的环境变量）
+// loadDotEnv loads variables from .env file (does not override existing env vars).
 func loadDotEnv() {
 	f, err := os.Open(".env")
 	if err != nil {

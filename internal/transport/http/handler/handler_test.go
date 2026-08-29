@@ -20,7 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// setupTestHandler 创建测试用的 FileHandler（不依赖 MySQL）
+// setupTestHandler create a test FileHandler (without MySQL)
 func setupTestHandler(t *testing.T) (*FileHandler, *UserHandler, *AuthMiddleware) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "gofile-test-*")
@@ -489,7 +489,7 @@ func TestTrashHandlers(t *testing.T) {
 		return w
 	}
 
-	// 1. 回收站列表包含已删除文件
+	// 1. Trash list contains deleted file
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/file/trash?page=1&size=20", nil))
 	if w.Code != http.StatusOK {
@@ -509,7 +509,7 @@ func TestTrashHandlers(t *testing.T) {
 		t.Fatalf("trash = code %d total %d, want 0/1", resp.Code, resp.Data.Total)
 	}
 
-	// 2. 恢复
+	// 2. Restore
 	if w := post("/file/restore", hash); w.Code != http.StatusOK {
 		t.Fatalf("restore status = %d, want 200", w.Code)
 	}
@@ -520,7 +520,7 @@ func TestTrashHandlers(t *testing.T) {
 		t.Fatalf("trash after restore = %d, want 0", resp.Data.Total)
 	}
 
-	// 3. 恢复后删除 → 彻底删除
+	// 3. Delete after restore → permanent deletion
 	if w := post("/file/delete", hash); w.Code != http.StatusOK {
 		t.Fatalf("delete status = %d, want 200", w.Code)
 	}
@@ -534,7 +534,7 @@ func TestTrashHandlers(t *testing.T) {
 		t.Fatalf("trash after purge = %d, want 0", resp.Data.Total)
 	}
 
-	// 4. 越权:bob 无法恢复 alice 的文件
+	// 4. Unauthorized: bob cannot restore alice's file
 	rBob := setupRouter()
 	rBob.POST("/file/restore", func(c *gin.Context) { c.Set("username", "bob"); fh.RestoreHandler(c) })
 	reqBob := httptest.NewRequest("POST", "/file/restore", strings.NewReader((url.Values{"filehash": {hash}}).Encode()))

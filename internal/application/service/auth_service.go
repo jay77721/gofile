@@ -7,17 +7,17 @@ import (
 	"time"
 )
 
-// AuthService 认证业务逻辑
+// AuthService handles authentication business logic.
 type AuthService struct {
 	tokenRepo port.TokenRepository
 }
 
-// NewAuthService 创建认证服务
+// NewAuthService creates the authentication service.
 func NewAuthService(tokenRepo port.TokenRepository) *AuthService {
 	return &AuthService{tokenRepo: tokenRepo}
 }
 
-// ValidateToken 验证 token 是否有效
+// ValidateToken validates whether a token is valid.
 func (s *AuthService) ValidateToken(ctx context.Context, username, token string) bool {
 	t, err := s.tokenRepo.Get(ctx, username)
 	if err != nil {

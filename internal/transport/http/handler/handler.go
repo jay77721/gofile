@@ -19,73 +19,73 @@ const (
 	MaxUploadSize = 100 << 20 // 100MB
 )
 
-// 危险扩展名黑名单（存储型 XSS / 恶意文件分发 / 可执行文件）
-// 上传时直接拒绝，不进入存储层
+// Dangerous extension blocklist (stored XSS / malicious file distribution / executables)
+// Rejected directly on upload without entering storage layer
 var dangerousExts = map[string]bool{
-	// HTML / 脚本（存储型 XSS 主要载体）
+	// HTML / scripts (primary vectors for stored XSS)
 	".html": true, ".htm": true, ".xhtml": true,
 	".js": true, ".mjs": true, ".cjs": true,
-	// Windows 可执行文件
+	// Windows executables
 	".exe": true, ".com": true, ".bat": true, ".cmd": true, ".ps1": true, ".msi": true, ".scr": true, ".pif": true,
-	// Unix / Linux 可执行文件 / 脚本
+	// Unix/Linux executables/scripts
 	".sh": true, ".bash": true, ".zsh": true, ".csh": true, ".ksh": true,
 	".bin": true, ".run": true, ".appimage": true,
-	// 服务端脚本（防止在支持的环境中执行）
+	// Server-side scripts (prevent execution in supported environments)
 	".php": true, ".jsp": true, ".asp": true, ".aspx": true, ".cgi": true,
-	// 脚本语言
+	// Scripting languages
 	".py": true, ".pl": true, ".rb": true, ".lua": true,
-	// 其他危险类型
-	".svg": true, // 可内联 JavaScript，预览时需特殊处理
-	".jar": true, // Java 可执行
+	// Other dangerous types
+	".svg": true, // Can inline JavaScript; requires special handling during preview
+	".jar": true, // Java executable
 	".war": true, ".ear": true,
-	".ps":  true, // PowerShell 脚本
+	".ps":  true, // PowerShell script
 	".vbs": true, ".vbe": true, ".wsf": true, ".wsh": true,
-	".reg": true, // Windows 注册表文件
+	".reg": true, // Windows registry file
 	".inf": true,
 }
 
-// isDangerousExtension 检查文件扩展名是否在黑名单中
+// isDangerousExtension check whether the extension is blocklisted
 func isDangerousExtension(filename string) bool {
 	ext := strings.ToLower(filepath.Ext(filename))
 	return dangerousExts[ext]
 }
 
-// sha1HashPattern 40 位小写 hex（SHA1 文件名/目录安全校验）
+// sha1HashPattern 40-char lowercase hex (safety check for SHA1 filename/directory)
 var sha1HashPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 
-// isValidHash 校验是否为合法的 40 位 SHA1 hex，防止路径穿越
+// isValidHash validate a 40-char SHA1 hex to prevent path traversal
 func isValidHash(hash string) bool {
 	return sha1HashPattern.MatchString(hash)
 }
 
-// FileHandler 文件 HTTP 处理器，依赖注入 FileService
+// FileHandler file HTTP handler, injected with FileService
 type FileHandler struct {
 	fileSvc *service.FileService
 	cfg     *config.Config
 }
 
-// NewFileHandler 创建文件处理器
+// NewFileHandler create a file handler
 func NewFileHandler(fileSvc *service.FileService, cfg *config.Config) *FileHandler {
 	return &FileHandler{fileSvc: fileSvc, cfg: cfg}
 }
 
-// UploadHandler 处理文件上传
-// @Summary 上传文件
-// @Description 支持秒传去重（通过 filehash 参数），危险文件类型（.html/.js/.exe 等）会被拒绝
-// @Tags 文件
+// UploadHandler handle file upload
+// @Summary Upload file
+// @Description Supports instant upload deduplication (via filehash param); dangerous file types (.html/.js/.exe etc.) will be rejected
+// @Tags File
 // @Accept multipart/form-data
 // @Produce json
 // @Security ApiKeyAuth
-// @Param file formData file true "文件"
-// @Param filehash formData string false "文件 SHA1（秒传检测）"
-// @Success 200 {object} map[string]any{code=int,msg=string,data=object{filehash=string}} "上传成功"
-// @Failure 400 {object} map[string]any{code=int,msg=string,data=nil} "参数错误或文件类型不允许"
+// @Param file formData file true "File"
+// @Param filehash formData string false "File SHA1 (instant upload check)"
+// @Success 200 {object} map[string]any{code=int,msg=string,data=object{filehash=string}} "Upload succeeded"
+// @Failure 400 {object} map[string]any{code=int,msg=string,data=nil} "Invalid params or file type not allowed"
 // @Router /file/upload [post]
 func (h *FileHandler) UploadHandler(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxUploadSize)
 
 	fileHash := c.PostForm("filehash")
-	// 秒传检测(命中时同时建立当前用户的所有权关联)
+	// Instant upload check (on hit, also establishes ownership for the current user)
 	if fileHash != "" {
 		exists, err := h.fileSvc.FastUpload(c.Request.Context(), fileHash, c.GetString("username"))
 		if err != nil {
@@ -96,7 +96,7 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 		}
 	}
 
-	// 解析上传的文件
+	// Parse the uploaded file
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "文件获取失败")
@@ -104,10 +104,10 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// 路径穿越防护
+	// Path traversal protection
 	filename := filepath.Base(header.Filename)
 
-	// 危险文件类型黑名单（防存储型 XSS / 恶意文件分发）
+	// Dangerous file type blocklist (prevent stored XSS / malicious distribution)
 	if isDangerousExtension(filename) {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
 		return
@@ -123,7 +123,7 @@ func (h *FileHandler) UploadHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传成功", "data": gin.H{"filehash": fMeta.FileSha1}})
 }
 
-// FastUploadHandler 处理独立秒传检测接口
+// FastUploadHandler handle the dedicated instant upload check endpoint
 func (h *FileHandler) FastUploadHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
 	if fileHash == "" {
@@ -147,7 +147,7 @@ func (h *FileHandler) FastUploadHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "文件不存在，需完整上传", "data": nil})
 }
 
-// PresignUploadHandler 获取预签名上传 URL
+// PresignUploadHandler retrieve a presigned upload URL
 func (h *FileHandler) PresignUploadHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
 	fileName := c.PostForm("filename")
@@ -183,7 +183,7 @@ func (h *FileHandler) PresignUploadHandler(c *gin.Context) {
 	}})
 }
 
-// ConfirmUploadHandler 确认预签名上传完成
+// ConfirmUploadHandler confirm presigned upload completion
 func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
 	fileHash := c.PostForm("filehash")
 	fileName := c.PostForm("filename")
@@ -198,7 +198,7 @@ func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
 		return
 	}
 
-	// 危险文件类型黑名单（防存储型 XSS / 恶意文件分发）
+	// Dangerous file type blocklist (prevent stored XSS / malicious distribution)
 	if isDangerousExtension(fileName) {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "该文件类型不允许上传")
 		return
@@ -213,7 +213,7 @@ func (h *FileHandler) ConfirmUploadHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "上传成功", "data": gin.H{"filehash": fileHash}})
 }
 
-// PresignDownloadHandler 获取预签名下载 URL
+// PresignDownloadHandler retrieve a presigned download URL
 func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
 	fileHash := c.Query("filehash")
 	if fileHash == "" {
@@ -242,7 +242,7 @@ func (h *FileHandler) PresignDownloadHandler(c *gin.Context) {
 	}})
 }
 
-// MetaHandler 获取文件元信息
+// MetaHandler retrieve file metadata
 func (h *FileHandler) MetaHandler(c *gin.Context) {
 	filehash := c.Query("filehash")
 	if filehash == "" {
@@ -259,20 +259,20 @@ func (h *FileHandler) MetaHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": fMeta})
 }
 
-// GetFileHandler 兼容别名
+// GetFileHandler compatibility alias
 func (h *FileHandler) GetFileHandler(c *gin.Context) {
 	h.MetaHandler(c)
 }
 
-// QueryHandler 返回用户文件列表（支持分页与目录树查询）
-// @Summary 查询文件列表
-// @Description 支持分页，无分页参数时返回全部文件
-// @Tags 文件
+// QueryHandler return the user file list (supports pagination and directory tree query)
+// @Summary List files
+// @Description Supports pagination; returns all files when no pagination params are given
+// @Tags File
 // @Produce json
 // @Security ApiKeyAuth
-// @Param page query int false "页码（从 1 开始）"
-// @Param size query int false "每页数量（1-100，默认 20）"
-// @Success 200 {object} map[string]any{code=int,msg=string,data=object{list=array,total=int,page=int,size=int}} "文件列表"
+// @Param page query int false "Page number (starting from 1)"
+// @Param size query int false "Page size (1-100, default 20)"
+// @Success 200 {object} map[string]any{code=int,msg=string,data=object{list=array,total=int,page=int,size=int}} "File list"
 // @Router /file/query [get]
 func (h *FileHandler) QueryHandler(c *gin.Context) {
 	username := c.GetString("username")
@@ -281,7 +281,7 @@ func (h *FileHandler) QueryHandler(c *gin.Context) {
 	pageStr := c.Query("page")
 	sizeStr := c.Query("size")
 
-	// 若传递了 parent_id，按目录层级与面包屑查询
+	// If parent_id is provided, query by directory hierarchy with breadcrumbs
 	if parentIDStr != "" {
 		parentID, _ := strconv.ParseUint(parentIDStr, 10, 64)
 		page, _ := strconv.Atoi(pageStr)
@@ -310,7 +310,7 @@ func (h *FileHandler) QueryHandler(c *gin.Context) {
 	}
 
 	if pageStr == "" && sizeStr == "" {
-		// 无分页参数：返回全部（兼容旧逻辑）
+		// No pagination params: return all (compatible with legacy logic)
 		fileMetas, err := h.fileSvc.ListByUser(c.Request.Context(), username)
 		if err != nil {
 			slog.ErrorContext(c.Request.Context(), "query all files failed", "error", err)
@@ -321,7 +321,7 @@ func (h *FileHandler) QueryHandler(c *gin.Context) {
 		return
 	}
 
-	// 有分页参数：走分页逻辑
+	// Pagination params present: use paged logic
 	page, _ := strconv.Atoi(pageStr)
 	size, _ := strconv.Atoi(sizeStr)
 	if page < 1 {
@@ -346,12 +346,12 @@ func (h *FileHandler) QueryHandler(c *gin.Context) {
 	}})
 }
 
-// FileQueryHandler 兼容别名
+// FileQueryHandler compatibility alias
 func (h *FileHandler) FileQueryHandler(c *gin.Context) {
 	h.QueryHandler(c)
 }
 
-// RenameHandler 更新元信息接口（重命名）
+// RenameHandler update metadata (rename)
 func (h *FileHandler) RenameHandler(c *gin.Context) {
 	opType := c.PostForm("op")
 	fileSha1 := c.PostForm("filehash")
@@ -381,12 +381,12 @@ func (h *FileHandler) RenameHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "更新成功", "data": nil})
 }
 
-// FileMetaUpdateHandler 兼容别名
+// FileMetaUpdateHandler compatibility alias
 func (h *FileHandler) FileMetaUpdateHandler(c *gin.Context) {
 	h.RenameHandler(c)
 }
 
-// DeleteHandler 删除文件及元信息（软删除）
+// DeleteHandler delete file and metadata (soft delete)
 func (h *FileHandler) DeleteHandler(c *gin.Context) {
 	fileSha1 := c.PostForm("filehash")
 	if fileSha1 == "" {
@@ -403,12 +403,12 @@ func (h *FileHandler) DeleteHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功", "data": nil})
 }
 
-// FileDeleteHandler 兼容别名
+// FileDeleteHandler compatibility alias
 func (h *FileHandler) FileDeleteHandler(c *gin.Context) {
 	h.DeleteHandler(c)
 }
 
-// TrashHandler 回收站文件列表（分页）
+// TrashHandler list files in trash (paged)
 func (h *FileHandler) TrashHandler(c *gin.Context) {
 	username := c.GetString("username")
 	page, _ := strconv.Atoi(c.Query("page"))
@@ -429,7 +429,7 @@ func (h *FileHandler) TrashHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": gin.H{"list": files, "total": total, "page": page, "size": size}})
 }
 
-// RestoreHandler 恢复回收站文件
+// RestoreHandler restore a file from trash
 func (h *FileHandler) RestoreHandler(c *gin.Context) {
 	filehash := c.PostForm("filehash")
 	if filehash == "" || !isValidHash(filehash) {
@@ -447,7 +447,7 @@ func (h *FileHandler) RestoreHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "恢复成功", "data": nil})
 }
 
-// PurgeHandler 彻底删除回收站文件（不可恢复）
+// PurgeHandler permanently delete a file from trash (irrecoverable)
 func (h *FileHandler) PurgeHandler(c *gin.Context) {
 	filehash := c.PostForm("filehash")
 	if filehash == "" || !isValidHash(filehash) {
@@ -465,7 +465,7 @@ func (h *FileHandler) PurgeHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已彻底删除", "data": nil})
 }
 
-// parseInt 字符串转正整数辅助函数
+// parseInt helper converts string to positive integer
 func parseInt(s string) (int, error) {
 	var n int
 	for _, c := range s {
@@ -477,7 +477,7 @@ func parseInt(s string) (int, error) {
 	return n, nil
 }
 
-// HealthCheckHandler 健康检查端点（纯函数，不需要注入）
+// HealthCheckHandler health check endpoint (pure function, no injection required)
 func HealthCheckHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": nil})
 }
