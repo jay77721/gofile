@@ -13,7 +13,7 @@
 [![Asynq](https://img.shields.io/badge/Asynq-Distributed%20Queue-FF6B6B?style=flat-square)](https://github.com/hibiken/asynq)
 [![Typesense](https://img.shields.io/badge/Typesense-Hybrid%20Search-00D4AA?style=flat-square)](https://typesense.org)
 [![Vue 3](https://img.shields.io/badge/Vue-3.5%20%2B%20TS-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](#-license)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 > Instant fast-upload dedup, S3 multipart direct upload with atomic server-side merge, VFS tree directory, HTTP Range 206 resumable download —
 > and, most importantly: **manage and retrieve your knowledge assets using natural language**.
@@ -129,9 +129,13 @@ cd ..
 
 # 2. Install backend dependencies and configure environment
 go mod tidy
-cp .env.example .env
+cp .env.example .env  # edit .env: MySQL is required; Redis/MinIO/Typesense/AI are optional (graceful fallback)
+# All keys are documented in .env.example (mirrors internal/config/config.go):
+# SERVER_ADDR, COOKIE_SECURE, MYSQL_DSN, UPLOAD_DIR/CHUNK_DIR,
+# MINIO_*, REDIS_ADDR/PASSWORD/DB, AI_ENABLED/PROVIDER/API_KEY/MODEL/EMBED_DIM/WORKERS,
+# TYPESENSE_*, AI_CONFIG_SECRET, ALLOW_PRIVATE_AI_URL, ASYNQ_ENABLED
 
-# 3. Run backend server (auto-runs migrations/ on startup)
+# 3. Run backend server (auto-runs migrations/ on startup, loads .env via config.Load())
 go run ./cmd/gofile
 ```
 
@@ -232,4 +236,4 @@ gofile/
 
 ## 📄 License
 
-MIT © [jay77721](https://github.com/jay77721)
+Apache License 2.0 © 2026 [jay77721](https://github.com/jay77721) — see [LICENSE](LICENSE) for details.

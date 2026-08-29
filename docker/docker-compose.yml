@@ -10,6 +10,9 @@ services:
       # These defaults are container-local. Use the dedicated DOCKER_* / *_INTERNAL
       # overrides when the service topology differs from the standard Compose setup.
       SERVER_ADDR: ${DOCKER_SERVER_ADDR:-:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
+      CHUNK_DIR: ${CHUNK_DIR:-/app/chunks}
       MINIO_ENDPOINT: ${MINIO_INTERNAL_ENDPOINT:-minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -26,6 +29,8 @@ services:
       AI_WORKERS: ${AI_WORKERS:-4}
       TYPESENSE_URL: ${TYPESENSE_URL:-http://typesense:8108}
       TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-xyz}
+      AI_CONFIG_SECRET: ${AI_CONFIG_SECRET:-}
+      ALLOW_PRIVATE_AI_URL: ${ALLOW_PRIVATE_AI_URL:-false}
       ASYNQ_ENABLED: ${ASYNQ_ENABLED:-false}
     depends_on:
       mysql:

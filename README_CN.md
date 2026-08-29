@@ -13,7 +13,7 @@
 [![Asynq](https://img.shields.io/badge/Asynq-Distributed%20Queue-FF6B6B?style=flat-square)](https://github.com/hibiken/asynq)
 [![Typesense](https://img.shields.io/badge/Typesense-Hybrid%20Search-00D4AA?style=flat-square)](https://typesense.org)
 [![Vue 3](https://img.shields.io/badge/Vue-3.5%20%2B%20TS-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](#-许可证)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 > 秒传去重、S3 分片直传原子合并、VFS 树形虚拟目录、HTTP Range 206 断点续传 ——
 > 以及最重要的：**用自然语言智能检索并管理你的知识资产**。
@@ -129,9 +129,13 @@ cd ..
 
 # 2. 安装后端依赖并配置环境
 go mod tidy
-cp .env.example .env
+cp .env.example .env  # 按需编辑 .env：MySQL 必填；Redis/MinIO/Typesense/AI 均可选（自动降级）
+# 全部环境变量见 .env.example，与 internal/config/config.go 保持一致：
+# SERVER_ADDR, COOKIE_SECURE, MYSQL_DSN, UPLOAD_DIR/CHUNK_DIR,
+# MINIO_*, REDIS_ADDR/PASSWORD/DB, AI_ENABLED/PROVIDER/API_KEY/MODEL/EMBED_DIM/WORKERS,
+# TYPESENSE_*, AI_CONFIG_SECRET, ALLOW_PRIVATE_AI_URL, ASYNQ_ENABLED
 
-# 3. 运行后端服务 (服务启动时自动执行 migrations/ 数据库迁移)
+# 3. 运行后端服务 (启动时自动执行 migrations/ 迁移，并通过 config.Load() 读取 .env)
 go run ./cmd/gofile
 ```
 
@@ -232,4 +236,4 @@ gofile/
 
 ## 📄 许可证
 
-MIT © [jay77721](https://github.com/jay77721)
+Apache License 2.0 © 2026 [jay77721](https://github.com/jay77721) — 详见 [LICENSE](LICENSE)。
