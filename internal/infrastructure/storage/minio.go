@@ -10,6 +10,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"gofile/internal/port"
 )
 
 // MinIOStorage MinIO 对象存储实现（S3 兼容）
@@ -152,7 +153,7 @@ func (s *MinIOStorage) PresignPartPut(ctx context.Context, key, uploadID string,
 }
 
 // CompleteMultipart 在存储层合并分片
-func (s *MinIOStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletePart) error {
+func (s *MinIOStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []port.CompletePart) error {
 	var minioParts []minio.CompletePart
 	for _, p := range parts {
 		minioParts = append(minioParts, minio.CompletePart{

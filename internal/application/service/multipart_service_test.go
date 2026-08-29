@@ -8,6 +8,7 @@ import (
 	"gofile/internal/domain"
 	"gofile/internal/infrastructure/persistence/repository"
 	"gofile/internal/infrastructure/storage"
+	"gofile/internal/port"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func (m *mockMultipartStorage) PresignPartPut(ctx context.Context, key, uploadID
 	return "http://mock-minio/part?partNumber=1", nil
 }
 
-func (m *mockMultipartStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
+func (m *mockMultipartStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []port.CompletePart) error {
 	m.complete = true
 	if len(m.completedContent) > 0 {
 		return m.LocalStorage.Put(ctx, key, bytes.NewReader(m.completedContent), int64(len(m.completedContent)))
@@ -191,7 +192,7 @@ func TestS3Multipart_CompleteUpload(t *testing.T) {
 	}
 
 	t.Run("complete success", func(t *testing.T) {
-		parts := []storage.CompletePart{
+		parts := []port.CompletePart{
 			{PartNumber: 1, ETag: "etag1"},
 			{PartNumber: 2, ETag: "etag2"},
 			{PartNumber: 3, ETag: "etag3"},
@@ -218,7 +219,7 @@ func TestS3Multipart_CompleteUpload(t *testing.T) {
 	})
 
 	t.Run("complete already completed session fails", func(t *testing.T) {
-		parts := []storage.CompletePart{{PartNumber: 1, ETag: "etag1"}}
+		parts := []port.CompletePart{{PartNumber: 1, ETag: "etag1"}}
 		_, err := svc.CompleteMultipartUpload(ctx, "alice", model.MultipartCompleteReq{
 			UploadID: initResp.UploadID,
 			Parts:    parts,
@@ -231,7 +232,7 @@ func TestS3Multipart_CompleteUpload(t *testing.T) {
 	t.Run("complete non-existent session fails", func(t *testing.T) {
 		_, err := svc.CompleteMultipartUpload(ctx, "alice", model.MultipartCompleteReq{
 			UploadID: "non-existent-upload-id",
-			Parts:    []storage.CompletePart{},
+			Parts:    []port.CompletePart{},
 		})
 		if err == nil {
 			t.Fatal("expected error on non-existent session, got nil")

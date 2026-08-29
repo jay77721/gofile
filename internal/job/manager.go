@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	model "gofile/internal/domain"
-	"gofile/internal/infrastructure/ai"
 	"gofile/internal/port"
 	"log/slog"
 	"os"
@@ -12,6 +11,11 @@ import (
 	"sync"
 	"time"
 )
+
+// Requeuer 重新入队失败任务的能力，由 AI Processor 提供。
+type Requeuer interface {
+	RequeueFailed(ctx context.Context) int
+}
 
 const (
 	ChunkCleanupInterval   = time.Hour
@@ -33,7 +37,7 @@ type Manager struct {
 	multipartRepo port.MultipartRepository
 	shareRepo     port.ShareRepository
 	aiRepo        port.AITaskRepository
-	aiProcessor   *ai.Processor
+	aiProcessor   Requeuer
 	store         port.Storage
 	indexer       port.Indexer
 
@@ -51,7 +55,7 @@ func NewManager(
 	multipartRepo port.MultipartRepository,
 	shareRepo port.ShareRepository,
 	aiRepo port.AITaskRepository,
-	aiProcessor *ai.Processor,
+	aiProcessor Requeuer,
 	store port.Storage,
 	indexer port.Indexer,
 ) *Manager {
@@ -166,7 +170,7 @@ func (m *Manager) launch(fn func(context.Context)) {
 
 func (m *Manager) runChunkCleanup(ctx context.Context) {
 	slog.InfoContext(ctx, "chunk cleanup started", "interval", ChunkCleanupInterval, "maxAge", ChunkMaxAge, "dir", m.chunkDir)
-	runTicker(ctx, ChunkCleanupInterval, func() { cleanupExpiredChunks(ctx, m.chunkDir) }, false)
+	runTicker(ctx, ChunkCleanupInterval, func() { cleanupExpiredChunks(ctx, m.chunkDir) })
 }
 
 func (m *Manager) runShareCleanup(ctx context.Context) {
@@ -177,7 +181,7 @@ func (m *Manager) runShareCleanup(ctx context.Context) {
 		} else {
 			slog.InfoContext(ctx, "cleaned up expired shares", "before", before)
 		}
-	}, false)
+	})
 }
 
 func (m *Manager) runMultipartCleanup(ctx context.Context) {
@@ -185,7 +189,7 @@ func (m *Manager) runMultipartCleanup(ctx context.Context) {
 	cleanupExpiredMultipart(ctx, m.multipartRepo, m.store)
 	runTicker(ctx, multipartCleanupPeriod, func() {
 		cleanupExpiredMultipart(ctx, m.multipartRepo, m.store)
-	}, false)
+	})
 }
 
 func (m *Manager) runAITaskCleanup(ctx context.Context) {
@@ -198,7 +202,7 @@ func (m *Manager) runAITaskCleanup(ctx context.Context) {
 		} else {
 			slog.InfoContext(ctx, "cleaned up expired ai tasks", "before", before)
 		}
-	}, false)
+	})
 }
 
 func (m *Manager) runAICompensation(ctx context.Context) {
@@ -237,13 +241,13 @@ func (m *Manager) runSoftDeleteGC(ctx context.Context) {
 	cleanupOrphanedFiles(ctx, m.fileRepo, m.store, SoftDeleteGCAge, m.indexer)
 	runTicker(ctx, SoftDeleteGCInterval, func() {
 		cleanupOrphanedFiles(ctx, m.fileRepo, m.store, SoftDeleteGCAge, m.indexer)
-	}, false)
+	})
 }
 
-func runTicker(ctx context.Context, interval time.Duration, fn func(), runImmediately bool) {
-	if runImmediately {
-		fn()
-	}
+// runTicker 周期执行 fn，直到 ctx 取消。需要启动即执行一次的调用方应在
+// 调用 runTicker 前显式执行一次（如 runMultipartCleanup / runSoftDeleteGC），
+// 保持职责单一，避免 runImmediately 布尔参数的歧义。
+func runTicker(ctx context.Context, interval time.Duration, fn func()) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

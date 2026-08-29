@@ -1,14 +1,9 @@
 package storage
 
-import (
-	"fmt"
-	"gofile/internal/port"
-)
+import "fmt"
 
 // ErrPresignNotSupported is returned by local storage for S3-only operations.
 var ErrPresignNotSupported = fmt.Errorf("presigned URL not supported for local storage")
 
-// CompletePart and Storage remain adapter aliases for compatibility. The
-// contracts themselves are owned by internal/port.
-type CompletePart = port.CompletePart
-type Storage = port.Storage
+// Contracts (Storage, CompletePart) are owned by internal/port. This package
+// provides concrete adapters (Local, MinIO) that implement port.Storage.

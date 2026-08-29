@@ -10,6 +10,7 @@ import (
 	"gofile/internal/domain"
 	"gofile/internal/infrastructure/persistence/repository"
 	"gofile/internal/infrastructure/storage"
+	"gofile/internal/port"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +39,7 @@ func (m *mockMultipartStorageForHandler) PresignPartPut(ctx context.Context, key
 	return "http://mock-minio/part?partNumber=1", nil
 }
 
-func (m *mockMultipartStorageForHandler) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
+func (m *mockMultipartStorageForHandler) CompleteMultipart(ctx context.Context, key, uploadID string, parts []port.CompletePart) error {
 	m.complete = true
 	if len(m.completedContent) > 0 {
 		return m.LocalStorage.Put(ctx, key, bytes.NewReader(m.completedContent), int64(len(m.completedContent)))
@@ -174,7 +175,7 @@ func TestS3Multipart_Handlers(t *testing.T) {
 	t.Run("complete multipart upload", func(t *testing.T) {
 		compBody, _ := json.Marshal(model.MultipartCompleteReq{
 			UploadID: "upload-handler-id-123",
-			Parts: []storage.CompletePart{
+			Parts: []port.CompletePart{
 				{PartNumber: 1, ETag: "etag1"},
 				{PartNumber: 2, ETag: "etag2"},
 			},

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gofile/internal/observability/metrics"
+	"gofile/internal/port"
 )
 
 // AnthropicProvider Anthropic API 实现的 Provider
@@ -22,7 +23,7 @@ type AnthropicProvider struct {
 }
 
 // NewAnthropicProvider 创建 Anthropic Provider
-func NewAnthropicProvider(apiKey, model string, dim int) Provider {
+func NewAnthropicProvider(apiKey, model string, dim int) port.Provider {
 	if model == "" {
 		model = "claude-3-haiku-20240307"
 	}
@@ -39,7 +40,7 @@ func NewAnthropicProvider(apiKey, model string, dim int) Provider {
 
 func (p *AnthropicProvider) Dimension() int { return p.dim }
 
-func (p *AnthropicProvider) Analyze(ctx context.Context, fileName, content string) (*Analysis, error) {
+func (p *AnthropicProvider) Analyze(ctx context.Context, fileName, content string) (*port.Analysis, error) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveLLMDuration("analyze", time.Since(start).Seconds())
@@ -72,7 +73,7 @@ func (p *AnthropicProvider) Analyze(ctx context.Context, fileName, content strin
 		return nil, fmt.Errorf("anthropic: parse response failed: %w", err)
 	}
 
-	var analysis Analysis
+	var analysis port.Analysis
 	content_str := strings.TrimSpace(result.Content[0].Text)
 	content_str = strings.TrimPrefix(content_str, "```json")
 	content_str = strings.TrimPrefix(content_str, "```")

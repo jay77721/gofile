@@ -12,7 +12,7 @@ import (
 	"gofile/internal/config"
 	"gofile/internal/domain"
 	"gofile/internal/infrastructure/persistence/repository"
-	"gofile/internal/infrastructure/storage"
+	"gofile/internal/port"
 )
 
 // --- 内存 mock：AITaskRepository ---
@@ -200,7 +200,7 @@ func (m *mockFileRepoForProc) GetBreadcrumbs(ctx context.Context, username strin
 	return nil, nil
 }
 
-// storage mock（最小实现，满足 storage.Storage 接口）
+// storage mock（最小实现，满足 port.Storage 接口）
 type mockStorage struct {
 	content []byte
 }
@@ -238,7 +238,7 @@ func (m mockStorage) InitMultipart(ctx context.Context, key string) (string, err
 func (m mockStorage) PresignPartPut(ctx context.Context, key, uploadID string, partNumber int, expiry time.Duration) (string, error) {
 	return "http://mock/part", nil
 }
-func (m mockStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
+func (m mockStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []port.CompletePart) error {
 	return nil
 }
 func (m mockStorage) AbortMultipart(ctx context.Context, key, uploadID string) error {
@@ -247,7 +247,7 @@ func (m mockStorage) AbortMultipart(ctx context.Context, key, uploadID string) e
 
 // --- 测试 ---
 
-func newTestProcessor(provider Provider, indexer Indexer, fr repository.FileRepository, ar *mockAITaskRepo, st storage.Storage) *Processor {
+func newTestProcessor(provider port.Provider, indexer port.Indexer, fr repository.FileRepository, ar *mockAITaskRepo, st port.Storage) *Processor {
 	cfg := &config.Config{AIWorkers: 1}
 	p := NewProcessor(provider, indexer, fr, ar, st, cfg)
 	return p
@@ -358,7 +358,7 @@ type failAnalyzeProvider struct {
 	dim int
 }
 
-func (p *failAnalyzeProvider) Analyze(ctx context.Context, fileName, content string) (*Analysis, error) {
+func (p *failAnalyzeProvider) Analyze(ctx context.Context, fileName, content string) (*port.Analysis, error) {
 	return nil, errors.New("mock analyze failure")
 }
 func (p *failAnalyzeProvider) Embed(ctx context.Context, text string) ([]float32, error) {
@@ -373,7 +373,7 @@ type countingProvider struct {
 	counter *int
 }
 
-func (p *countingProvider) Analyze(ctx context.Context, fileName, content string) (*Analysis, error) {
+func (p *countingProvider) Analyze(ctx context.Context, fileName, content string) (*port.Analysis, error) {
 	*p.counter++
 	return p.MockProvider.Analyze(ctx, fileName, content)
 }

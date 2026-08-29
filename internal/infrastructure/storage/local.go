@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"gofile/internal/port"
 )
 
 // LocalStorage 本地文件系统存储实现
@@ -145,7 +147,7 @@ func (s *LocalStorage) PresignPartPut(ctx context.Context, key, uploadID string,
 }
 
 // CompleteMultipart 本地存储不支持 S3 分片合并
-func (s *LocalStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletePart) error {
+func (s *LocalStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []port.CompletePart) error {
 	return ErrPresignNotSupported
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
+	"gofile/internal/port"
 )
 
 // MockProvider 基于规则的 mock 实现（无 LLM 时可跑通全流程，行为确定性、可测试）
@@ -18,7 +19,7 @@ type MockProvider struct {
 }
 
 // NewMockProvider 创建 mock provider，dim 为向量维度
-func NewMockProvider(dim int) Provider {
+func NewMockProvider(dim int) port.Provider {
 	if dim <= 0 {
 		dim = 128
 	}
@@ -27,10 +28,10 @@ func NewMockProvider(dim int) Provider {
 
 func (m *MockProvider) Dimension() int { return m.dim }
 
-func (m *MockProvider) Analyze(_ context.Context, fileName, content string) (*Analysis, error) {
+func (m *MockProvider) Analyze(_ context.Context, fileName, content string) (*port.Analysis, error) {
 	summary := buildSummary(fileName, content)
 	tags := buildTags(fileName, content)
-	return &Analysis{Summary: summary, Tags: tags}, nil
+	return &port.Analysis{Summary: summary, Tags: tags}, nil
 }
 
 func (m *MockProvider) Embed(_ context.Context, text string) ([]float32, error) {

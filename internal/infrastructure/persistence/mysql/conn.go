@@ -120,60 +120,6 @@ func closeFailedConnection(conn *Connection, cause error) (*Connection, error) {
 	return nil, cause
 }
 
-// Init is the legacy global-state compatibility API.
-//
-// Deprecated: use Open or Connect and own the returned Connection.
-func Init(dsn string) error {
-	conn, err := Open(dsn)
-	if err != nil {
-		return err
-	}
-
-	legacyConnectionMu.Lock()
-	previous := legacyConnection
-	legacyConnection = conn
-	legacyConnectionMu.Unlock()
-
-	if previous != nil {
-		if err := previous.Close(); err != nil {
-			return fmt.Errorf("close previous DB failed: %w", err)
-		}
-	}
-	return nil
-}
-
-// Close is the legacy global-state compatibility API.
-//
-// Deprecated: retain the Connection returned by Open or Connect and call its
-// Close method instead.
-func Close() error {
-	legacyConnectionMu.Lock()
-	conn := legacyConnection
-	legacyConnection = nil
-	legacyConnectionMu.Unlock()
-	if conn == nil {
-		return nil
-	}
-	return conn.Close()
-}
-
-var (
-	legacyConnectionMu sync.RWMutex
-	legacyConnection   *Connection
-)
-
-// DBConn is the legacy global-state compatibility API.
-//
-// Deprecated: use the DB method on the Connection returned by Open or Connect.
-func DBConn() *gorm.DB {
-	legacyConnectionMu.RLock()
-	defer legacyConnectionMu.RUnlock()
-	if legacyConnection == nil {
-		return nil
-	}
-	return legacyConnection.DB()
-}
-
 // runMigrations executes migrations/ using a dedicated SQL pool. The migration
 // driver closes that pool before returning so it cannot retain a connection
 // leased from the application's main pool.

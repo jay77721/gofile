@@ -9,6 +9,7 @@ import (
 
 	"github.com/typesense/typesense-go/v2/typesense"
 	"github.com/typesense/typesense-go/v2/typesense/api"
+	"gofile/internal/port"
 )
 
 // TypesenseIndexer Typesense 实现的检索引擎
@@ -65,7 +66,7 @@ func (t *TypesenseIndexer) EnsureCollection(ctx context.Context) error {
 	return nil
 }
 
-func (t *TypesenseIndexer) Upsert(ctx context.Context, doc *Doc) error {
+func (t *TypesenseIndexer) Upsert(ctx context.Context, doc *port.Doc) error {
 	if doc == nil {
 		return nil
 	}
@@ -98,7 +99,7 @@ func (t *TypesenseIndexer) Delete(ctx context.Context, username, filehash string
 }
 
 // SearchHybrid 混合检索（全文 + 向量 KNN，RRF 融合）+ 所有权 filter
-func (t *TypesenseIndexer) SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]Doc, error) {
+func (t *TypesenseIndexer) SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]port.Doc, error) {
 	filterBy := ownershipFilter(username)
 	if filter = safeTypeFilter(filter); filter != "" {
 		// Keep caller-provided filters grouped so an OR cannot weaken ownership.
@@ -123,15 +124,15 @@ func (t *TypesenseIndexer) SearchHybrid(ctx context.Context, q, username string,
 		return nil, fmt.Errorf("typesense search failed: %w", err)
 	}
 	if res.Hits == nil {
-		return []Doc{}, nil
+		return []port.Doc{}, nil
 	}
 	return hitsToDocs(*res.Hits), nil
 }
 
 // Similar 相似文件推荐（向量 KNN，排除自身）
-func (t *TypesenseIndexer) Similar(ctx context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]Doc, error) {
+func (t *TypesenseIndexer) Similar(ctx context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]port.Doc, error) {
 	if len(vector) == 0 {
-		return []Doc{}, nil
+		return []port.Doc{}, nil
 	}
 	vectorQuery := fmt.Sprintf("content_vec:(%s, k:%d)", formatVector(vector), limit+1)
 	filterBy := ownershipFilter(username)
@@ -148,11 +149,11 @@ func (t *TypesenseIndexer) Similar(ctx context.Context, username string, vector 
 		return nil, fmt.Errorf("typesense similar failed: %w", err)
 	}
 	if res.Hits == nil {
-		return []Doc{}, nil
+		return []port.Doc{}, nil
 	}
 	docs := hitsToDocs(*res.Hits)
 	// 排除自身
-	out := make([]Doc, 0, len(docs))
+	out := make([]port.Doc, 0, len(docs))
 	for _, d := range docs {
 		if d.Filehash != excludeFilehash {
 			out = append(out, d)
@@ -197,13 +198,13 @@ func formatVector(v []float32) string {
 	return sb.String()
 }
 
-func hitsToDocs(hits []api.SearchResultHit) []Doc {
+func hitsToDocs(hits []api.SearchResultHit) []port.Doc {
 	if hits == nil {
-		return []Doc{}
+		return []port.Doc{}
 	}
-	out := make([]Doc, 0, len(hits))
+	out := make([]port.Doc, 0, len(hits))
 	for i := range hits {
-		doc := Doc{}
+		doc := port.Doc{}
 		if hits[i].Document == nil {
 			continue
 		}

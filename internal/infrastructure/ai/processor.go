@@ -22,10 +22,6 @@ const (
 	queueCapacity = 100
 )
 
-// TaskEnqueuer 任务入队接口，由 task.Client 实现
-// 定义在 ai 包中以避免 ai ↔ task 循环引用
-type TaskEnqueuer = port.TaskEnqueuer
-
 // taskItem 内部队列项（降级内存 chan 使用）
 type taskItem struct {
 	Ctx      context.Context
@@ -50,15 +46,18 @@ type Processor struct {
 	cfg      *config.Config
 
 	// resolve 按用户名解析生效 Provider(用户自定义配置优先),nil 时使用默认 provider
-	resolve func(ctx context.Context, username string) Provider
+	resolve func(ctx context.Context, username string) port.Provider
 
 	// taskEnqueuer Asynq 客户端（可选，nil 时回退到进程内 chan）
-	taskEnqueuer TaskEnqueuer
+	taskEnqueuer port.TaskEnqueuer
 	// workers 内部 goroutine 数（启动时固定）
 	workers int
 
-	queue chan taskItem
-	wg    sync.WaitGroup
+	queue   chan taskItem
+	mu      sync.Mutex
+	stopped bool
+	done    chan struct{}
+	wg      sync.WaitGroup
 }
 
 // NewProcessor 创建异步编排器
@@ -76,23 +75,24 @@ func NewProcessor(provider port.Provider, indexer port.Indexer, fileRepo port.Fi
 		cfg:      cfg,
 		workers:  workers,
 		queue:    make(chan taskItem, queueCapacity),
+		done:     make(chan struct{}),
 	}
 }
 
 // WithResolver 注入按用户解析 Provider 的函数(用户级 AI 配置)
-func (p *Processor) WithResolver(fn func(ctx context.Context, username string) Provider) *Processor {
+func (p *Processor) WithResolver(fn func(ctx context.Context, username string) port.Provider) *Processor {
 	p.resolve = fn
 	return p
 }
 
 // WithTaskEnqueuer 注入 Asynq 客户端（可选，nil 时回退内存 chan）
-func (p *Processor) WithTaskEnqueuer(e TaskEnqueuer) *Processor {
+func (p *Processor) WithTaskEnqueuer(e port.TaskEnqueuer) *Processor {
 	p.taskEnqueuer = e
 	return p
 }
 
 // providerFor 解析任务所属用户生效的 Provider,解析不到时回退默认
-func (p *Processor) providerFor(ctx context.Context, username string) Provider {
+func (p *Processor) providerFor(ctx context.Context, username string) port.Provider {
 	if p.resolve != nil {
 		if prov := p.resolve(ctx, username); prov != nil {
 			return prov
@@ -110,9 +110,18 @@ func (p *Processor) Start() {
 	}
 }
 
-// Stop 优雅停止（等待内存队列排空）
+// Stop 优雅停止：标记停止 → 广播 done → worker 排空剩余任务后全部退出。
+// 关键不变量：绝不 close(p.queue)，因此 Stop 后并发 Enqueue 向 queue 发送不会 panic。
+// 注意：Processor 不可重用，Stop 后 done channel 已关闭，再次 Start 将立即退出。
 func (p *Processor) Stop() {
-	close(p.queue)
+	p.mu.Lock()
+	if p.stopped {
+		p.mu.Unlock()
+		return
+	}
+	p.stopped = true
+	p.mu.Unlock()
+	close(p.done)
 	p.wg.Wait()
 }
 
@@ -122,7 +131,7 @@ func (p *Processor) Enqueue(ctx context.Context, filehash, filename, username st
 	if p == nil {
 		return nil
 	}
-	// 优先走 Asynq 持久化路径
+	// 优先走 Asynq 持久化路径（Asynq 路径不受进程内队列生命周期影响）
 	if p.taskEnqueuer != nil {
 		if err := p.taskEnqueuer.Enqueue(ctx, filehash, filename, username); err != nil {
 			slog.WarnContext(ctx, "asynq enqueue failed, fallback to chan",
@@ -131,10 +140,19 @@ func (p *Processor) Enqueue(ctx context.Context, filehash, filename, username st
 			return nil
 		}
 	}
-	// 降级：进程内内存队列（Asynq 未配置或 Redis 宕机时）
+	// 进程内降级路径：需在持锁期间原子检查 stopped 并尝试入队，
+	// 避免 Stop 并发 close(done) 与入队之间的竞态；select 非阻塞，持锁时间可控。
+	p.mu.Lock()
+	if p.stopped {
+		p.mu.Unlock()
+		slog.WarnContext(ctx, "ai processor stopped, dropping task", "filehash", filehash, "username", username)
+		return nil
+	}
 	select {
 	case p.queue <- taskItem{Ctx: ctx, Filehash: filehash, Filename: filename, Username: username}:
+		p.mu.Unlock()
 	default:
+		p.mu.Unlock()
 		slog.WarnContext(ctx, "ai task queue full, dropping", "filehash", filehash, "username", username)
 	}
 	return nil
@@ -161,8 +179,21 @@ func (p *Processor) RequeueFailed(ctx context.Context) int {
 
 func (p *Processor) worker() {
 	defer p.wg.Done()
-	for item := range p.queue {
-		p.process(item)
+	for {
+		select {
+		case item := <-p.queue:
+			p.process(item)
+		case <-p.done:
+			// 排空剩余任务后退出
+			for {
+				select {
+				case item := <-p.queue:
+					p.process(item)
+				default:
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -254,7 +285,7 @@ func (p *Processor) indexDocument(ctx context.Context, filehash, username, filen
 	if err != nil {
 		return fmt.Errorf("embed failed: %w", err)
 	}
-	doc := &Doc{
+	doc := &port.Doc{
 		ID:         username + ":" + filehash,
 		Username:   username,
 		Filehash:   filehash,

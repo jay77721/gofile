@@ -10,7 +10,7 @@ import (
 	"gofile/internal/infrastructure/cache/redis"
 	"gofile/internal/infrastructure/persistence/mysql"
 	"gofile/internal/infrastructure/persistence/repository"
-	"gofile/internal/infrastructure/queue/asynq"
+	task "gofile/internal/infrastructure/queue/asynq"
 	"gofile/internal/infrastructure/storage"
 	"gofile/internal/job"
 	"gofile/internal/observability/metrics"
@@ -119,9 +119,22 @@ func New() (*Application, error) {
 		}
 	}
 
-	fileSvc := service.NewFileService(fileRepo, store, cfg, cacheClient).
+	var (
+		enqueuer  port.TaskEnqueuer
+		requeuer  job.Requeuer
+		cachePort port.Cache
+	)
+	if aiProcessor != nil {
+		enqueuer = aiProcessor
+		requeuer = aiProcessor
+	}
+	if cacheClient != nil {
+		cachePort = cacheClient
+	}
+
+	fileSvc := service.NewFileService(fileRepo, store, cfg, cachePort).
 		WithMultipart(multipartRepo).
-		WithAI(aiProcessor).
+		WithAI(enqueuer).
 		WithIndexer(indexer)
 	userSvc := service.NewUserService(userRepo, tokenRepo)
 	authSvc := service.NewAuthService(tokenRepo)
@@ -156,7 +169,7 @@ func New() (*Application, error) {
 		multipartRepo,
 		shareRepo,
 		aiRepo,
-		aiProcessor,
+		requeuer,
 		store,
 		indexer,
 	)

@@ -94,12 +94,12 @@ func RecordAITask(status string) {
 	aiTasksTotal.WithLabelValues(status).Inc()
 }
 
-// ObserveLLMDuration 由 ai.Provider 调用方记录 LLM 耗时
+// ObserveLLMDuration 由 port.Provider 调用方记录 LLM 耗时
 func ObserveLLMDuration(operation string, durSec float64) {
 	aiLLMDuration.WithLabelValues(operation).Observe(durSec)
 }
 
-// RecordIndexOp 由 ai.Indexer 调用方记录检索引擎操作
+// RecordIndexOp 由 port.Indexer 调用方记录检索引擎操作
 func RecordIndexOp(operation, result string) {
 	aiIndexOps.WithLabelValues(operation, result).Inc()
 }

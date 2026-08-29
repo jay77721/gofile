@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
-	"gofile/internal/infrastructure/storage"
+	"gofile/internal/port"
 )
 
 const (
@@ -28,7 +28,7 @@ type Extracted struct {
 //
 // 第 1 级按 MIME/扩展名分派解析器；第 2 级对解出的纯文本做采样（首尾 + 结构锚点）。
 // 读取受 maxExtractBytes 预算限制。
-func Extract(ctx context.Context, store storage.Storage, filehash, fileName string) (*Extracted, error) {
+func Extract(ctx context.Context, store port.Storage, filehash, fileName string) (*Extracted, error) {
 	mt, ext := detectType(fileName)
 
 	// 读取前 maxExtractBytes 字节（文本类文件从头读就是内容）

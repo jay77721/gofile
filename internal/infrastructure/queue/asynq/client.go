@@ -26,7 +26,7 @@ func NewClient(redisAddr, redisPassword string, redisDB int) *Client {
 }
 
 // Enqueue 投递 AI 分析任务（非阻塞，由 ai.Processor 在 Asynq 不可用时降级到内存 chan）
-// 实现 ai.TaskEnqueuer 接口
+// 实现 port.TaskEnqueuer 接口
 func (c *Client) Enqueue(ctx context.Context, filehash, filename, username string) error {
 	payload, err := json.Marshal(AIAnalyzePayload{
 		Filehash: filehash,

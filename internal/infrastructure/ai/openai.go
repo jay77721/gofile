@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gofile/internal/observability/metrics"
+	"gofile/internal/port"
 )
 
 // OpenAIProvider OpenAI 协议 API 实现的 Provider
@@ -25,7 +26,7 @@ type OpenAIProvider struct {
 
 // NewOpenAIProvider 创建 OpenAI 协议 Provider
 // baseURL 为空时使用官方端点;embedModel 为空时使用 text-embedding-3-small
-func NewOpenAIProvider(apiKey, baseURL, model, embedModel string, dim int) Provider {
+func NewOpenAIProvider(apiKey, baseURL, model, embedModel string, dim int) port.Provider {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
@@ -48,7 +49,7 @@ func NewOpenAIProvider(apiKey, baseURL, model, embedModel string, dim int) Provi
 }
 
 // NewOpenAIProviderWithTimeout 创建 OpenAI 协议 Provider,可指定 HTTP 超时(测试连接用短超时)
-func NewOpenAIProviderWithTimeout(apiKey, baseURL, model, embedModel string, dim int, timeout time.Duration) Provider {
+func NewOpenAIProviderWithTimeout(apiKey, baseURL, model, embedModel string, dim int, timeout time.Duration) port.Provider {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
@@ -75,7 +76,7 @@ func NewOpenAIProviderWithTimeout(apiKey, baseURL, model, embedModel string, dim
 
 func (p *OpenAIProvider) Dimension() int { return p.dim }
 
-func (p *OpenAIProvider) Analyze(ctx context.Context, fileName, content string) (*Analysis, error) {
+func (p *OpenAIProvider) Analyze(ctx context.Context, fileName, content string) (*port.Analysis, error) {
 	start := time.Now()
 	defer func() {
 		metrics.ObserveLLMDuration("analyze", time.Since(start).Seconds())
@@ -111,7 +112,7 @@ func (p *OpenAIProvider) Analyze(ctx context.Context, fileName, content string) 
 		return nil, fmt.Errorf("openai: parse response failed: %w", err)
 	}
 
-	var analysis Analysis
+	var analysis port.Analysis
 	content_str := strings.TrimSpace(result.Choices[0].Message.Content)
 	// 去除可能的 markdown 代码块
 	content_str = strings.TrimPrefix(content_str, "```json")

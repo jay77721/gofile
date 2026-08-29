@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"gofile/internal/port"
 	"math"
 	"strings"
 	"sync"
@@ -13,17 +14,17 @@ import (
 // 仅用于单测验证编排逻辑，不替代真实 Typesense 行为。
 type MockIndexer struct {
 	mu   sync.RWMutex
-	docs map[string]*Doc // key: username:filehash
+	docs map[string]*port.Doc // key: username:filehash
 }
 
 // NewMockIndexer 创建内存 mock 检索引擎
 func NewMockIndexer() *MockIndexer {
-	return &MockIndexer{docs: make(map[string]*Doc)}
+	return &MockIndexer{docs: make(map[string]*port.Doc)}
 }
 
 func (m *MockIndexer) EnsureCollection(_ context.Context) error { return nil }
 
-func (m *MockIndexer) Upsert(_ context.Context, doc *Doc) error {
+func (m *MockIndexer) Upsert(_ context.Context, doc *port.Doc) error {
 	if doc == nil {
 		return nil
 	}
@@ -40,9 +41,9 @@ func (m *MockIndexer) Delete(_ context.Context, username, filehash string) error
 	return nil
 }
 
-func (m *MockIndexer) SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]Doc, error) {
+func (m *MockIndexer) SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]port.Doc, error) {
 	m.mu.RLock()
-	all := make([]*Doc, 0, len(m.docs))
+	all := make([]*port.Doc, 0, len(m.docs))
 	for _, d := range m.docs {
 		if d.Username == username {
 			all = append(all, d)
@@ -52,7 +53,7 @@ func (m *MockIndexer) SearchHybrid(ctx context.Context, q, username string, vect
 
 	// 子串匹配打分
 	q = strings.ToLower(q)
-	var scored []Doc
+	var scored []port.Doc
 	for _, d := range all {
 		score := 0.0
 		if q == "" {
@@ -83,7 +84,7 @@ func (m *MockIndexer) SearchHybrid(ctx context.Context, q, username string, vect
 		start = 0
 	}
 	if start >= len(scored) {
-		return []Doc{}, nil
+		return []port.Doc{}, nil
 	}
 	end := start + size
 	if end > len(scored) {
@@ -103,9 +104,9 @@ func (m *MockIndexer) DeleteByFilehash(_ context.Context, filehash string) error
 	return nil
 }
 
-func (m *MockIndexer) Similar(_ context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]Doc, error) {
+func (m *MockIndexer) Similar(_ context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]port.Doc, error) {
 	m.mu.RLock()
-	var candidates []*Doc
+	var candidates []*port.Doc
 	for _, d := range m.docs {
 		if d.Username == username && d.Filehash != excludeFilehash {
 			candidates = append(candidates, d)
@@ -115,7 +116,7 @@ func (m *MockIndexer) Similar(_ context.Context, username string, vector []float
 
 	// 余弦相似度排序
 	type scoredDoc struct {
-		doc   Doc
+		doc   port.Doc
 		score float64
 	}
 	var scored []scoredDoc
@@ -134,7 +135,7 @@ func (m *MockIndexer) Similar(_ context.Context, username string, vector []float
 	if limit > len(scored) {
 		limit = len(scored)
 	}
-	out := make([]Doc, 0, limit)
+	out := make([]port.Doc, 0, limit)
 	for i := 0; i < limit; i++ {
 		out = append(out, scored[i].doc)
 	}
@@ -149,7 +150,7 @@ func cosine(a, b []float32) float64 {
 	var dot, na, nb float64
 	for i := range a {
 		dot += float64(a[i]) * float64(b[i])
-		na += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
 		nb += float64(b[i]) * float64(b[i])
 	}
 	if na == 0 || nb == 0 {

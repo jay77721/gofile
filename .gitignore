@@ -1,8 +1,5 @@
 # Binaries
-gofile
-!cmd/
-!cmd/gofile/
-!cmd/gofile/main.go
+/gofile
 *.exe
 *.exe~
 *.dll

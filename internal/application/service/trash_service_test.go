@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"gofile/internal/domain"
-	"gofile/internal/infrastructure/ai"
 	"gofile/internal/infrastructure/persistence/repository"
 	"gofile/internal/infrastructure/storage"
+	"gofile/internal/port"
 	"testing"
 )
 
@@ -15,16 +15,16 @@ type mockIndexer struct {
 	deletedByUser []string
 }
 
-func (m *mockIndexer) EnsureCollection(ctx context.Context) error    { return nil }
-func (m *mockIndexer) Upsert(ctx context.Context, doc *ai.Doc) error { return nil }
+func (m *mockIndexer) EnsureCollection(ctx context.Context) error      { return nil }
+func (m *mockIndexer) Upsert(ctx context.Context, doc *port.Doc) error { return nil }
 func (m *mockIndexer) Delete(ctx context.Context, username, filehash string) error {
 	m.deletedByUser = append(m.deletedByUser, username+":"+filehash)
 	return nil
 }
-func (m *mockIndexer) SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]ai.Doc, error) {
+func (m *mockIndexer) SearchHybrid(ctx context.Context, q, username string, vector []float32, filter string, page, size int) ([]port.Doc, error) {
 	return nil, nil
 }
-func (m *mockIndexer) Similar(ctx context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]ai.Doc, error) {
+func (m *mockIndexer) Similar(ctx context.Context, username string, vector []float32, excludeFilehash string, limit int) ([]port.Doc, error) {
 	return nil, nil
 }
 func (m *mockIndexer) DeleteByFilehash(ctx context.Context, filehash string) error {
