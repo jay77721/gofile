@@ -24,9 +24,8 @@ README.md
 README_ZH.md
 CLAUDE.md
 
-# Docker
-Dockerfile
-docker-compose.yml
+# Docker orchestration files
+docker/docker-compose.yml
 .dockerignore
 
 # Nezha monitoring

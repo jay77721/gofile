@@ -26,7 +26,7 @@ cp .env.example .env
 go run main.go               # Or: go build -o gofile . && ./gofile
 
 # 3. Docker Compose
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 ### Test & Verification (MUST pass before every commit)

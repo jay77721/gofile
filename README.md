@@ -104,7 +104,7 @@
 ```bash
 git clone https://github.com/jay77721/gofile.git
 cd gofile
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 Service Endpoints:
@@ -198,7 +198,7 @@ Unified response format: `{"code": 0|errorCode, "msg": "...", "data": ...}` (`co
 ```
 gofile/
 ├── main.go                       # Entrypoint: Dependency injection & graceful shutdown
-├── Dockerfile & docker-compose.yml # Container orchestration (MySQL, MinIO, Redis, Typesense, Prometheus, Grafana)
+├── docker/                       # Dockerfile, Compose and monitoring deployment config
 ├── migrations/                   # golang-migrate versioned SQL migration scripts
 ├── config/                       # Environment configuration loader
 ├── model/                        # Domain models (File, UserFile, Multipart, User, Token, AI)

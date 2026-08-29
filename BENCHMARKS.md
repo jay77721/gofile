@@ -52,7 +52,7 @@ go test ./util/ -bench . -benchmem -run '^$'
 go test ./storage/ -bench . -benchmem -run '^$'
 
 # 端到端列表基准
-docker compose up -d mysql
+docker compose -f docker/docker-compose.yml up -d mysql
 # 起服务(见 README),登录后:
 #   INSERT 1000 行 tbl_file + tbl_user_file(参考 schema.sql)
 curl -s -o /dev/null -w '%{time_total}s\n' -b cookies.txt 'http://localhost:8080/file/query?page=1&size=20'

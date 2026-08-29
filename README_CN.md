@@ -104,7 +104,7 @@
 ```bash
 git clone https://github.com/jay77721/gofile.git
 cd gofile
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 启动完成后各服务入口：
@@ -198,7 +198,7 @@ go test ./util/ -bench . -benchmem -run '^$'
 ```
 gofile/
 ├── main.go                       # 服务入口：依赖注入组装与优雅停机
-├── Dockerfile & docker-compose.yml # 容器化编排 (MySQL, MinIO, Redis, Typesense, Prometheus, Grafana)
+├── docker/                      # Dockerfile、Compose 与监控部署配置
 ├── migrations/                   # golang-migrate 版本化 SQL 迁移脚本
 ├── config/                       # 环境变量加载与类型映射
 ├── model/                        # 领域模型 (File, UserFile, Multipart, User, Token, AI)
