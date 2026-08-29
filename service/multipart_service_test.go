@@ -7,6 +7,7 @@ import (
 	"gofile/model"
 	"gofile/repository"
 	"gofile/storage"
+	"gofile/util"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +15,10 @@ import (
 
 type mockMultipartStorage struct {
 	*storage.LocalStorage
-	inited   bool
-	complete bool
-	aborted  bool
+	inited           bool
+	complete         bool
+	aborted          bool
+	completedContent []byte
 }
 
 func (m *mockMultipartStorage) InitMultipart(ctx context.Context, key string) (string, error) {
@@ -30,6 +32,9 @@ func (m *mockMultipartStorage) PresignPartPut(ctx context.Context, key, uploadID
 
 func (m *mockMultipartStorage) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
 	m.complete = true
+	if len(m.completedContent) > 0 {
+		return m.LocalStorage.Put(ctx, key, bytes.NewReader(m.completedContent), int64(len(m.completedContent)))
+	}
 	return nil
 }
 
@@ -171,7 +176,9 @@ func TestS3Multipart_CompleteUpload(t *testing.T) {
 	svc := NewFileService(repo, mockStore, nil).WithMultipart(multipartRepo)
 	ctx := context.Background()
 
-	const hash = "1234567890123456789012345678901234567890"
+	content := bytes.Repeat([]byte{0x42}, 25*1024*1024)
+	hash := util.Sha1(content)
+	mockStore.completedContent = content
 
 	initResp, err := svc.InitMultipartUpload(ctx, "alice", model.MultipartInitReq{
 		FileSha1:  hash,
@@ -282,10 +289,10 @@ func TestTraditionalChunk_UploadAndMerge(t *testing.T) {
 	svc := NewFileService(repo, store, cfg)
 	ctx := context.Background()
 
-	const hash = "abcdef0123456789abcdef0123456789abcdef01"
 	chunk0 := []byte("Hello, ")
 	chunk1 := []byte("World! ")
 	chunk2 := []byte("Traditional chunk test.")
+	hash := util.Sha1(bytes.Join([][]byte{chunk0, chunk1, chunk2}, nil))
 
 	t.Run("upload chunks and query status", func(t *testing.T) {
 		if err := svc.UploadChunk(ctx, hash, 0, bytes.NewReader(chunk0), "alice"); err != nil {

@@ -123,8 +123,9 @@ func cleanupExpiredMultipart(multipartRepo repository.MultipartRepository, store
 	}
 
 	for _, mu := range expiredList {
-		if err := store.AbortMultipart(ctx, mu.UploadID, mu.FileSha1); err != nil {
+		if err := store.AbortMultipart(ctx, mu.FileSha1, mu.UploadID); err != nil {
 			slog.WarnContext(ctx, "abort expired multipart on storage failed", "upload_id", mu.UploadID, "error", err)
+			continue
 		}
 		if err := multipartRepo.UpdateStatus(ctx, mu.UploadID, mu.Username, model.MultipartStatusAborted); err != nil {
 			slog.ErrorContext(ctx, "update expired multipart status failed", "upload_id", mu.UploadID, "error", err)

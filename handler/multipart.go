@@ -141,7 +141,7 @@ func (h *FileHandler) UploadChunkHandler(c *gin.Context) {
 	if err := h.fileSvc.UploadChunk(c.Request.Context(), fileHash, chunkIndex, file, username); err != nil {
 		slog.ErrorContext(c.Request.Context(), "upload chunk failed", "error", err, "filehash", fileHash, "index", chunkIndex, "username", username)
 		// 已上传的情况不算错误
-		c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "chunk already uploaded", "data": nil})
+		respondError(c, http.StatusInternalServerError, CodeUploadFailed, "chunk upload failed")
 		return
 	}
 
@@ -184,6 +184,14 @@ func (h *FileHandler) MergeHandler(c *gin.Context) {
 
 	if fileHash == "" || fileName == "" {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 filehash 或 filename 参数")
+		return
+	}
+	if totalStr == "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "缺少 chunks 参数")
+		return
+	}
+	if total, err := parseInt(totalStr); err != nil || total <= 0 {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "无效 chunks 参数")
 		return
 	}
 

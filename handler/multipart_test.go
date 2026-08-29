@@ -9,6 +9,7 @@ import (
 	"gofile/repository"
 	"gofile/service"
 	"gofile/storage"
+	"gofile/util"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -22,9 +23,10 @@ import (
 
 type mockMultipartStorageForHandler struct {
 	*storage.LocalStorage
-	inited   bool
-	complete bool
-	aborted  bool
+	inited           bool
+	complete         bool
+	aborted          bool
+	completedContent []byte
 }
 
 func (m *mockMultipartStorageForHandler) InitMultipart(ctx context.Context, key string) (string, error) {
@@ -38,6 +40,9 @@ func (m *mockMultipartStorageForHandler) PresignPartPut(ctx context.Context, key
 
 func (m *mockMultipartStorageForHandler) CompleteMultipart(ctx context.Context, key, uploadID string, parts []storage.CompletePart) error {
 	m.complete = true
+	if len(m.completedContent) > 0 {
+		return m.LocalStorage.Put(ctx, key, bytes.NewReader(m.completedContent), int64(len(m.completedContent)))
+	}
 	return nil
 }
 
@@ -86,7 +91,9 @@ func TestS3Multipart_Handlers(t *testing.T) {
 	r := setupMultipartRouter(fh, "alice")
 	ctx := context.Background()
 
-	const validHash = "1111222233334444555566667777888899990000"
+	content := bytes.Repeat([]byte{0x42}, 20*1024*1024)
+	validHash := util.Sha1(content)
+	mockStore.completedContent = content
 
 	t.Run("init normal multipart upload", func(t *testing.T) {
 		initBody, _ := json.Marshal(model.MultipartInitReq{
@@ -117,7 +124,7 @@ func TestS3Multipart_Handlers(t *testing.T) {
 	t.Run("init fast upload hit path", func(t *testing.T) {
 		const existingHash = "5555555555555555555555555555555555555555"
 		_ = fileRepo.Create(ctx, model.File{FileSha1: existingHash, FileSize: 1024})
-		_ = mockStore.Put(ctx, existingHash, strings.NewReader("fast content"), 1024)
+		_ = mockStore.Put(ctx, existingHash, strings.NewReader(strings.Repeat("x", 1024)), 1024)
 
 		initBody, _ := json.Marshal(model.MultipartInitReq{
 			FileSha1: existingHash,

@@ -7,6 +7,7 @@ import (
 	"gofile/model"
 	"gofile/repository"
 	"gofile/storage"
+	"gofile/util"
 	"io"
 	"strings"
 	"testing"
@@ -237,7 +238,7 @@ func TestPresignedUploadAndConfirm(t *testing.T) {
 	svc := NewFileService(repo, store, nil)
 	ctx := context.Background()
 
-	const hash = "1234567890123456789012345678901234567890"
+	hash := util.Sha1([]byte("presigned data"))
 
 	// 本地存储不支持 PresignPut 会返回错误
 	_, err := svc.PresignUpload(ctx, hash, "alice")
