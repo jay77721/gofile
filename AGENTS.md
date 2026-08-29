@@ -6,7 +6,7 @@
 
 - **Description:** gofile is a lightweight, high-performance self-hosted cloud storage service with AI semantic search.
 - **Backend:** Go 1.25, Gin 1.12, GORM 1.31 + MySQL (migrations managed via `golang-migrate`)
-- **Storage:** `storage.Storage` interface — MinIO (S3) prioritized, local disk fallback (atomic write)
+- **Storage:** `internal/infrastructure/storage.Storage` interface — MinIO (S3) prioritized, local disk fallback (atomic write)
 - **Cache & Locks:** go-redis v9 (fast-upload cache, distributed locks, rate limiting)
 - **Async Queue:** `hibiken/asynq` (M3 distributed task scheduling; in-memory chan fallback)
 - **AI & Search:** Typesense (hybrid full-text + vector KNN search), LLM Provider (mock/openai/anthropic)
@@ -23,7 +23,7 @@ cd web && npm ci && npm run build && cd ..
 
 # 2. Run Backend (Auto-migrates MySQL schema on start)
 cp .env.example .env
-go run main.go               # Or: go build -o gofile . && ./gofile
+go run ./cmd/gofile         # Or: go build -o gofile ./cmd/gofile && ./gofile
 
 # 3. Docker Compose
 docker compose -f docker/docker-compose.yml up -d
@@ -34,16 +34,32 @@ docker compose -f docker/docker-compose.yml up -d
 # Run all tests with race detector
 go test -race ./...
 
-# Benchmark performance
-go test ./util/ -bench . -benchmem -run '^$'
+# Benchmark hash and local-storage paths
+go test ./internal/common/hash -bench . -benchmem -run '^$'
+go test ./internal/infrastructure/storage -bench . -benchmem -run '^$'
 ```
 
 ---
 
 ## 3. Core Architecture & Invariants (DO NOT BREAK)
 
+The Go layout uses `cmd/gofile` for the process entrypoint and `internal/` for
+application code. `internal/app` is the composition root; keep the dependency
+direction inward: `internal/transport/http -> internal/application/service ->
+internal/port <- internal/infrastructure`.
+
+The main package boundaries are:
+
+- `internal/domain`: domain models and invariants.
+- `internal/application/service`: application use cases.
+- `internal/transport/http`: router, middleware and HTTP handlers.
+- `internal/infrastructure`: MySQL/Repository, storage, Redis, queue and AI adapters.
+- `internal/job`: background job lifecycle.
+- `internal/common`: shared hash, crypto, URL and chunk primitives.
+- `internal/observability/metrics`: Prometheus and request tracing.
+
 1. **Strict 3-Tier Layered Architecture & Dependency Injection**:
-   - `handler → service → repository + storage/cache/ai/task`. Strict downward dependency only.
+   - `internal/transport/http → internal/application/service → internal/port`, with concrete adapters under `internal/infrastructure`.
    - All components instantiated via constructors (`NewXxxService(...)`). **No package-level global variables.**
    - Optional components (Redis, AI, Typesense, Asynq) must be nil-safe with automatic graceful degradation.
 
@@ -71,8 +87,8 @@ go test ./util/ -bench . -benchmem -run '^$'
 
 ### Git Commit Convention (STRICT: English Only)
 **All Git commit messages MUST be written strictly in English using Conventional Commits**:
-- `feat(scope): add new feature` (e.g. `feat(task): implement asynq worker pool`)
-- `fix(scope): fix bug` (e.g. `fix(service): trigger ai enqueue on fast upload`)
+- `feat(scope): add new feature` (e.g. `feat(queue): implement asynq worker pool`)
+- `fix(scope): fix bug` (e.g. `fix(application): trigger ai enqueue on fast upload`)
 - `docs: update documentation` (e.g. `docs: update AGENTS.md template`)
 - `refactor(scope): refactor code without behavior changes`
 - `test(scope): add or update unit/integration tests`

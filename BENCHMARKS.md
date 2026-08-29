@@ -1,7 +1,7 @@
 # BENCHMARKS — 基准测试报告
 
 > 所有数字均为**本仓库可复现的真实测量**,方法与环境见下文。
-> 复现:`go test ./util/ -bench . -benchmem -run '^$'`、`go test ./storage/ -bench . -benchmem -run '^$'`。
+> 复现:`go test ./internal/common/hash -bench . -benchmem -run '^$'`、`go test ./internal/infrastructure/storage -bench . -benchmem -run '^$'`。
 
 ## 环境
 
@@ -48,8 +48,8 @@
 
 ```bash
 # 哈希 + 存储基准(无需外部依赖)
-go test ./util/ -bench . -benchmem -run '^$'
-go test ./storage/ -bench . -benchmem -run '^$'
+go test ./internal/common/hash -bench . -benchmem -run '^$'
+go test ./internal/infrastructure/storage -bench . -benchmem -run '^$'
 
 # 端到端列表基准
 docker compose -f docker/docker-compose.yml up -d mysql

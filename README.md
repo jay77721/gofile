@@ -51,7 +51,7 @@
 
 ### 🛠️ Production Engineering & Security
 
-* **Layered Modular Architecture**: Strict `Handler → Service → Repository/Storage/Task` dependency injection, eliminating monolithic files.
+* **Layered Modular Architecture**: `internal/transport/http` handles HTTP, `internal/application/service` owns use cases, and `internal/port` separates those use cases from `internal/infrastructure` adapters.
 * **Security Guardrails**: 40-character Hex hash validation (path traversal defense), dangerous extension blacklisting (stored XSS defense), HttpOnly + Secure cookies.
 * **Distributed Rate Limiting & Locking**: Redis + Lua fixed-window rate limiting for auth endpoints (5 req/s) and distributed locks protecting concurrent chunk merges.
 * **End-to-End Observability**: Request-scoped `X-Request-ID` log correlation + Prometheus metrics collection + pre-configured Grafana dashboard.
@@ -70,8 +70,8 @@
                        ┌──────────────────────────────┴──────────────────────────────┐
                        ▼                                                             ▼
            ┌────────────────────────┐                                   ┌────────────────────────┐
-           │     Handler Layer      │                                   │     Service Layer      │
-           │ • handler.go (CRUD)    │                                   │ • file_service.go      │
+           │ internal/transport/http│                                   │ internal/application/ │
+           │      /handler          │                                   │       /service        │
            │ • vfs.go (Folders)     │──────────────────────────────────▶│ • vfs_service.go (VFS) │
            │ • multipart.go (S3)    │                                   │ • multipart_service.go │
            │ • download.go (Range)  │                                   │ • trash_service.go     │
@@ -80,7 +80,7 @@
                        ┌─────────────────────────────────────────────────────────────┼─────────────────────────────┐
                        ▼                                                             ▼                             ▼
            ┌────────────────────────┐                                   ┌────────────────────────┐    ┌────────────────────────┐
-           │    Repository Layer    │                                   │     Storage Layer      │    │  Async Task Hub (M3)   │
+           │ internal/infrastructure│                                   │ internal/infrastructure│    │ internal/infrastructure│
            │ GORM + MySQL 8.0       │                                   │ MinIO (S3) ⇄ Local     │    │ Asynq Redis Queue      │
            │ • tbl_file (Dedup)     │                                   │ • S3 Multipart Direct  │    │ (Worker Pool / Retry)  │
            │ • tbl_user_file (VFS)  │                                   │ • HTTP Range 206       │    │ (Fallback In-Mem Chan) │
@@ -88,12 +88,14 @@
            └────────────────────────┘                                                                              │
                        │                                                                                           ▼
                        ▼                                                                              ┌────────────────────────┐
-           ┌────────────────────────┐                                                                 │      AI Pipeline       │
-           │         Redis          │                                                                 │ • Text Extraction      │
+           ┌────────────────────────┐                                                                 │ internal/infrastructure│
+           │     /cache/redis       │                                                                 │     /ai                │
            │ Fast-upload/Lock/Limit │                                                                 │ • LLM Summary & Tags   │
            └────────────────────────┘                                                                 │ • Typesense Vector KNN │
                                                                                                       └────────────────────────┘
 ```
+
+`internal/app` is the composition root: it loads configuration, opens infrastructure resources, wires `internal/port` contracts, and owns shutdown. Concrete MySQL, Redis, storage, queue, and AI adapters remain below `internal/infrastructure`; `internal/observability/metrics` provides request and business metrics.
 
 ---
 
@@ -130,7 +132,7 @@ go mod tidy
 cp .env.example .env
 
 # 3. Run backend server (auto-runs migrations/ on startup)
-go run main.go
+go run ./cmd/gofile
 ```
 
 ---
@@ -147,7 +149,8 @@ go test -count=1 -race ./...
 cd web && npm run build && npm test && cd ..
 
 # 3. Run performance benchmarks
-go test ./util/ -bench . -benchmem -run '^$'
+go test ./internal/common/hash -bench . -benchmem -run '^$'
+go test ./internal/infrastructure/storage -bench . -benchmem -run '^$'
 ```
 
 ---
@@ -197,37 +200,28 @@ Unified response format: `{"code": 0|errorCode, "msg": "...", "data": ...}` (`co
 
 ```
 gofile/
-├── main.go                       # Entrypoint: Dependency injection & graceful shutdown
-├── docker/                       # Dockerfile, Compose and monitoring deployment config
-├── migrations/                   # golang-migrate versioned SQL migration scripts
-├── config/                       # Environment configuration loader
-├── model/                        # Domain models (File, UserFile, Multipart, User, Token, AI)
-├── repository/                   # GORM repository implementations & mocks
-├── service/                      # Domain services (single responsibility)
-│   ├── file_service.go            # Core file CRUD & download streams
-│   ├── vfs_service.go             # Virtual folder tree, materialized paths, anti-circular moves
-│   ├── multipart_service.go       # S3 direct multipart & chunk merge
-│   ├── trash_service.go           # Recycle bin lifecycle & cascading purge
-│   ├── user_service.go            # User management
-│   ├── auth_service.go            # Session & token verification
-│   ├── share_service.go           # File sharing with optional passwords
-│   └── ai_service.go              # AI semantic search & recommendations
-├── handler/                      # HTTP controllers (high cohesion)
-│   ├── handler.go                 # Core file routes & healthcheck
-│   ├── vfs.go                     # VFS folder routes
-│   ├── multipart.go               # S3 multipart upload routes
-│   ├── download.go                # Range 206 byte parsing, download & preview
-│   ├── user.go & auth.go          # Auth handlers & middleware
-│   ├── share.go                   # Sharing endpoints
-│   ├── ai.go & ai_config.go       # AI search & custom provider endpoints
-│   ├── cleanup.go                 # Background GC workers
-│   └── ratelimit.go & errcode.go  # Distributed rate limiter & unified error codes
-├── task/                         # Asynq distributed task hub (Client / Server / Processor)
-├── ai/                           # AI engine: LLM extraction / NLP query parser / Typesense vector index
-├── storage/                      # Storage drivers (MinIO S3 multipart ⇄ Local disk)
-├── cache/                        # Redis distributed locks / rate limiting / fast-upload cache
-├── metrics/                      # Prometheus metrics & X-Request-ID tracing
-└── web/                          # Frontend SPA (Vue 3 + Vite 6 + TypeScript 5 + Vitest)
+├── cmd/gofile/                    # Process entrypoint and signal handling
+├── internal/
+│   ├── app/                       # Composition root and resource lifecycle
+│   ├── config/                    # Environment configuration loader
+│   ├── domain/                    # Domain models and invariants
+│   ├── application/service/       # File, user, share and AI use cases
+│   ├── port/                      # Cross-layer contracts and ports
+│   ├── transport/http/            # HTTP router and middleware
+│   │   └── handler/               # HTTP controllers and cleanup hooks
+│   ├── infrastructure/            # Concrete infrastructure adapters
+│   │   ├── persistence/mysql/     # GORM connection and migrations
+│   │   ├── persistence/repository/ # MySQL repositories
+│   │   ├── storage/               # MinIO S3 and local disk adapters
+│   │   ├── cache/redis/           # Redis cache, locks and rate limiting
+│   │   ├── queue/asynq/            # Asynq task client and server
+│   │   └── ai/                    # LLM, extraction and Typesense adapters
+│   ├── job/                       # Cancellable background jobs
+│   ├── common/                    # Hash, crypto, URL and chunk primitives
+│   └── observability/metrics/     # Prometheus metrics and request tracing
+├── docker/                        # Dockerfile, Compose and monitoring config
+├── migrations/                    # golang-migrate versioned SQL scripts
+└── web/                           # Frontend SPA (Vue 3 + Vite 6 + TypeScript 5 + Vitest)
     └── src/
         ├── components/           # 14 Strict TypeScript Vue components (<script setup lang="ts">)
         ├── api.ts                # Strongly-typed API client contract

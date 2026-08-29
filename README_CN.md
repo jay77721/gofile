@@ -51,7 +51,7 @@
 
 ### 🛠️ 工业级工程韧性与安全
 
-* **架构分层解耦**：严格遵循 `Handler → Service → Repository/Storage/Task` 依赖注入单向架构，彻底杜绝单体巨石文件。
+* **架构分层解耦**：`internal/transport/http` 负责 HTTP，`internal/application/service` 承载用例，`internal/port` 将用例与 `internal/infrastructure` 适配器解耦。
 * **数据安全防护**：40 位 Hex 安全校验防路径穿越、文件扩展名黑名单防存储型 XSS、Cookie HttpOnly + Secure。
 * **分布式限流与锁**：Redis + Lua 脚本实现多实例共享固定窗口限流（登录/注册 5 req/s），分布式锁保护并发分片合并。
 * **全链路可观测性**：`X-Request-ID` 上下文日志串联 + Prometheus 业务与系统指标采集 + Grafana 预置大盘。
@@ -70,8 +70,8 @@
                        ┌──────────────────────────────┴──────────────────────────────┐
                        ▼                                                             ▼
            ┌────────────────────────┐                                   ┌────────────────────────┐
-           │      Handler 层        │                                   │      Service 领域层    │
-           │ • handler.go (核心CRUD)│                                   │ • file_service.go      │
+           │ internal/transport/http│                                   │ internal/application/ │
+           │      /handler          │                                   │       /service        │
            │ • vfs.go (目录树路由)  │──────────────────────────────────▶│ • vfs_service.go (VFS) │
            │ • multipart.go (分片)  │                                   │ • multipart_service.go │
            │ • download.go (Range)  │                                   │ • trash_service.go     │
@@ -80,7 +80,7 @@
                        ┌─────────────────────────────────────────────────────────────┼─────────────────────────────┐
                        ▼                                                             ▼                             ▼
            ┌────────────────────────┐                                   ┌────────────────────────┐    ┌────────────────────────┐
-           │     Repository 层      │                                   │       Storage 层       │    │     Task 异步中枢 (M3) │
+           │ internal/infrastructure│                                   │ internal/infrastructure│    │ internal/infrastructure│
            │ GORM + MySQL 8.0       │                                   │ MinIO (S3) ⇄ 本地磁盘  │    │ Asynq Redis 队列       │
            │ • tbl_file (全局去重)  │                                   │ • S3 Multipart 直传    │    │ (Worker 并发 / 重试)   │
            │ • tbl_user_file (VFS)  │                                   │ • HTTP Range 206 流    │    │ (回退 In-Memory Chan)  │
@@ -88,12 +88,14 @@
            └────────────────────────┘                                                                              │
                        │                                                                                           ▼
                        ▼                                                                              ┌────────────────────────┐
-           ┌────────────────────────┐                                                                 │      AI Pipeline       │
-           │         Redis          │                                                                 │ • Text Extraction      │
+           ┌────────────────────────┐                                                                 │ internal/infrastructure│
+           │     /cache/redis       │                                                                 │     /ai                │
            │ 秒传缓存 / 锁 / 限流   │                                                                 │ • LLM Summary & Tags   │
            └────────────────────────┘                                                                 │ • Typesense 向量索引   │
                                                                                                       └────────────────────────┘
 ```
+
+`internal/app` 是应用组装根：负责加载配置、打开基础设施资源、连接 `internal/port` 契约并管理关闭流程。MySQL、Redis、存储、队列和 AI 的具体实现位于 `internal/infrastructure`，`internal/observability/metrics` 提供请求与业务指标。
 
 ---
 
@@ -130,7 +132,7 @@ go mod tidy
 cp .env.example .env
 
 # 3. 运行后端服务 (服务启动时自动执行 migrations/ 数据库迁移)
-go run main.go
+go run ./cmd/gofile
 ```
 
 ---
@@ -147,7 +149,8 @@ go test -count=1 -race ./...
 cd web && npm run build && npm test && cd ..
 
 # 3. 性能基准测试
-go test ./util/ -bench . -benchmem -run '^$'
+go test ./internal/common/hash -bench . -benchmem -run '^$'
+go test ./internal/infrastructure/storage -bench . -benchmem -run '^$'
 ```
 
 ---
@@ -197,36 +200,27 @@ go test ./util/ -bench . -benchmem -run '^$'
 
 ```
 gofile/
-├── main.go                       # 服务入口：依赖注入组装与优雅停机
-├── docker/                      # Dockerfile、Compose 与监控部署配置
+├── cmd/gofile/                   # 进程入口与信号处理
+├── internal/
+│   ├── app/                      # 应用组装根与资源生命周期
+│   ├── config/                   # 环境变量加载与配置校验
+│   ├── domain/                  # 领域模型与业务不变量
+│   ├── application/service/      # 文件、用户、分享、AI 用例服务
+│   ├── port/                     # 跨层契约与端口
+│   ├── transport/http/           # HTTP 路由与中间件
+│   │   └── handler/              # HTTP 控制器与后台清理钩子
+│   ├── infrastructure/           # 具体基础设施适配器
+│   │   ├── persistence/mysql/    # GORM 连接与迁移
+│   │   ├── persistence/repository/ # MySQL Repository
+│   │   ├── storage/              # MinIO S3 与本地磁盘适配器
+│   │   ├── cache/redis/           # Redis 缓存、锁与限流
+│   │   ├── queue/asynq/           # Asynq 任务客户端与服务端
+│   │   └── ai/                   # LLM、文本提取与 Typesense 适配器
+│   ├── job/                      # 可取消的后台任务
+│   ├── common/                   # 哈希、加密、URL、分片等聚焦原语
+│   └── observability/metrics/    # Prometheus 指标与请求链路追踪
+├── docker/                       # Dockerfile、Compose 与监控部署配置
 ├── migrations/                   # golang-migrate 版本化 SQL 迁移脚本
-├── config/                       # 环境变量加载与类型映射
-├── model/                        # 领域模型 (File, UserFile, Multipart, User, Token, AI)
-├── repository/                   # GORM 数据持久层与内存 Mock
-├── service/                      # 业务领域服务层 (单一职责解耦)
-│   ├── file_service.go            # 核心文件 CRUD 与流下载
-│   ├── vfs_service.go             # 树形目录、物化路径与防循环移动
-│   ├── multipart_service.go       # S3 Multipart 直传与传统分片合并
-│   ├── trash_service.go           # 回收站生命周期与级联清理
-│   ├── user_service.go            # 用户注册管理
-│   ├── auth_service.go            # Token 鉴权服务
-│   ├── share_service.go           # 文件免密/提取码分享
-│   └── ai_service.go              # AI 语义搜索与推荐
-├── handler/                      # HTTP 路由控制器层 (高内聚解耦)
-│   ├── handler.go                 # 核心文件操作与健康检查
-│   ├── vfs.go                     # VFS 目录树操作接口
-│   ├── multipart.go               # S3 Multipart 分片直传接口
-│   ├── download.go                # Range 206 字节解析、下载与在线预览
-│   ├── user.go & auth.go          # 用户登录注册与鉴权中间件
-│   ├── share.go                   # 分享接口
-│   ├── ai.go & ai_config.go       # AI 搜索与 Provider 配置
-│   ├── cleanup.go                 # 挂起分片与无主孤立文件后台清理 Worker
-│   └── ratelimit.go & errcode.go  # 分布式限流与统一错误码
-├── task/                         # Asynq 分布式任务调度中枢 (Client / Server / Processor)
-├── ai/                           # AI 底座：LLM 提取 / NLP 查询解析 / Typesense 向量索引
-├── storage/                      # 存储适配层 (MinIO S3 预签名/原子合并 ⇄ 本地磁盘)
-├── cache/                        # Redis 分布式锁 / 限流 / 秒传缓存
-├── metrics/                      # Prometheus 业务指标采集与 X-Request-ID 链路追踪
 └── web/                          # 前端工程 (Vue 3 + Vite 6 + TypeScript 5 + Vitest)
     └── src/
         ├── components/           # 14 个严格 TypeScript Vue 组件 (<script setup lang="ts">)

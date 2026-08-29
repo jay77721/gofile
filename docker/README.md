@@ -20,4 +20,6 @@ docker compose -f docker/docker-compose.yml ps
 docker compose -f docker/docker-compose.yml logs -f app
 ```
 
+`docker/Dockerfile` 的 Go 构建阶段使用 `go build ./cmd/gofile`，运行镜像只复制该进程二进制、`migrations/` 和前端 `web/dist`。因此构建命令必须保留项目根目录的 `.` 作为上下文，不能从 `docker/` 子目录执行。
+
 Compose 默认使用容器内部服务地址，例如 `mysql:3306` 和 `minio:9000`。本地 `.env` 中的宿主机地址不会覆盖这些容器内默认值；如需自定义，可设置 `DOCKER_SERVER_ADDR` 或 `MINIO_INTERNAL_ENDPOINT`。
