@@ -33,6 +33,7 @@ WORKDIR /app
 
 # 从构建阶段复制二进制
 COPY --from=builder /app/server .
+COPY --from=builder /app/migrations ./migrations
 
 # 复制前端构建产物
 COPY --from=web /web/dist ./web/dist

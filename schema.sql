@@ -5,13 +5,18 @@
 CREATE TABLE IF NOT EXISTS tbl_user_file (
   id BIGINT NOT NULL AUTO_INCREMENT,
   user_name varchar(64) NOT NULL,
+  parent_id BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '父文件夹 ID，0 为根目录',
+  is_dir tinyint(1) NOT NULL DEFAULT 0 COMMENT '0:文件, 1:文件夹',
+  dir_path varchar(512) NOT NULL DEFAULT '/' COMMENT '物化路径，例如 /Go/Sources/',
   file_sha1 char(40) NOT NULL,
   file_name varchar(256) NOT NULL DEFAULT '',
   status tinyint(4) NOT NULL DEFAULT 1 COMMENT '状态: 1-拥有(正常), 2-已删除',
   create_at datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_user_file (user_name, file_sha1),
-  INDEX idx_user_file_status (status)
+  INDEX idx_user_file_status (status),
+  INDEX idx_user_sha1 (user_name, file_sha1),
+  INDEX idx_user_parent (user_name, parent_id, status),
+  INDEX idx_user_path (user_name, dir_path(255))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户文件拥有关系表';
 
 CREATE TABLE IF NOT EXISTS tbl_file (
@@ -87,3 +92,24 @@ CREATE TABLE IF NOT EXISTS tbl_ai_config (
   embed_model varchar(128) NOT NULL DEFAULT '' COMMENT 'embedding 模型名',
   update_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户 AI Provider 配置表';
+
+-- S3/MinIO multipart upload sessions. This table is the fresh-install
+-- equivalent of migrations/000002_multipart_and_vfs.up.sql.
+CREATE TABLE IF NOT EXISTS tbl_multipart_upload (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  upload_id varchar(128) NOT NULL,
+  file_sha1 char(40) NOT NULL,
+  file_name varchar(256) NOT NULL,
+  file_size BIGINT NOT NULL,
+  chunk_size INT NOT NULL,
+  chunk_count INT NOT NULL,
+  user_name varchar(64) NOT NULL,
+  parent_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  status tinyint NOT NULL DEFAULT 1 COMMENT '1:上传中, 2:已完成, 3:已取消',
+  create_at datetime DEFAULT CURRENT_TIMESTAMP,
+  expired_at datetime NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_upload_id (upload_id),
+  INDEX idx_user_sha1 (user_name, file_sha1),
+  INDEX idx_expired_at (expired_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='S3/MinIO 分片直传会话表';

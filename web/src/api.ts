@@ -38,8 +38,8 @@ async function parse<T>(res: Response): Promise<T> {
   return data.data as T;
 }
 
-export async function api<T = any>(path: string): Promise<T> {
-  const res = await fetch(path, { credentials: 'include' });
+export async function api<T = unknown>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, { credentials: 'include', signal });
   if (res.status === 401) {
     session.username = '';
     throw makeApiError('登录已过期，请重新登录', 1002);
@@ -47,11 +47,12 @@ export async function api<T = any>(path: string): Promise<T> {
   return parse<T>(res);
 }
 
-export async function apiPost<T = any>(
+export async function apiPost<T = unknown>(
   path: string,
-  body: FormData | Record<string, string>
+  body: FormData | Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<T> {
-  const opts: RequestInit = { method: 'POST', credentials: 'include' };
+  const opts: RequestInit = { method: 'POST', credentials: 'include', signal };
   if (body instanceof FormData) {
     opts.body = body;
   } else {
@@ -67,14 +68,16 @@ export async function apiPost<T = any>(
 }
 
 // 通用 JSON 请求(POST/PUT/DELETE 用,AI 配置等结构化接口)
-export async function apiJSON<T = any>(
+export async function apiJSON<T = unknown>(
   path: string,
   method = 'POST',
-  body?: unknown
+  body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const opts: RequestInit = {
     method,
     credentials: 'include',
+    signal,
     headers: { 'Content-Type': 'application/json' },
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
@@ -87,29 +90,94 @@ export async function apiJSON<T = any>(
 }
 
 // 上传走 XMLHttpRequest(需要上传进度)
-export function apiUpload<T = any>(
+export function apiUpload<T = unknown>(
   path: string,
   fd: FormData,
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  signal?: AbortSignal,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const x = new XMLHttpRequest();
+    const onSignalAbort = () => x.abort();
+    const cleanup = () => signal?.removeEventListener('abort', onSignalAbort);
     x.open('POST', path);
     x.withCredentials = true;
     x.upload.onprogress = (e: ProgressEvent) => {
       if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
     };
     x.onload = () => {
+      cleanup();
+      if (x.status === 401) {
+        session.username = '';
+        reject(makeApiError('登录已过期，请重新登录', 1002));
+        return;
+      }
+      if (x.status < 200 || x.status >= 300) {
+        reject(makeApiError(`请求失败 (${x.status})`, -1));
+        return;
+      }
       try {
         const d: ApiResponse<T> = JSON.parse(x.responseText);
-        d.code === 0 ? resolve(d.data as T) : reject(makeApiError(d.msg || '上传失败', d.code));
+        if (d.code === 0) {
+          resolve(d.data as T);
+        } else {
+          reject(makeApiError(d.msg || '上传失败', d.code));
+        }
       } catch {
         reject(makeApiError('响应异常', -1));
       }
     };
-    x.onerror = () => reject(makeApiError('网络错误', -1));
-    x.onabort = () => reject(makeApiError('cancelled', -1));
+    x.onerror = () => { cleanup(); reject(makeApiError('网络错误', -1)); };
+    x.onabort = () => { cleanup(); reject(makeApiError('cancelled', -1)); };
+    if (signal) {
+      if (signal.aborted) {
+        x.abort();
+        return;
+      }
+      signal.addEventListener('abort', onSignalAbort, { once: true });
+    }
     x.send(fd);
+  });
+}
+
+/** PUT a single S3/MinIO presigned part and return its ETag. */
+export function uploadPart(
+  url: string,
+  blob: Blob,
+  signal?: AbortSignal,
+  onProgress?: (pct: number) => void,
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    const onSignalAbort = () => x.abort();
+    const cleanup = () => signal?.removeEventListener('abort', onSignalAbort);
+    x.open('PUT', url);
+    x.upload.onprogress = (e: ProgressEvent) => {
+      if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
+    };
+    x.onload = () => {
+      cleanup();
+      if (x.status < 200 || x.status >= 300) {
+        reject(makeApiError(`分片上传失败 (${x.status})`, 1007));
+        return;
+      }
+      const etag = x.getResponseHeader('ETag');
+      if (!etag) {
+        reject(makeApiError('分片上传成功但未返回 ETag', 1007));
+        return;
+      }
+      resolve(etag);
+    };
+    x.onerror = () => { cleanup(); reject(makeApiError('分片网络错误', 1007)); };
+    x.onabort = () => { cleanup(); reject(makeApiError('cancelled', -1)); };
+    if (signal) {
+      if (signal.aborted) {
+        x.abort();
+        return;
+      }
+      signal.addEventListener('abort', onSignalAbort, { once: true });
+    }
+    x.send(blob);
   });
 }
 
@@ -238,9 +306,9 @@ export const vfsApi = {
 
 // S3 Multipart 分片直传 API
 export const multipartApi = {
-  init: (req: MultipartInitReq) => apiJSON<MultipartInitResp>('/file/upload/multipart/init', 'POST', req),
-  complete: (req: MultipartCompleteReq) => apiJSON<FileItem>('/file/upload/multipart/complete', 'POST', req),
-  abort: (uploadId: string) => apiJSON<void>('/file/upload/multipart/abort', 'POST', { upload_id: uploadId }),
+  init: (req: MultipartInitReq, signal?: AbortSignal) => apiJSON<MultipartInitResp>('/file/upload/multipart/init', 'POST', req, signal),
+  complete: (req: MultipartCompleteReq, signal?: AbortSignal) => apiJSON<FileItem>('/file/upload/multipart/complete', 'POST', req, signal),
+  abort: (uploadId: string, signal?: AbortSignal) => apiJSON<void>('/file/upload/multipart/abort', 'POST', { upload_id: uploadId }, signal),
 };
 
 // AI 配置与检索 API

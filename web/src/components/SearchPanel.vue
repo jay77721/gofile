@@ -90,7 +90,7 @@ if (props.query) search(props.query);
           <span v-if="f.score != null" class="score">相似度 {{ Math.round(f.score * 100) }}%</span>
         </div>
         <div class="fc-actions">
-          <a class="act" :href="'/file/preview?filehash=' + encodeURIComponent(f.filehash)" target="_blank" v-if="canPreview(f.filename)">预览</a>
+          <a v-if="canPreview(f.filename)" class="act" :href="'/file/preview?filehash=' + encodeURIComponent(f.filehash)" target="_blank">预览</a>
           <a class="act" :href="'/file/download?filehash=' + encodeURIComponent(f.filehash)">下载</a>
           <button class="act" @click="emit('similar', '与「' + f.filename + '」相似的文件')">找相似</button>
         </div>

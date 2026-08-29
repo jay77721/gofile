@@ -4,20 +4,29 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - MYSQL_DSN=root:root@tcp(mysql:3306)/gofile?charset=utf8mb4&parseTime=True&loc=Local
-      - SERVER_ADDR=:8080
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-      - MINIO_BUCKET=filestore
-      - MINIO_USE_SSL=false
-      - REDIS_ADDR=redis:6379
+      MYSQL_DSN: ${MYSQL_USER:-root}:${MYSQL_ROOT_PASSWORD:-root}@tcp(${MYSQL_HOST:-mysql}:3306)/${MYSQL_DATABASE:-gofile}?charset=utf8mb4&parseTime=True&loc=Local
+      SERVER_ADDR: ${SERVER_ADDR:-:8080}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-${MINIO_ACCESS_KEY:-minioadmin}}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-${MINIO_SECRET_KEY:-minioadmin}}
+      MINIO_BUCKET: ${MINIO_BUCKET:-filestore}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_EMBED_DIM: ${AI_EMBED_DIM:-128}
+      AI_WORKERS: ${AI_WORKERS:-4}
+      TYPESENSE_URL: ${TYPESENSE_URL:-http://typesense:8108}
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-xyz}
+      ASYNQ_ENABLED: ${ASYNQ_ENABLED:-false}
     depends_on:
       mysql:
         condition: service_healthy
       minio:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     volumes:
       - uploads_data:/app/uploads
@@ -26,10 +35,13 @@ services:
 
   redis:
     image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: ["sh", "-c", "if [ -n \"$$REDIS_PASSWORD\" ]; then exec redis-server --requirepass \"$$REDIS_PASSWORD\"; else exec redis-server; fi"]
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -42,9 +54,9 @@ services:
     ports:
       - "8108:8108"
     environment:
-      - TYPESENSE_API_KEY=xyz
-      - TYPESENSE_DATA_DIR=/data
-      - TYPESENSE_ENABLE_CORS=true
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-xyz}
+      TYPESENSE_DATA_DIR: /data
+      TYPESENSE_ENABLE_CORS: "true"
     volumes:
       - typesense_data:/data
     healthcheck:
@@ -57,13 +69,12 @@ services:
   mysql:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: gofile
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gofile}
     ports:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -77,8 +88,9 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-http://localhost:8080}
     volumes:
       - minio_data:/data
     healthcheck:
