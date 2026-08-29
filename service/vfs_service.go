@@ -58,12 +58,7 @@ func (s *FileService) RenameFolderOrFile(ctx context.Context, username string, r
 		// 计算当前父级目录路径
 		parentDirPath := strings.TrimSuffix(uf.DirPath, uf.FileName+"/")
 		newDirPath := parentDirPath + newName + "/"
-		oldDirPath := uf.DirPath
-
-		if err := s.fileRepo.RenameItem(ctx, req.FileID, username, newName, newDirPath); err != nil {
-			return err
-		}
-		return s.fileRepo.UpdateDirPathPrefix(ctx, username, oldDirPath, newDirPath)
+		return s.fileRepo.RenameItem(ctx, req.FileID, username, newName, newDirPath)
 	}
 
 	return s.fileRepo.RenameItem(ctx, req.FileID, username, newName, uf.DirPath)
@@ -87,19 +82,24 @@ func (s *FileService) MoveFolderOrFile(ctx context.Context, username string, req
 
 	if uf.IsDir == 1 {
 		// 防循环移动检测：不能将文件夹移入自身子目录下
-		if strings.HasPrefix(targetDirPath, uf.DirPath) {
+		if isVFSPathWithin(targetDirPath, uf.DirPath) {
 			return fmt.Errorf("cannot move folder into its own subfolder")
 		}
-		oldDirPath := uf.DirPath
 		newDirPath := targetDirPath + uf.FileName + "/"
-
-		if err := s.fileRepo.MoveItem(ctx, req.FileID, username, req.TargetParentID, newDirPath); err != nil {
-			return err
-		}
-		return s.fileRepo.UpdateDirPathPrefix(ctx, username, oldDirPath, newDirPath)
+		return s.fileRepo.MoveItem(ctx, req.FileID, username, req.TargetParentID, newDirPath)
 	}
 
 	return s.fileRepo.MoveItem(ctx, req.FileID, username, req.TargetParentID, targetDirPath)
+}
+
+// isVFSPathWithin reports whether path is the directory itself or a descendant
+// of prefix. The separator is part of the comparison so /a/ never matches /ab/.
+func isVFSPathWithin(path, prefix string) bool {
+	if prefix == "/" {
+		return strings.HasPrefix(path, "/")
+	}
+	prefix = strings.TrimSuffix(prefix, "/") + "/"
+	return path == prefix || strings.HasPrefix(path, prefix)
 }
 
 // QueryDirectory 查询指定目录下的文件列表与面包屑导航

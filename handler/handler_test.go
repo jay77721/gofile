@@ -105,6 +105,38 @@ func TestSignupHandler_MissingParams(t *testing.T) {
 	}
 }
 
+func TestSignupHandler_RejectsUnsafeUsername(t *testing.T) {
+	_, uh, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.POST("/user/signup", uh.SignupHandler)
+
+	for _, username := range []string{"ab", "alice smith", "alice:admin", "alice` || true", "1alice", strings.Repeat("a", 65)} {
+		form := url.Values{"username": {username}, "password": {"GoodPass1!"}}
+		req := httptest.NewRequest("POST", "/user/signup", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("username %q: status = %d, want 400", username, w.Code)
+		}
+	}
+}
+
+func TestSignInHandler_RejectsUnsafeUsername(t *testing.T) {
+	_, uh, _ := setupTestHandler(t)
+	r := setupRouter()
+	r.POST("/user/signin", uh.SignInHandler)
+
+	form := url.Values{"username": {"alice:admin"}, "password": {"GoodPass1!"}}
+	req := httptest.NewRequest("POST", "/user/signin", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
 func TestSignInHandler_MissingParams(t *testing.T) {
 	_, uh, _ := setupTestHandler(t)
 	r := setupRouter()

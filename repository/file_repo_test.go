@@ -253,9 +253,9 @@ func TestFileRepoVFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rename folderA failed: %v", err)
 	}
-	err = repo.UpdateDirPathPrefix(ctx, "alice", "/学习资料/", "/资料库/")
-	if err != nil {
-		t.Fatalf("update dir path prefix failed: %v", err)
+	updatedB, err := repo.GetUserFileByID(ctx, folderB.ID, "alice")
+	if err != nil || updatedB.DirPath != "/资料库/Go/" {
+		t.Fatalf("rename should atomically update subtree, got %+v err=%v", updatedB, err)
 	}
 
 	// 7. 软删除目录级联
@@ -266,5 +266,59 @@ func TestFileRepoVFS(t *testing.T) {
 	listAfterDelete, totalAfter, _ := repo.ListByParent(ctx, "alice", uint64(folderB.ID), 0, 10)
 	if totalAfter != 0 || len(listAfterDelete) != 0 {
 		t.Fatalf("expected 0 files after cascade delete, got %d", totalAfter)
+	}
+}
+
+func TestFileRepoVFSPathBoundary(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+
+	keep, err := repo.CreateFolder(ctx, model.UserFile{Username: "alice", FileName: "foobar", DirPath: "/foobar/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	move, err := repo.CreateFolder(ctx, model.UserFile{Username: "alice", FileName: "foo", DirPath: "/foo/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := repo.CreateFolder(ctx, model.UserFile{Username: "alice", ParentID: uint64(move.ID), FileName: "child", DirPath: "/foo/child/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.UpdateDirPathPrefix(ctx, "alice", "/foo/", "/renamed/"); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := repo.GetUserFileByID(ctx, keep.ID, "alice")
+	if err != nil || kept.DirPath != "/foobar/" {
+		t.Fatalf("sibling prefix was changed: %+v err=%v", kept, err)
+	}
+	updated, err := repo.GetUserFileByID(ctx, child.ID, "alice")
+	if err != nil || updated.DirPath != "/renamed/child/" {
+		t.Fatalf("descendant was not changed: %+v err=%v", updated, err)
+	}
+}
+
+func TestFileRepoVFSWriteMissingOrDeleted(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewFileRepository(db)
+	ctx := context.Background()
+
+	if err := repo.RenameItem(ctx, 999, "alice", "new", "/new/"); err == nil {
+		t.Fatal("rename of missing item should fail")
+	}
+	folder, err := repo.CreateFolder(ctx, model.UserFile{Username: "alice", FileName: "folder", DirPath: "/folder/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SoftDeleteDir(ctx, "alice", folder.DirPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RenameItem(ctx, folder.ID, "alice", "new", "/new/"); err == nil {
+		t.Fatal("rename of deleted item should fail")
+	}
+	if err := repo.UpdateDirPathPrefix(ctx, "alice", "/missing/", "/new/"); err == nil {
+		t.Fatal("prefix update with no matching rows should fail")
 	}
 }

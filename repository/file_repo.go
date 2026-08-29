@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"gofile/model"
 	"log/slog"
@@ -465,72 +466,260 @@ func (r *mysqlFileRepo) ListByParent(ctx context.Context, username string, paren
 }
 
 func (r *mysqlFileRepo) CreateFolder(ctx context.Context, uf model.UserFile) (model.UserFile, error) {
-	uf.IsDir = 1
-	uf.Status = model.UserFileStatusActive
-	if uf.DirPath == "" {
-		uf.DirPath = "/"
+	var created model.UserFile
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		uf.IsDir = 1
+		uf.Status = model.UserFileStatusActive
+		if uf.ParentID == 0 {
+			uf.DirPath = "/" + uf.FileName + "/"
+		} else {
+			parentPath, err := lockMoveTarget(tx, uf.Username, uf.ParentID)
+			if err != nil {
+				return fmt.Errorf("parent folder unavailable: %w", err)
+			}
+			uf.DirPath = parentPath + uf.FileName + "/"
+		}
+		if err := tx.Create(&uf).Error; err != nil {
+			return fmt.Errorf("create folder failed: %w", err)
+		}
+		created = uf
+		return nil
+	})
+	if err != nil {
+		return model.UserFile{}, err
 	}
-	if err := r.db.WithContext(ctx).Create(&uf).Error; err != nil {
-		return model.UserFile{}, fmt.Errorf("create folder failed: %w", err)
-	}
-	return uf, nil
+	return created, nil
 }
 
 func (r *mysqlFileRepo) MoveItem(ctx context.Context, id uint, username string, targetParentID uint64, newDirPath string) error {
-	updates := map[string]any{
-		"parent_id": targetParentID,
-		"dir_path":  newDirPath,
-	}
-	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
-		Where("id = ? AND user_name = ?", id, username).
-		Updates(updates)
-	if res.Error != nil {
-		return fmt.Errorf("move item failed: %w", res.Error)
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		item, err := lockActiveUserFile(tx, id, username)
+		if err != nil {
+			return fmt.Errorf("move item failed: %w", err)
+		}
+
+		targetPath, err := lockMoveTarget(tx, username, targetParentID)
+		if err != nil {
+			return fmt.Errorf("move item failed: %w", err)
+		}
+		if item.IsDir == 1 && vfsPathWithin(targetPath, item.DirPath) {
+			return fmt.Errorf("move item failed: cannot move folder into its own subfolder")
+		}
+
+		expectedPath := targetPath
+		if item.IsDir == 1 {
+			expectedPath += item.FileName + "/"
+		}
+		if newDirPath != expectedPath {
+			return fmt.Errorf("move item failed: inconsistent materialized path")
+		}
+
+		var subtree []model.UserFile
+		if item.IsDir == 1 {
+			subtree, err = lockPathItems(tx, username, item.DirPath)
+			if err != nil {
+				return fmt.Errorf("move item failed: %w", err)
+			}
+		}
+
+		if item.ParentID != targetParentID || item.DirPath != expectedPath {
+			res := tx.Model(&model.UserFile{}).
+				Where("id = ? AND user_name = ? AND status = ?", id, username, model.UserFileStatusActive).
+				Updates(map[string]any{"parent_id": targetParentID, "dir_path": expectedPath})
+			if res.Error != nil {
+				return fmt.Errorf("move item failed: %w", res.Error)
+			}
+			if res.RowsAffected != 1 {
+				return fmt.Errorf("move item failed: item changed concurrently")
+			}
+		}
+		if err := rewriteSubtreePaths(tx, username, item.DirPath, expectedPath, subtree, id); err != nil {
+			return fmt.Errorf("move item failed: %w", err)
+		}
+		return nil
+	})
 }
 
 func (r *mysqlFileRepo) UpdateDirPathPrefix(ctx context.Context, username, oldPrefix, newPrefix string) error {
-	dialect := r.db.Dialector.Name()
-	oldLenPlusOne := len(oldPrefix) + 1
-	likePattern := oldPrefix + "%"
-	var sql string
-	if dialect == "sqlite" {
-		sql = "UPDATE tbl_user_file SET dir_path = ? || SUBSTR(dir_path, ?) WHERE user_name = ? AND (dir_path = ? OR dir_path LIKE ?)"
-	} else {
-		sql = "UPDATE tbl_user_file SET dir_path = CONCAT(?, SUBSTRING(dir_path, ?)) WHERE user_name = ? AND (dir_path = ? OR dir_path LIKE ?)"
-	}
-	if err := r.db.WithContext(ctx).Exec(sql, newPrefix, oldLenPlusOne, username, oldPrefix, likePattern).Error; err != nil {
-		return fmt.Errorf("update dir path prefix failed: %w", err)
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		items, err := lockPathItems(tx, username, oldPrefix)
+		if err != nil {
+			return fmt.Errorf("update dir path prefix failed: %w", err)
+		}
+		if len(items) == 0 {
+			return fmt.Errorf("update dir path prefix failed: no matching path")
+		}
+		if err := rewriteSubtreePaths(tx, username, oldPrefix, newPrefix, items, 0); err != nil {
+			return fmt.Errorf("update dir path prefix failed: %w", err)
+		}
+		return nil
+	})
 }
 
 func (r *mysqlFileRepo) RenameItem(ctx context.Context, id uint, username, newName, newDirPath string) error {
-	updates := map[string]any{
-		"file_name": newName,
-	}
-	if newDirPath != "" {
-		updates["dir_path"] = newDirPath
-	}
-	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
-		Where("id = ? AND user_name = ?", id, username).
-		Updates(updates)
-	if res.Error != nil {
-		return fmt.Errorf("rename item failed: %w", res.Error)
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		item, err := lockActiveUserFile(tx, id, username)
+		if err != nil {
+			return fmt.Errorf("rename item failed: %w", err)
+		}
+		if item.IsDir == 1 && newDirPath == "" {
+			return fmt.Errorf("rename item failed: missing materialized path")
+		}
+		if item.IsDir == 1 {
+			expectedPath := strings.TrimSuffix(item.DirPath, item.FileName+"/") + newName + "/"
+			if newDirPath != expectedPath {
+				return fmt.Errorf("rename item failed: inconsistent materialized path")
+			}
+		} else if newDirPath != "" && newDirPath != item.DirPath {
+			return fmt.Errorf("rename item failed: file path cannot change during rename")
+		}
+
+		var subtree []model.UserFile
+		if item.IsDir == 1 {
+			subtree, err = lockPathItems(tx, username, item.DirPath)
+			if err != nil {
+				return fmt.Errorf("rename item failed: %w", err)
+			}
+		}
+
+		updates := map[string]any{"file_name": newName}
+		if newDirPath != "" {
+			updates["dir_path"] = newDirPath
+		}
+		if item.FileName != newName || (newDirPath != "" && item.DirPath != newDirPath) {
+			res := tx.Model(&model.UserFile{}).
+				Where("id = ? AND user_name = ? AND status = ?", id, username, model.UserFileStatusActive).
+				Updates(updates)
+			if res.Error != nil {
+				return fmt.Errorf("rename item failed: %w", res.Error)
+			}
+			if res.RowsAffected != 1 {
+				return fmt.Errorf("rename item failed: item changed concurrently")
+			}
+		}
+		if item.IsDir == 1 {
+			if err := rewriteSubtreePaths(tx, username, item.DirPath, newDirPath, subtree, id); err != nil {
+				return fmt.Errorf("rename item failed: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 func (r *mysqlFileRepo) SoftDeleteDir(ctx context.Context, username, dirPath string) error {
-	likePattern := dirPath + "%"
+	pattern := vfsPathLikePattern(dirPath)
 	res := r.db.WithContext(ctx).Model(&model.UserFile{}).
-		Where("user_name = ? AND (dir_path = ? OR dir_path LIKE ?) AND status = ?", username, dirPath, likePattern, model.UserFileStatusActive).
+		Where("user_name = ? AND (dir_path = ? OR dir_path LIKE ? ESCAPE '!') AND status = ?", username, dirPath, pattern, model.UserFileStatusActive).
 		Update("status", model.UserFileStatusDeleted)
 	if res.Error != nil {
 		return fmt.Errorf("soft delete dir failed: %w", res.Error)
 	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("soft delete dir failed: no matching active path")
+	}
 	return nil
+}
+
+func lockActiveUserFile(tx *gorm.DB, id uint, username string) (model.UserFile, error) {
+	var item model.UserFile
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND user_name = ? AND status = ?", id, username, model.UserFileStatusActive).
+		First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.UserFile{}, fmt.Errorf("item not found or no longer active")
+	}
+	if err != nil {
+		return model.UserFile{}, err
+	}
+	return item, nil
+}
+
+func lockMoveTarget(tx *gorm.DB, username string, targetParentID uint64) (string, error) {
+	if targetParentID == 0 {
+		return "/", nil
+	}
+	var parent model.UserFile
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND user_name = ? AND is_dir = 1 AND status = ?", targetParentID, username, model.UserFileStatusActive).
+		First(&parent).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", fmt.Errorf("target folder not found or no longer active")
+	}
+	if err != nil {
+		return "", err
+	}
+	return parent.DirPath, nil
+}
+
+func lockPathItems(tx *gorm.DB, username, oldPrefix string) ([]model.UserFile, error) {
+	if oldPrefix == "" {
+		return nil, fmt.Errorf("empty path prefix")
+	}
+	pattern := vfsPathLikePattern(oldPrefix)
+	var items []model.UserFile
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_name = ? AND (dir_path = ? OR dir_path LIKE ? ESCAPE '!')", username, oldPrefix, pattern).
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if vfsPathWithin(item.DirPath, oldPrefix) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
+}
+
+func rewriteSubtreePaths(tx *gorm.DB, username, oldPrefix, newPrefix string, items []model.UserFile, skipID uint) error {
+	for _, item := range items {
+		if item.ID == skipID || !vfsPathWithin(item.DirPath, oldPrefix) {
+			continue
+		}
+		suffix := ""
+		normalizedOldPrefix := vfsNormalizedPrefix(oldPrefix)
+		if item.DirPath != oldPrefix && item.DirPath != normalizedOldPrefix {
+			suffix = strings.TrimPrefix(item.DirPath, normalizedOldPrefix)
+		}
+		newPath := newPrefix + suffix
+		if item.DirPath == newPrefix || item.DirPath == newPath {
+			continue
+		}
+		res := tx.Model(&model.UserFile{}).
+			Where("id = ? AND user_name = ?", item.ID, username).
+			Update("dir_path", newPath)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return fmt.Errorf("path item %d changed concurrently", item.ID)
+		}
+	}
+	return nil
+}
+
+func vfsNormalizedPrefix(prefix string) string {
+	if prefix == "/" {
+		return "/"
+	}
+	return strings.TrimSuffix(prefix, "/") + "/"
+}
+
+func vfsPathWithin(path, prefix string) bool {
+	normalized := vfsNormalizedPrefix(prefix)
+	return path == prefix || path == normalized || strings.HasPrefix(path, normalized)
+}
+
+func vfsPathLikePattern(prefix string) string {
+	return escapeLikePattern(vfsNormalizedPrefix(prefix)) + "%"
+}
+
+func escapeLikePattern(value string) string {
+	value = strings.ReplaceAll(value, `!`, `!!`)
+	value = strings.ReplaceAll(value, `\`, `!\`)
+	value = strings.ReplaceAll(value, `%`, `!%`)
+	return strings.ReplaceAll(value, `_`, `!_`)
 }
 
 func (r *mysqlFileRepo) GetBreadcrumbs(ctx context.Context, username string, folderID uint64) ([]model.Breadcrumb, error) {
@@ -881,24 +1070,78 @@ func (m *mockFileRepo) MoveItem(ctx context.Context, id uint, username string, t
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	items := m.userItems[username]
+	itemIndex := -1
 	for i := range items {
 		if items[i].ID == id {
-			items[i].ParentID = targetParentID
-			items[i].DirPath = newDirPath
-			return nil
+			if items[i].Status != model.UserFileStatusActive {
+				return fmt.Errorf("item not found or no longer active")
+			}
+			itemIndex = i
+			break
 		}
 	}
-	return fmt.Errorf("item not found")
+	if itemIndex < 0 {
+		return fmt.Errorf("item not found")
+	}
+	item := items[itemIndex]
+	targetPath := "/"
+	if targetParentID != 0 {
+		found := false
+		for _, parent := range items {
+			if uint64(parent.ID) == targetParentID && parent.IsDir == 1 && parent.Status == model.UserFileStatusActive {
+				targetPath = parent.DirPath
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("target folder not found or no longer active")
+		}
+	}
+	if item.IsDir == 1 && vfsPathWithin(targetPath, item.DirPath) {
+		return fmt.Errorf("cannot move folder into its own subfolder")
+	}
+	expectedPath := targetPath
+	if item.IsDir == 1 {
+		expectedPath += item.FileName + "/"
+	}
+	if newDirPath != expectedPath {
+		return fmt.Errorf("inconsistent materialized path")
+	}
+	oldPath := item.DirPath
+	items[itemIndex].ParentID = targetParentID
+	items[itemIndex].DirPath = expectedPath
+	for i := range items {
+		if items[i].ID == id || !vfsPathWithin(items[i].DirPath, oldPath) {
+			continue
+		}
+		suffix := ""
+		if items[i].DirPath != oldPath && items[i].DirPath != vfsNormalizedPrefix(oldPath) {
+			suffix = strings.TrimPrefix(items[i].DirPath, vfsNormalizedPrefix(oldPath))
+		}
+		items[i].DirPath = expectedPath + suffix
+	}
+	m.userItems[username] = items
+	return nil
 }
 
 func (m *mockFileRepo) UpdateDirPathPrefix(ctx context.Context, username, oldPrefix, newPrefix string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	items := m.userItems[username]
+	matched := 0
 	for i := range items {
-		if strings.HasPrefix(items[i].DirPath, oldPrefix) {
-			items[i].DirPath = newPrefix + strings.TrimPrefix(items[i].DirPath, oldPrefix)
+		if vfsPathWithin(items[i].DirPath, oldPrefix) {
+			matched++
+			suffix := ""
+			if items[i].DirPath != oldPrefix && items[i].DirPath != vfsNormalizedPrefix(oldPrefix) {
+				suffix = strings.TrimPrefix(items[i].DirPath, vfsNormalizedPrefix(oldPrefix))
+			}
+			items[i].DirPath = newPrefix + suffix
 		}
+	}
+	if matched == 0 {
+		return fmt.Errorf("no matching path")
 	}
 	return nil
 }
@@ -907,26 +1150,67 @@ func (m *mockFileRepo) RenameItem(ctx context.Context, id uint, username, newNam
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	items := m.userItems[username]
+	itemIndex := -1
 	for i := range items {
 		if items[i].ID == id {
-			items[i].FileName = newName
-			if newDirPath != "" {
-				items[i].DirPath = newDirPath
+			if items[i].Status != model.UserFileStatusActive {
+				return fmt.Errorf("item not found or no longer active")
 			}
-			return nil
+			itemIndex = i
+			break
 		}
 	}
-	return fmt.Errorf("item not found")
+	if itemIndex < 0 {
+		return fmt.Errorf("item not found")
+	}
+	item := items[itemIndex]
+	if item.IsDir == 1 {
+		if newDirPath == "" {
+			return fmt.Errorf("missing materialized path")
+		}
+		expectedPath := strings.TrimSuffix(item.DirPath, item.FileName+"/") + newName + "/"
+		if newDirPath != expectedPath {
+			return fmt.Errorf("inconsistent materialized path")
+		}
+		oldPath := item.DirPath
+		items[itemIndex].FileName = newName
+		items[itemIndex].DirPath = newDirPath
+		for i := range items {
+			if items[i].ID == id || !vfsPathWithin(items[i].DirPath, oldPath) {
+				continue
+			}
+			suffix := ""
+			if items[i].DirPath != oldPath && items[i].DirPath != vfsNormalizedPrefix(oldPath) {
+				suffix = strings.TrimPrefix(items[i].DirPath, vfsNormalizedPrefix(oldPath))
+			}
+			items[i].DirPath = newDirPath + suffix
+		}
+	} else {
+		if newDirPath != "" && newDirPath != item.DirPath {
+			return fmt.Errorf("file path cannot change during rename")
+		}
+		items[itemIndex].FileName = newName
+		if newDirPath != "" {
+			items[itemIndex].DirPath = newDirPath
+		}
+	}
+	m.userItems[username] = items
+	return nil
 }
 
 func (m *mockFileRepo) SoftDeleteDir(ctx context.Context, username, dirPath string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	items := m.userItems[username]
+	matched := 0
 	for i := range items {
-		if strings.HasPrefix(items[i].DirPath, dirPath) {
+		if vfsPathWithin(items[i].DirPath, dirPath) && items[i].Status == model.UserFileStatusActive {
 			items[i].Status = model.UserFileStatusDeleted
+			matched++
 		}
+	}
+	if matched == 0 {
+		return fmt.Errorf("no matching active path")
 	}
 	return nil
 }

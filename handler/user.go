@@ -5,6 +5,7 @@ import (
 	"gofile/service"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -57,6 +58,19 @@ func passwordStrength(password string) (bool, string) {
 	return true, ""
 }
 
+func validUsername(username string) bool {
+	if len(username) < 3 || len(username) > 64 {
+		return false
+	}
+	for i, c := range username {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (i > 0 && c >= '0' && c <= '9') || (i > 0 && c == '_' || i > 0 && c == '-') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // SignupHandler 处理用户注册请求
 // @Summary 用户注册
 // @Description 注册新用户，密码需至少 8 位且包含大写/小写/数字/特殊字符中的至少三类
@@ -69,11 +83,11 @@ func passwordStrength(password string) (bool, string) {
 // @Failure 400 {object} map[string]any{code=int,msg=string,data=nil} "参数错误"
 // @Router /user/signup [post]
 func (h *UserHandler) SignupHandler(c *gin.Context) {
-	username := c.PostForm("username")
+	username := strings.TrimSpace(c.PostForm("username"))
 	password := c.PostForm("password")
 
-	if len(username) < 3 {
-		respondError(c, http.StatusBadRequest, CodeInvalidParams, "用户名至少3位")
+	if !validUsername(username) {
+		respondError(c, http.StatusBadRequest, CodeInvalidParams, "用户名需为3-64位，仅允许字母、数字、下划线或连字符，且首字符必须为字母")
 		return
 	}
 
@@ -104,10 +118,10 @@ func (h *UserHandler) SignupHandler(c *gin.Context) {
 // @Failure 400 {object} map[string]any{code=int,msg=string,data=nil} "参数错误"
 // @Router /user/signin [post]
 func (h *UserHandler) SignInHandler(c *gin.Context) {
-	username := c.PostForm("username")
+	username := strings.TrimSpace(c.PostForm("username"))
 	password := c.PostForm("password")
 
-	if username == "" || password == "" {
+	if !validUsername(username) || password == "" {
 		respondError(c, http.StatusBadRequest, CodeInvalidParams, "用户名和密码不能为空")
 		return
 	}
