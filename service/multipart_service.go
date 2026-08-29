@@ -52,7 +52,7 @@ func (s *FileService) UploadChunk(ctx context.Context, fileHash string, index in
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close chunk failed: %w", err)
 	}
-	if err := os.Rename(tmpPath, chunkPath); err != nil {
+	if err := os.Link(tmpPath, chunkPath); err != nil {
 		_ = os.Remove(tmpPath)
 		if _, statErr := os.Stat(chunkPath); statErr == nil {
 			return nil
@@ -165,6 +165,15 @@ func readChunkDir(chunkDir, totalStr string) ([]os.DirEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read chunk directory failed: %w", err)
 	}
+	validFiles := make([]os.DirEntry, 0, len(files))
+	for _, file := range files {
+		if file.Type().IsRegular() {
+			if _, parseErr := strconv.Atoi(file.Name()); parseErr == nil {
+				validFiles = append(validFiles, file)
+			}
+		}
+	}
+	files = validFiles
 	if len(files) == 0 {
 		return nil, fmt.Errorf("chunks not found")
 	}
@@ -409,13 +418,25 @@ func (s *FileService) CompleteMultipartUpload(ctx context.Context, username stri
 	}
 	actualSize, actualHash, err := s.inspectStoredFile(ctx, mu.FileSha1)
 	if err != nil {
-		return model.FileMeta{}, fmt.Errorf("verify completed multipart file failed: %w", err)
+		return model.FileMeta{}, errors.Join(
+			fmt.Errorf("verify completed multipart file failed: %w", err),
+			s.deleteStoredFile(ctx, mu.FileSha1, false),
+			s.multipartRepo.UpdateStatus(ctx, mu.UploadID, username, model.MultipartStatusAborted),
+		)
 	}
 	if actualSize != mu.FileSize {
-		return model.FileMeta{}, fmt.Errorf("%w: expected %d, got %d", ErrFileSizeMismatch, mu.FileSize, actualSize)
+		return model.FileMeta{}, errors.Join(
+			fmt.Errorf("%w: expected %d, got %d", ErrFileSizeMismatch, mu.FileSize, actualSize),
+			s.deleteStoredFile(ctx, mu.FileSha1, false),
+			s.multipartRepo.UpdateStatus(ctx, mu.UploadID, username, model.MultipartStatusAborted),
+		)
 	}
 	if actualHash != strings.ToLower(mu.FileSha1) {
-		return model.FileMeta{}, fmt.Errorf("%w: expected %s, got %s", ErrFileFingerprintMismatch, mu.FileSha1, actualHash)
+		return model.FileMeta{}, errors.Join(
+			fmt.Errorf("%w: expected %s, got %s", ErrFileFingerprintMismatch, mu.FileSha1, actualHash),
+			s.deleteStoredFile(ctx, mu.FileSha1, false),
+			s.multipartRepo.UpdateStatus(ctx, mu.UploadID, username, model.MultipartStatusAborted),
+		)
 	}
 
 	// 2. 注册全局文件

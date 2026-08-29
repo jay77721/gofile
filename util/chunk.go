@@ -15,6 +15,12 @@ func GetUploadedChunks(chunkDir, username, filehash string) ([]string, error) {
 	}
 	var chunks []string
 	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
 		chunks = append(chunks, e.Name())
 	}
 	return chunks, nil
